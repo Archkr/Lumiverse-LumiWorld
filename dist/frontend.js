@@ -93,11 +93,16 @@ var CSS = `
   min-height: 100%;
   padding: 12px;
   color: var(--lumiverse-text);
-  background: var(--lumiverse-bg, transparent);
+  background: transparent;
   box-sizing: border-box;
-  font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--lumiverse-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: calc(13px * var(--lumiverse-font-scale, 1));
+  line-height: 1.45;
 }
 .agent-world-root * { box-sizing: border-box; }
+.agent-world-root input, .agent-world-root textarea, .agent-world-root select {
+  accent-color: var(--lumiverse-primary, var(--lumiverse-accent));
+}
 .agent-world-shell { display: flex; flex-direction: column; gap: 12px; }
 .agent-world-toolbar {
   display: flex;
@@ -114,7 +119,7 @@ var CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--lumiverse-accent);
+  color: var(--lumiverse-primary-text, var(--lumiverse-accent));
 }
 .agent-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
 .agent-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
@@ -122,25 +127,27 @@ var CSS = `
 .agent-world-btn {
   appearance: none;
   border: 1px solid var(--lumiverse-border);
-  background: var(--lumiverse-fill-subtle);
+  background: var(--lumiverse-fill);
   color: var(--lumiverse-text);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
   padding: 7px 10px;
   font: inherit;
   cursor: pointer;
+  transition: border-color var(--lumiverse-transition-fast), background var(--lumiverse-transition-fast), opacity var(--lumiverse-transition-fast);
 }
-.agent-world-btn:hover { border-color: var(--lumiverse-accent); }
+.agent-world-btn:hover { border-color: var(--lumiverse-border-hover, var(--lumiverse-primary-050)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
+.agent-world-btn:disabled { cursor: default; opacity: 0.6; }
 .agent-world-btn-primary {
-  background: var(--lumiverse-accent);
-  color: var(--lumiverse-accent-contrast, white);
-  border-color: var(--lumiverse-accent);
+  background: var(--lumiverse-primary, var(--lumiverse-accent));
+  color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
+  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
 }
-.agent-world-btn-danger { color: var(--lumiverse-danger, #d94b4b); }
+.agent-world-btn-danger { color: var(--lumiverse-danger, currentColor); }
 .agent-world-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
 .agent-world-panel {
   border: 1px solid var(--lumiverse-border);
   background: var(--lumiverse-fill-subtle);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
   padding: 12px;
 }
 .agent-world-panel-title {
@@ -166,8 +173,8 @@ var CSS = `
 .agent-world-input, .agent-world-select, .agent-world-textarea {
   width: 100%;
   border: 1px solid var(--lumiverse-border);
-  border-radius: 8px;
-  background: var(--lumiverse-bg-elevated, var(--lumiverse-fill));
+  border-radius: var(--lumiverse-radius);
+  background: var(--lumiverse-fill);
   color: var(--lumiverse-text);
   font: inherit;
   padding: 8px 9px;
@@ -180,12 +187,13 @@ var CSS = `
   font-size: 12px;
 }
 .agent-world-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.agent-world-toggle {
+.agent-world-setting-row, .agent-world-toggle {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   padding: 8px 0;
 }
+.agent-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
 .agent-world-toggle input { margin-top: 2px; }
 .agent-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .agent-world-chip {
@@ -193,20 +201,21 @@ var CSS = `
   align-items: center;
   gap: 6px;
   border: 1px solid var(--lumiverse-border);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
   padding: 7px 8px;
-  background: var(--lumiverse-bg-elevated, transparent);
+  background: var(--lumiverse-fill);
 }
 .agent-world-chip input { margin: 0; }
 .agent-world-banner {
   border: 1px solid var(--lumiverse-border);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
   padding: 9px 10px;
-  background: color-mix(in srgb, var(--lumiverse-accent) 10%, transparent);
+  background: var(--lumiverse-primary-010, var(--lumiverse-fill-subtle));
   color: var(--lumiverse-text);
 }
 .agent-world-banner.warn {
-  background: color-mix(in srgb, #e1a629 15%, transparent);
+  border-color: var(--lumiverse-warning-050, var(--lumiverse-border));
+  background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
 }
 .agent-world-runs { display: grid; gap: 8px; }
 .agent-world-run {
@@ -214,8 +223,8 @@ var CSS = `
   gap: 5px;
   padding: 9px;
   border: 1px solid var(--lumiverse-border);
-  border-radius: 8px;
-  background: var(--lumiverse-bg-elevated, transparent);
+  border-radius: var(--lumiverse-radius);
+  background: var(--lumiverse-fill);
 }
 .agent-world-run-head {
   display: flex;
@@ -226,21 +235,21 @@ var CSS = `
 .agent-world-status {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
+  border-radius: var(--lumiverse-radius-xl, 999px);
   padding: 2px 7px;
   font-size: 11px;
   border: 1px solid var(--lumiverse-border);
   color: var(--lumiverse-text);
 }
 .agent-world-status.success, .agent-world-status.test_success {
-  color: var(--lumiverse-success, #2f9e57);
+  color: var(--lumiverse-success, currentColor);
 }
 .agent-world-status.error, .agent-world-status.timeout, .agent-world-status.test_error {
-  color: var(--lumiverse-danger, #d94b4b);
+  color: var(--lumiverse-danger, currentColor);
 }
 .agent-world-details {
   border: 1px solid var(--lumiverse-border);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
   background: var(--lumiverse-fill-subtle);
   padding: 0;
 }
@@ -255,7 +264,7 @@ var CSS = `
   text-align: center;
   color: var(--lumiverse-text-dim);
   border: 1px dashed var(--lumiverse-border);
-  border-radius: 8px;
+  border-radius: var(--lumiverse-radius);
 }
 @media (max-width: 520px) {
   .agent-world-two, .agent-world-type-grid { grid-template-columns: 1fr; }
@@ -370,6 +379,72 @@ function setup(ctx) {
     input.addEventListener("input", () => onChange(input.value));
     return input;
   }
+  function renderNumberControl(slot, value, min, max, step, onChange) {
+    const components = ctx.components;
+    if (components?.mountNumberStepper) {
+      const handle = components.mountNumberStepper(slot, {
+        value,
+        min,
+        max,
+        step,
+        onChange: (next) => {
+          if (typeof next === "number" && Number.isFinite(next))
+            onChange(next);
+        }
+      });
+      componentHandles.push(handle);
+      return;
+    }
+    slot.appendChild(numberInput(value, min, max, step, onChange));
+  }
+  function numberField(label, value, min, max, step, onChange, hint) {
+    const slot = createElement("div");
+    renderNumberControl(slot, value, min, max, step, onChange);
+    return field(label, slot, hint);
+  }
+  function renderTextareaControl(slot, value, onChange, ariaLabel) {
+    const components = ctx.components;
+    if (components?.mountTextArea) {
+      const handle = components.mountTextArea(slot, {
+        value,
+        rows: 8,
+        ariaLabel,
+        onChange
+      });
+      componentHandles.push(handle);
+      return;
+    }
+    slot.appendChild(textarea(value, onChange));
+  }
+  function textareaField(label, value, onChange, hint) {
+    const slot = createElement("div");
+    renderTextareaControl(slot, value, onChange, label);
+    return field(label, slot, hint);
+  }
+  function renderEnabledControl(form) {
+    const row = createElement("div", "agent-world-setting-row");
+    const switchSlot = createElement("div", "agent-world-switch-slot");
+    const components = ctx.components;
+    if (components?.mountSwitch) {
+      const handle = components.mountSwitch(switchSlot, {
+        checked: draft.enabled,
+        size: "md",
+        ariaLabel: "Enable AgentWorld",
+        onChange: (checked) => updateDraft({ enabled: checked })
+      });
+      componentHandles.push(handle);
+    } else {
+      const enabled = createElement("input");
+      enabled.type = "checkbox";
+      enabled.checked = draft.enabled;
+      enabled.addEventListener("change", () => updateDraft({ enabled: enabled.checked }));
+      switchSlot.appendChild(enabled);
+    }
+    const enabledText = createElement("div");
+    enabledText.append(createElement("div", "agent-world-toggle-label", "Enable AgentWorld"), createElement("div", "agent-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
+    row.append(switchSlot, enabledText);
+    form.appendChild(row);
+  }
   function renderConnectionControl(slot) {
     const connections = state?.connections ?? [];
     const components = ctx.components;
@@ -436,15 +511,7 @@ function setup(ctx) {
     title.appendChild(createElement("h3", undefined, "Controller"));
     panel.appendChild(title);
     const form = createElement("div", "agent-world-form");
-    const enabledRow = createElement("label", "agent-world-toggle");
-    const enabled = createElement("input");
-    enabled.type = "checkbox";
-    enabled.checked = draft.enabled;
-    enabled.addEventListener("change", () => updateDraft({ enabled: enabled.checked }));
-    const enabledText = createElement("div");
-    enabledText.append(createElement("div", "agent-world-toggle-label", "Enable AgentWorld"), createElement("div", "agent-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
-    enabledRow.append(enabled, enabledText);
-    form.appendChild(enabledRow);
+    renderEnabledControl(form);
     const connectionSlot = createElement("div");
     form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
     renderConnectionControl(connectionSlot);
@@ -452,7 +519,7 @@ function setup(ctx) {
     form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
     renderModelControl(modelSlot);
     const two = createElement("div", "agent-world-two");
-    two.append(field("Temperature", numberInput(draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value }))), field("Max tokens", numberInput(draft.maxTokens, 64, 4096, 1, (value) => updateDraft({ maxTokens: value }))), field("Timeout ms", numberInput(draft.timeoutMs, 1000, 55000, 1000, (value) => updateDraft({ timeoutMs: value }))), field("Prompt cap chars", numberInput(draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value }))));
+    two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, 4096, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, 55000, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
     form.appendChild(two);
     panel.appendChild(form);
     shell.appendChild(panel);
@@ -487,21 +554,34 @@ function setup(ctx) {
     title.appendChild(createElement("span", "agent-world-subtle", "Quiet/background jobs are skipped"));
     panel.appendChild(title);
     const grid = createElement("div", "agent-world-type-grid");
+    const components = ctx.components;
     for (const type of VISIBLE_GENERATION_TYPES) {
-      const label = createElement("label", "agent-world-chip");
-      const input = createElement("input");
-      input.type = "checkbox";
-      input.checked = draft.generationTypes.includes(type);
-      input.addEventListener("change", () => {
+      const updateType = (checked) => {
         const next = new Set(draft.generationTypes);
-        if (input.checked)
+        if (checked)
           next.add(type);
         else
           next.delete(type);
         updateDraft({ generationTypes: [...next] });
-      });
-      label.append(input, document.createTextNode(type));
-      grid.appendChild(label);
+      };
+      if (components?.mountCheckbox) {
+        const slot = createElement("div");
+        const handle = components.mountCheckbox(slot, {
+          checked: draft.generationTypes.includes(type),
+          label: type,
+          onChange: updateType
+        });
+        componentHandles.push(handle);
+        grid.appendChild(slot);
+      } else {
+        const label = createElement("label", "agent-world-chip");
+        const input = createElement("input");
+        input.type = "checkbox";
+        input.checked = draft.generationTypes.includes(type);
+        input.addEventListener("change", () => updateType(input.checked));
+        label.append(input, document.createTextNode(type));
+        grid.appendChild(label);
+      }
     }
     panel.appendChild(grid);
     shell.appendChild(panel);
@@ -510,7 +590,7 @@ function setup(ctx) {
     const details = createElement("details", "agent-world-details");
     const summary = createElement("summary", undefined, "Advanced controller prompt");
     const body = createElement("div", "agent-world-details-body");
-    body.append(field("System template", textarea(draft.systemTemplate, (value) => updateDraft({ systemTemplate: value })), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), field("User template", textarea(draft.userTemplate, (value) => updateDraft({ userTemplate: value }))), field("Run log limit", numberInput(draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value }))));
+    body.append(textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
     details.append(summary, body);
     shell.appendChild(details);
   }
