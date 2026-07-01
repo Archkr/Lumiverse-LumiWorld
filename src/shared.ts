@@ -431,6 +431,78 @@ export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_
   return normalizeDirectiveText(stripped, maxChars);
 }
 
+function readStringAtPath(value: unknown, path: Array<string | number>): string | null {
+  let current = value;
+  for (const key of path) {
+    if (current == null || typeof current !== "object") return null;
+    if (Array.isArray(current)) {
+      if (typeof key !== "number") return null;
+      current = current[key];
+    } else {
+      if (typeof key !== "string") return null;
+      current = (current as Record<string, unknown>)[key];
+    }
+  }
+  return typeof current === "string" && current.trim() ? current : null;
+}
+
+function extractTextFromContentParts(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const parts = value
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object") return "";
+      const obj = part as Record<string, unknown>;
+      const text = obj.text ?? obj.content ?? obj.value;
+      if (typeof text === "string") return text;
+      if (Array.isArray(obj.content)) return extractTextFromContentParts(obj.content) ?? "";
+      return "";
+    })
+    .filter((part) => part.trim().length > 0);
+  return parts.length ? parts.join("\n") : null;
+}
+
+export function extractControllerResponseText(response: unknown): string | null {
+  if (typeof response === "string") return response.trim() || null;
+  if (!response || typeof response !== "object") return null;
+
+  const directPaths: Array<Array<string | number>> = [
+    ["content"],
+    ["text"],
+    ["output_text"],
+    ["message", "content"],
+    ["message", "text"],
+    ["choices", 0, "message", "content"],
+    ["choices", 0, "message", "text"],
+    ["choices", 0, "text"],
+    ["choices", 0, "delta", "content"],
+    ["choices", 0, "delta", "text"],
+    ["output", 0, "content", 0, "text"],
+    ["output", 0, "content", 0, "content"],
+  ];
+  for (const path of directPaths) {
+    const text = readStringAtPath(response, path);
+    if (text) return text.trim();
+  }
+
+  const contentLike = [
+    (response as Record<string, unknown>).content,
+    readStringAtPath(response, ["message", "content"]),
+    readStringAtPath(response, ["choices", 0, "message", "content"]),
+    (response as Record<string, unknown>).output,
+  ];
+  for (const value of contentLike) {
+    const text = extractTextFromContentParts(value);
+    if (text) return text.trim();
+  }
+
+  return null;
+}
+
+export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
+  return parseControllerDirective(extractControllerResponseText(response), maxChars);
+}
+
 export function buildInjectedDirective(directive: string): string {
   return [
     "[AgentWorld Director]",

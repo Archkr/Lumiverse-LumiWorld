@@ -11,7 +11,7 @@ import {
   makeDirectivePreview,
   normalizeRunLog,
   normalizeSettings,
-  parseControllerDirective,
+  parseControllerDirectiveFromResponse,
   resolveControllerTarget,
   shouldInterceptGeneration,
   type AgentWorldSettings,
@@ -38,6 +38,13 @@ class ControllerTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`AgentWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "ControllerTimeoutError";
+  }
+}
+
+class EmptyControllerDirectiveError extends Error {
+  constructor() {
+    super("AgentWorld controller returned no final directive. Try a non-reasoning controller model, or raise Max tokens if this keeps happening.");
+    this.name = "EmptyControllerDirectiveError";
   }
 }
 
@@ -127,6 +134,19 @@ function toConnectionLike(connection: ConnectionProfileDTO | any): ConnectionLik
     ...toConnectionOption(connection),
     api_url: typeof connection.api_url === "string" ? connection.api_url : "",
   };
+}
+
+function controllerReasoningOverride(provider: string): Record<string, unknown> {
+  const normalized = provider.toLowerCase();
+  if (["openrouter", "bedrock", "nanogpt"].includes(normalized)) {
+    return {
+      source: "custom",
+      apiReasoning: true,
+      effort: "none",
+      thinkingDisplay: "omitted",
+    };
+  }
+  return { source: "off" };
 }
 
 async function ensureFolders(userId?: string | null): Promise<void> {
@@ -275,11 +295,12 @@ async function callController(
         temperature: settings.temperature,
         max_tokens: settings.maxTokens,
       },
+      reasoning: controllerReasoningOverride(target.provider),
       signal: controller.signal,
     });
-    const directive = parseControllerDirective(response?.content);
+    const directive = parseControllerDirectiveFromResponse(response);
     if (!directive) {
-      throw new Error("AgentWorld controller returned an empty directive.");
+      throw new EmptyControllerDirectiveError();
     }
     return { directive, durationMs: Date.now() - startedAt };
   } catch (error) {
@@ -377,9 +398,10 @@ async function handleInterceptor(
     };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
+    const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
     await recordRun(
-      makeRunBase(isTimeout ? "timeout" : "error", startedAt, {
+      makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
         generationType,
         connectionId: target.connectionId,
         connectionName: target.connectionName,

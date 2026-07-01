@@ -4,9 +4,11 @@ import {
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
+  extractControllerResponseText,
   formatPromptForController,
   normalizeSettings,
   parseControllerDirective,
+  parseControllerDirectiveFromResponse,
   resolveControllerTarget,
   serializeMessageContent,
   shouldInterceptGeneration,
@@ -143,6 +145,19 @@ describe("controller prompt and directive parsing", () => {
     expect(parseControllerDirective('{"director_note":"The lights fail."}')).toBe("The lights fail.");
     expect(parseControllerDirective("```json\n{\"directive\":\"Fog rolls in.\"}\n```")).toBe("Fog rolls in.");
     expect(parseControllerDirective("Let the floorboards creak once.")).toBe("Let the floorboards creak once.");
+  });
+
+  test("extracts controller text from common provider response shapes", () => {
+    expect(extractControllerResponseText({ content: "Use the rain." })).toBe("Use the rain.");
+    expect(extractControllerResponseText({ choices: [{ message: { content: "{\"directive\":\"Lights flicker.\"}" } }] })).toBe(
+      "{\"directive\":\"Lights flicker.\"}",
+    );
+    expect(extractControllerResponseText({ output: [{ content: [{ type: "output_text", text: "A hinge snaps." }] }] })).toBe(
+      "A hinge snaps.",
+    );
+    expect(parseControllerDirectiveFromResponse({ choices: [{ message: { content: "{\"director_note\":\"Keep watch.\"}" } }] })).toBe(
+      "Keep watch.",
+    );
   });
 
   test("builds private injected directive block", () => {

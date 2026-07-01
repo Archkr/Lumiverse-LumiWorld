@@ -325,6 +325,82 @@ function parseControllerDirective(raw, maxChars = MAX_DIRECTIVE_CHARS) {
   }
   return normalizeDirectiveText(stripped, maxChars);
 }
+function readStringAtPath(value, path) {
+  let current = value;
+  for (const key of path) {
+    if (current == null || typeof current !== "object")
+      return null;
+    if (Array.isArray(current)) {
+      if (typeof key !== "number")
+        return null;
+      current = current[key];
+    } else {
+      if (typeof key !== "string")
+        return null;
+      current = current[key];
+    }
+  }
+  return typeof current === "string" && current.trim() ? current : null;
+}
+function extractTextFromContentParts(value) {
+  if (!Array.isArray(value))
+    return null;
+  const parts = value.map((part) => {
+    if (typeof part === "string")
+      return part;
+    if (!part || typeof part !== "object")
+      return "";
+    const obj = part;
+    const text = obj.text ?? obj.content ?? obj.value;
+    if (typeof text === "string")
+      return text;
+    if (Array.isArray(obj.content))
+      return extractTextFromContentParts(obj.content) ?? "";
+    return "";
+  }).filter((part) => part.trim().length > 0);
+  return parts.length ? parts.join(`
+`) : null;
+}
+function extractControllerResponseText(response) {
+  if (typeof response === "string")
+    return response.trim() || null;
+  if (!response || typeof response !== "object")
+    return null;
+  const directPaths = [
+    ["content"],
+    ["text"],
+    ["output_text"],
+    ["message", "content"],
+    ["message", "text"],
+    ["choices", 0, "message", "content"],
+    ["choices", 0, "message", "text"],
+    ["choices", 0, "text"],
+    ["choices", 0, "delta", "content"],
+    ["choices", 0, "delta", "text"],
+    ["output", 0, "content", 0, "text"],
+    ["output", 0, "content", 0, "content"]
+  ];
+  for (const path of directPaths) {
+    const text = readStringAtPath(response, path);
+    if (text)
+      return text.trim();
+  }
+  const contentLike = [
+    response.content,
+    readStringAtPath(response, ["message", "content"]),
+    readStringAtPath(response, ["choices", 0, "message", "content"]),
+    response.output
+  ];
+  for (const value of contentLike) {
+    const text = extractTextFromContentParts(value);
+    if (text)
+      return text.trim();
+  }
+  return null;
+}
+function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE_CHARS) {
+  return parseControllerDirective(extractControllerResponseText(response), maxChars);
+}
 function buildInjectedDirective(directive) {
   return [
     "[AgentWorld Director]",
@@ -356,6 +432,13 @@ class ControllerTimeoutError extends Error {
   constructor(timeoutMs) {
     super(`AgentWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "ControllerTimeoutError";
+  }
+}
+
+class EmptyControllerDirectiveError extends Error {
+  constructor() {
+    super("AgentWorld controller returned no final directive. Try a non-reasoning controller model, or raise Max tokens if this keeps happening.");
+    this.name = "EmptyControllerDirectiveError";
   }
 }
 function storageApi() {
@@ -435,6 +518,18 @@ function toConnectionLike(connection) {
     ...toConnectionOption(connection),
     api_url: typeof connection.api_url === "string" ? connection.api_url : ""
   };
+}
+function controllerReasoningOverride(provider) {
+  const normalized = provider.toLowerCase();
+  if (["openrouter", "bedrock", "nanogpt"].includes(normalized)) {
+    return {
+      source: "custom",
+      apiReasoning: true,
+      effort: "none",
+      thinkingDisplay: "omitted"
+    };
+  }
+  return { source: "off" };
 }
 async function ensureFolders(userId) {
   await storageApi().mkdir("global", userId ?? undefined).catch(() => {});
@@ -561,11 +656,12 @@ async function callController(userId, settings, target, messages) {
         temperature: settings.temperature,
         max_tokens: settings.maxTokens
       },
+      reasoning: controllerReasoningOverride(target.provider),
       signal: controller.signal
     });
-    const directive = parseControllerDirective(response?.content);
+    const directive = parseControllerDirectiveFromResponse(response);
     if (!directive) {
-      throw new Error("AgentWorld controller returned an empty directive.");
+      throw new EmptyControllerDirectiveError;
     }
     return { directive, durationMs: Date.now() - startedAt };
   } catch (error) {
@@ -637,8 +733,9 @@ async function handleInterceptor(messages, context) {
     };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
+    const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
-    await recordRun(makeRunBase(isTimeout ? "timeout" : "error", startedAt, {
+    await recordRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
       generationType,
       connectionId: target.connectionId,
       connectionName: target.connectionName,
