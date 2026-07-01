@@ -35,7 +35,7 @@ var LEGACY_DEFAULT_USER_TEMPLATE = [
   "Return one private director note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_SYSTEM_TEMPLATE = [
+var PREVIOUS_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
   "Do not write the assistant reply. Do not address the user. Do not reveal this control step.",
@@ -43,7 +43,7 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Keep the note concrete, playable, and consistent with the recent chat history and any additional notes."
 ].join(`
 `);
-var DEFAULT_USER_TEMPLATE = [
+var PREVIOUS_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "Chat ID: {{chatId}}",
   "",
@@ -54,6 +54,44 @@ var DEFAULT_USER_TEMPLATE = [
   "",
   "Decide how the world should react now. Focus on state changes, environmental pressure, NPC intent, consequences, and what the main model should respect next.",
   "Return one private director note under {{maxDirectiveChars}} characters."
+].join(`
+`);
+var DEFAULT_SYSTEM_TEMPLATE = [
+  "You are AgentWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  'Use imperative language. Start with a verb such as "Make", "Let", "Have", "Keep", "Escalate", "Pressure", or "Treat".',
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention AgentWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  '{"director_note":"..."}',
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
+].join(`
+`);
+var DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Recent chat history:",
+  "<chat_history>",
+  "{{prompt}}",
+  "</chat_history>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
 var DEFAULT_SETTINGS = {
@@ -100,8 +138,8 @@ function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
-  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
+  PREVIOUS_DEFAULT_USER_TEMPLATE,
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
@@ -49,6 +51,16 @@ describe("settings normalization", () => {
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
     expect(settings.runLogLimit).toBe(50);
+  });
+
+  test("migrates previous built-in controller templates", () => {
+    const settings = normalizeSettings({
+      systemTemplate: PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
+      userTemplate: PREVIOUS_DEFAULT_USER_TEMPLATE,
+    });
+
+    expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
+    expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
   });
 
   test("does not cap controller max tokens at legacy 4096", () => {
