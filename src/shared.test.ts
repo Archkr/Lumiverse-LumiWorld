@@ -25,7 +25,7 @@ describe("settings normalization", () => {
       modelOverride: "  qwen-agentworld ",
       temperature: 9,
       maxTokens: 2,
-      timeoutMs: 999999,
+      timeoutMs: 500,
       maxInputChars: 20,
       generationTypes: ["normal", "quiet", "swipe", "normal"],
       systemTemplate: "",
@@ -38,7 +38,7 @@ describe("settings normalization", () => {
     expect(settings.modelOverride).toBe("qwen-agentworld");
     expect(settings.temperature).toBe(2);
     expect(settings.maxTokens).toBe(64);
-    expect(settings.timeoutMs).toBe(55000);
+    expect(settings.timeoutMs).toBe(1000);
     expect(settings.maxInputChars).toBe(4000);
     expect(settings.generationTypes).toEqual(["normal", "swipe"]);
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
@@ -48,6 +48,10 @@ describe("settings normalization", () => {
 
   test("does not cap controller max tokens at legacy 4096", () => {
     expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
+  });
+
+  test("does not cap controller timeout at legacy 55 seconds", () => {
+    expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(600000);
   });
 });
 

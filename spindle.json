@@ -7,7 +7,7 @@
   "homepage": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "description": "A prompt interceptor that asks a controller model how the world should react before the main model replies.",
   "permissions": ["interceptor", "generation"],
-  "interceptorTimeoutMs": 60000,
+  "interceptorTimeoutMs": 2147483647,
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "0.9.0"

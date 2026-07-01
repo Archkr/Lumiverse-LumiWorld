@@ -103,6 +103,7 @@ export type ControllerTargetResult = ControllerTarget | ControllerTargetError;
 
 export const MAX_DIRECTIVE_CHARS = 2200;
 export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
+export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
 export const DEFAULT_RUN_LOG_LIMIT = 12;
 
 export const DEFAULT_SYSTEM_TEMPLATE = [
@@ -181,7 +182,7 @@ export function normalizeSettings(value: unknown): AgentWorldSettings {
     modelOverride: cleanString(obj.modelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
-    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 55000),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     systemTemplate,
