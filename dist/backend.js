@@ -484,13 +484,23 @@ async function recordRun(entry, userId, settings) {
   }
 }
 async function listConnections(userId) {
-  if (!permissionHas("generation"))
-    return [];
+  if (!permissionHas("generation")) {
+    return {
+      connections: [],
+      error: "Generation permission is not granted, so AgentWorld cannot list LLM connection profiles."
+    };
+  }
   try {
     const rows = await connectionsApi().list(userId ?? undefined);
-    return (Array.isArray(rows) ? rows : []).map(toConnectionOption).sort((left, right) => left.name.localeCompare(right.name));
-  } catch {
-    return [];
+    const connections = (Array.isArray(rows) ? rows : []).map(toConnectionOption).filter((connection) => connection.id).sort((left, right) => left.name.localeCompare(right.name));
+    return { connections, error: null };
+  } catch (error) {
+    const description = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`AgentWorld could not list connection profiles: ${description}`);
+    return {
+      connections: [],
+      error: `Could not list LLM connection profiles: ${description}`
+    };
   }
 }
 async function getConnection(connectionId, userId) {
@@ -505,13 +515,14 @@ async function getConnection(connectionId, userId) {
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
-  const [connections, runs] = await Promise.all([
+  const [connectionState, runs] = await Promise.all([
     listConnections(userId),
     loadRuns(userId, settings.runLogLimit)
   ]);
   return {
     settings,
-    connections,
+    connections: connectionState.connections,
+    connectionError: connectionState.error,
     runs,
     permissions: currentPermissions()
   };

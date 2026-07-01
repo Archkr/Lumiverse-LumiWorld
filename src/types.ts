@@ -8,6 +8,7 @@ export interface PermissionState {
 export interface FrontendState {
   settings: AgentWorldSettings;
   connections: ConnectionOption[];
+  connectionError?: string | null;
   runs: RunLogEntry[];
   permissions: PermissionState;
 }

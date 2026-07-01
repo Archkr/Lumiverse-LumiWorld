@@ -34,6 +34,8 @@ The manifest requests:
 - `interceptor` to modify the assembled prompt before the main model call
 - `generation` to call the selected controller connection and list connection profiles
 
+It does not request `chats` or `chat_mutation`. The extension does not call chat CRUD APIs, inspect raw stored message history, or modify chat messages. It only receives the in-flight assembled prompt from the interceptor hook, whose context metadata is covered by the `interceptor` permission.
+
 ## Privacy
 
 AgentWorld stores settings and a small recent-run ring buffer. It does not persist full prompts, full chat history, API keys, or raw controller inputs by default.

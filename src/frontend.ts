@@ -317,6 +317,70 @@ export function setup(ctx: SpindleFrontendContext) {
     return input;
   }
 
+  function renderConnectionControl(slot: HTMLElement): void {
+    const connections = state?.connections ?? [];
+    const components = (ctx as any).components;
+    const options = connections.map((connection) => ({
+      value: connection.id,
+      label: connection.name || connection.id,
+      sublabel: [
+        connection.provider || null,
+        connection.model || null,
+        connection.hasApiKey ? null : "no API key",
+        connection.isDefault ? "default" : null,
+      ].filter(Boolean).join(" / "),
+      group: connection.provider || "Connections",
+      leading: {
+        type: "initial",
+        text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase(),
+      },
+    }));
+
+    if (draft.connectionId && !options.some((option) => option.value === draft.connectionId)) {
+      options.unshift({
+        value: draft.connectionId,
+        label: "Saved connection not found",
+        sublabel: draft.connectionId,
+        group: "Unavailable",
+        leading: { type: "initial", text: "!" },
+      });
+    }
+
+    if (components?.mountSelect) {
+      const handle = components.mountSelect(slot, {
+        value: draft.connectionId ?? "",
+        options,
+        placeholder: "Select controller connection...",
+        searchPlaceholder: "Search LLM connections...",
+        emptyMessage: state?.connectionError || "No LLM connection profiles found.",
+        noResultsMessage: "No matching LLM connection profiles.",
+        clearable: true,
+        clearLabel: "No controller connection",
+        ariaLabel: "AgentWorld controller connection",
+        portal: true,
+        maxHeight: 320,
+        onChange: (value: string) => {
+          updateDraft({ connectionId: value || null, modelOverride: "" });
+          render();
+        },
+      }) as MountedHandle;
+      componentHandles.push(handle);
+      return;
+    }
+
+    const connectionSelect = createElement("select", "agent-world-select") as HTMLSelectElement;
+    connectionSelect.appendChild(new Option("Select controller connection...", ""));
+    for (const connection of connections) {
+      connectionSelect.appendChild(new Option(connectionLabel(connection), connection.id));
+    }
+    connectionSelect.value = draft.connectionId ?? "";
+    connectionSelect.addEventListener("change", () => {
+      updateDraft({ connectionId: connectionSelect.value || null, modelOverride: "" });
+      render();
+    });
+    slot.appendChild(connectionSelect);
+  }
+
   function renderEnabledPanel(shell: HTMLElement): void {
     const panel = createElement("section", "agent-world-panel");
     const title = createElement("div", "agent-world-panel-title");
@@ -338,17 +402,9 @@ export function setup(ctx: SpindleFrontendContext) {
     enabledRow.append(enabled, enabledText);
     form.appendChild(enabledRow);
 
-    const connectionSelect = createElement("select", "agent-world-select") as HTMLSelectElement;
-    connectionSelect.appendChild(new Option("Select controller connection...", ""));
-    for (const connection of state?.connections ?? []) {
-      connectionSelect.appendChild(new Option(connectionLabel(connection), connection.id));
-    }
-    connectionSelect.value = draft.connectionId ?? "";
-    connectionSelect.addEventListener("change", () => {
-      updateDraft({ connectionId: connectionSelect.value || null, modelOverride: "" });
-      render();
-    });
-    form.appendChild(field("Connection", connectionSelect, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
+    const connectionSlot = createElement("div");
+    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
+    renderConnectionControl(connectionSlot);
 
     const modelSlot = createElement("div");
     form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
@@ -484,6 +540,9 @@ export function setup(ctx: SpindleFrontendContext) {
           "Grant the Interceptor and Generation permissions in Lumiverse's Extensions panel to activate AgentWorld.",
         ),
       );
+    }
+    if (state.connectionError) {
+      shell.appendChild(createElement("div", "agent-world-banner warn", state.connectionError));
     }
     if (draft.enabled && !draft.connectionId) {
       shell.appendChild(createElement("div", "agent-world-banner warn", "AgentWorld is enabled but no controller connection is selected."));
