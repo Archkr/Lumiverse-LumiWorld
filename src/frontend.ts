@@ -34,13 +34,13 @@ const CSS = `
 .agent-world-shell { display: flex; flex-direction: column; gap: 12px; }
 .agent-world-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--lumiverse-border);
 }
-.agent-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .agent-world-mark {
   width: 24px;
   height: 24px;
@@ -51,7 +51,14 @@ const CSS = `
 }
 .agent-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
 .agent-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
-.agent-world-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.agent-world-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+}
 .agent-world-btn {
   appearance: none;
   border: 1px solid var(--lumiverse-border);
@@ -208,7 +215,8 @@ const CSS = `
 }
 @media (max-width: 520px) {
   .agent-world-two, .agent-world-type-grid { grid-template-columns: 1fr; }
-  .agent-world-toolbar { align-items: flex-start; flex-direction: column; }
+  .agent-world-toolbar { align-items: stretch; flex-direction: column; }
+  .agent-world-actions { width: 100%; }
 }
 `;
 
