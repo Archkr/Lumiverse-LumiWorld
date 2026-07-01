@@ -35,7 +35,9 @@ export interface AgentWorldSettings {
   maxTokens: number;
   timeoutMs: number;
   maxInputChars: number;
+  historyMessageLimit: number;
   generationTypes: AgentWorldGenerationType[];
+  additionalNotes: string;
   systemTemplate: string;
   userTemplate: string;
   runLogLimit: number;
@@ -84,6 +86,7 @@ export interface ControllerTemplateContext {
   connectionId: string;
   timestamp: string;
   maxDirectiveChars: string;
+  additionalNotes: string;
 }
 
 export interface ControllerTarget {
@@ -104,9 +107,11 @@ export type ControllerTargetResult = ControllerTarget | ControllerTargetError;
 export const MAX_DIRECTIVE_CHARS = 2200;
 export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
+export const MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_RUN_LOG_LIMIT = 12;
+export const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
 
-export const DEFAULT_SYSTEM_TEMPLATE = [
+export const LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
   "Do not write the assistant reply. Do not address the user. Do not reveal this control step.",
@@ -114,7 +119,7 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Keep the note concrete, playable, and consistent with the assembled prompt.",
 ].join("\n");
 
-export const DEFAULT_USER_TEMPLATE = [
+export const LEGACY_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "Chat ID: {{chatId}}",
   "",
@@ -122,6 +127,27 @@ export const DEFAULT_USER_TEMPLATE = [
   "<assembled_prompt>",
   "{{prompt}}",
   "</assembled_prompt>",
+  "",
+  "Decide how the world should react now. Focus on state changes, environmental pressure, NPC intent, consequences, and what the main model should respect next.",
+  "Return one private director note under {{maxDirectiveChars}} characters.",
+].join("\n");
+
+export const DEFAULT_SYSTEM_TEMPLATE = [
+  "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
+  "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
+  "Do not write the assistant reply. Do not address the user. Do not reveal this control step.",
+  "Return only a concise director note for the main model. Prefer JSON like {\"director_note\":\"...\"}, but plain text is acceptable.",
+  "Keep the note concrete, playable, and consistent with the recent chat history and any additional notes.",
+].join("\n");
+
+export const DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "Chat ID: {{chatId}}",
+  "",
+  "Recent chat history available to the controller:",
+  "<chat_history>",
+  "{{prompt}}",
+  "</chat_history>",
   "",
   "Decide how the world should react now. Focus on state changes, environmental pressure, NPC intent, consequences, and what the main model should respect next.",
   "Return one private director note under {{maxDirectiveChars}} characters.",
@@ -135,7 +161,9 @@ export const DEFAULT_SETTINGS: AgentWorldSettings = {
   maxTokens: 420,
   timeoutMs: 45000,
   maxInputChars: 60000,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
   generationTypes: [...VISIBLE_GENERATION_TYPES],
+  additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
@@ -173,8 +201,12 @@ export function normalizeGenerationTypes(value: unknown): AgentWorldGenerationTy
 
 export function normalizeSettings(value: unknown): AgentWorldSettings {
   const obj = asRecord(value);
-  const systemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE) || DEFAULT_SYSTEM_TEMPLATE;
-  const userTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE) || DEFAULT_USER_TEMPLATE;
+  const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
+  const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
+  const systemTemplate =
+    !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const userTemplate =
+    !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
 
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
@@ -184,7 +216,9 @@ export function normalizeSettings(value: unknown): AgentWorldSettings {
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
+    additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
@@ -287,10 +321,22 @@ export function serializeMessageContent(content: LlmMessageLike["content"]): str
     .join("\n");
 }
 
+export function isChatHistoryMessage(message: LlmMessageLike): boolean {
+  return message.__isChatHistory === true ||
+    typeof message.sourceMessageId === "string" ||
+    typeof message.sourceIndexInChat === "number";
+}
+
+export function selectChatHistoryMessagesForController(messages: LlmMessageLike[], limit: number): LlmMessageLike[] {
+  const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
+  if (cappedLimit <= 0) return [];
+  return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
+}
+
 function formatMessageBlock(message: LlmMessageLike, index: number): string {
   const name = message.name ? ` name=${message.name}` : "";
   const content = serializeMessageContent(message.content).trim() || "[empty]";
-  return `### Message ${index + 1} (${message.role}${name})\n${content}`;
+  return `### Chat Message ${index + 1} (${message.role}${name})\n${content}`;
 }
 
 function takeStart(value: string, budget: number): string {
@@ -326,7 +372,7 @@ export function formatPromptForController(messages: LlmMessageLike[], maxChars: 
     leadingSystemCount += 1;
   }
 
-  const omission = "\n\n[... middle of assembled prompt omitted to fit AgentWorld context cap ...]\n\n";
+  const omission = "\n\n[... middle of chat history omitted to fit AgentWorld context cap ...]\n\n";
   const frontRaw = blocks.slice(0, leadingSystemCount).join("\n\n");
   const tailRaw = blocks.slice(leadingSystemCount).join("\n\n") || fullPrompt;
   const frontBudget = frontRaw ? Math.min(Math.floor(limit * 0.35), frontRaw.length) : 0;
@@ -359,8 +405,9 @@ export function renderTemplate(template: string, vars: ControllerTemplateContext
 export function buildControllerMessages(
   settings: AgentWorldSettings,
   snapshot: PromptSnapshot,
-  context: Omit<ControllerTemplateContext, "prompt" | "maxDirectiveChars" | "timestamp"> & Partial<Pick<ControllerTemplateContext, "timestamp">>,
+  context: Omit<ControllerTemplateContext, "prompt" | "maxDirectiveChars" | "timestamp" | "additionalNotes"> & Partial<Pick<ControllerTemplateContext, "timestamp">>,
 ): LlmMessageLike[] {
+  const additionalNotes = settings.additionalNotes.trim();
   const vars: ControllerTemplateContext = {
     prompt: snapshot.prompt,
     generationType: context.generationType,
@@ -368,11 +415,21 @@ export function buildControllerMessages(
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
     maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
+    additionalNotes,
   };
-  return [
-    { role: "system", content: renderTemplate(settings.systemTemplate, vars) },
-    { role: "user", content: renderTemplate(settings.userTemplate, vars) },
-  ];
+  const renderedSystem = renderTemplate(settings.systemTemplate, vars);
+  const renderedUser = renderTemplate(settings.userTemplate, vars);
+  const messages: LlmMessageLike[] = [{ role: "system", content: renderedSystem }];
+  const templateHandlesNotes = /{{\s*additionalNotes\s*}}/.test(settings.systemTemplate) ||
+    /{{\s*additionalNotes\s*}}/.test(settings.userTemplate);
+  if (additionalNotes && !templateHandlesNotes) {
+    messages.push({
+      role: "system",
+      content: ["Additional AgentWorld controller notes:", additionalNotes].join("\n"),
+    });
+  }
+  messages.push({ role: "user", content: renderedUser });
+  return messages;
 }
 
 function stripCodeFence(value: string): string {

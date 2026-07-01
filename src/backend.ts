@@ -14,6 +14,7 @@ import {
   normalizeSettings,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
+  selectChatHistoryMessagesForController,
   shouldInterceptGeneration,
   type AgentWorldSettings,
   type ConnectionLike,
@@ -355,7 +356,8 @@ async function handleInterceptor(
 
   controllerBusy = true;
   try {
-    const promptSnapshot = formatPromptForController(messages as LlmMessageLike[], settings.maxInputChars);
+    const controllerContextMessages = selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.historyMessageLimit);
+    const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
       chatId: chatId || "",

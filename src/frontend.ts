@@ -2,6 +2,7 @@ import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import {
   DEFAULT_SETTINGS,
   EXTENSION_NAME,
+  MAX_CHAT_HISTORY_MESSAGES,
   MAX_CONTROLLER_OUTPUT_TOKENS,
   MAX_CONTROLLER_TIMEOUT_MS,
   VISIBLE_GENERATION_TYPES,
@@ -508,6 +509,7 @@ export function setup(ctx: SpindleFrontendContext) {
       numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
       numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
       numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })),
+      numberField("Chat history messages", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value }), "Only this many recent Lumiverse chat-history messages are sent to the controller."),
       numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
     );
     form.appendChild(two);
@@ -585,7 +587,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const summary = createElement("summary", undefined, "Advanced controller prompt");
     const body = createElement("div", "agent-world-details-body");
     body.append(
-      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
+      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Controller-only context. If templates do not include {{additionalNotes}}, AgentWorld sends these notes as a separate system message."),
+      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{additionalNotes}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
       numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })),
     );

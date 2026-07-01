@@ -2,7 +2,7 @@
 
 AgentWorld is a Lumiverse Spindle extension that adds a controller-model pass before the main chat model replies.
 
-When enabled, AgentWorld runs as a late prompt interceptor. It receives the already-assembled Lumiverse prompt, sends a capped snapshot of that prompt to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
+When enabled, AgentWorld runs as a late prompt interceptor. It receives Lumiverse's in-flight message array, sends only the recent messages marked as chat history plus optional controller notes to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
 
 AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
 
@@ -23,8 +23,8 @@ AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile ca
 - Late-running prompt interceptor with priority `150`, so it sees earlier prompt additions such as lore and retrieval.
 - Controller connection selector powered by Lumiverse connection profiles.
 - Optional model override, or use the selected connection's configured model.
-- Configurable temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Editable advanced system/user templates for the controller prompt.
+- Configurable chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
+- Editable additional notes plus advanced system/user templates for the controller prompt.
 - Prompt Breakdown attribution through `AgentWorld Director`.
 - Recent run log with status, timing, connection/model, error, and directive preview only.
 - Graceful pass-through when disabled, unconfigured, missing permission, timed out, or errored.
@@ -33,7 +33,7 @@ AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile ca
 
 1. Lumiverse assembles the normal prompt for a visible chat generation.
 2. AgentWorld receives the in-flight message array through the Spindle interceptor API.
-3. AgentWorld serializes a capped snapshot of the prompt, preserving leading system context and recent tail content.
+3. AgentWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
 4. The selected controller connection is called through `spindle.generate.raw()`.
 5. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
 6. A private system block is injected above the original prompt:
@@ -72,7 +72,7 @@ https://github.com/Archkr/Lumiverse-AgentWorld
 2. Enable AgentWorld.
 3. Pick a controller connection profile.
 4. Optionally set a model override. Leave it blank to use the connection default.
-5. Adjust timeout, prompt cap, temperature, and output token cap if needed.
+5. Adjust chat-history message count, timeout, prompt cap, temperature, and output token cap if needed.
 6. Click `Test` to run a sample controller call that does not use your real chat history.
 7. Click `Save`.
 8. Send a normal chat message and inspect Prompt Breakdown for `AgentWorld Director`.
@@ -107,16 +107,19 @@ If the controller returns malformed JSON, AgentWorld trims the raw text and uses
 | `temperature` | `0.35` | Sampling temperature for the controller call. |
 | `maxTokens` | `420` | Output cap sent to the controller connection; the provider/model enforces its real maximum. |
 | `timeoutMs` | `45000` | Controller-call timeout in milliseconds. AgentWorld does not impose a short cap. |
-| `maxInputChars` | `60000` | Character cap for the serialized prompt snapshot. |
+| `maxInputChars` | `60000` | Character cap for the serialized chat-history snapshot. |
+| `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
 | `generationTypes` | All visible types | Controls which visible generation modes AgentWorld intercepts. |
+| `additionalNotes` | Empty | Controller-only context notes. Not injected into the main model prompt. |
 | `systemTemplate` | Built-in world-director prompt | Advanced controller system prompt. |
-| `userTemplate` | Built-in assembled-prompt wrapper | Advanced controller user prompt. |
+| `userTemplate` | Built-in chat-history wrapper | Advanced controller user prompt. |
 | `runLogLimit` | `12` | Number of recent runs retained per user. |
 
 Available template variables:
 
 ```text
 {{prompt}}
+{{additionalNotes}}
 {{generationType}}
 {{chatId}}
 {{connectionId}}
@@ -128,7 +131,7 @@ Available template variables:
 
 AgentWorld requests:
 
-- `interceptor` to receive and modify the in-flight assembled prompt.
+- `interceptor` to receive the in-flight message array and inject the director block.
 - `generation` to call `spindle.generate.raw()` and list/inspect Lumiverse LLM connection profiles.
 
 AgentWorld does **not** request `chats` or `chat_mutation`.
@@ -151,12 +154,12 @@ AgentWorld stores:
 AgentWorld does not persist:
 
 - full prompts;
-- full chat history;
+- full stored chat history beyond the configured recent message count;
 - raw controller inputs;
 - API keys;
 - full controller outputs beyond the short preview in recent runs.
 
-The controller call still sends the capped prompt snapshot to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
+The controller call sends the capped recent chat-history snapshot and any additional controller notes to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
 
 ## Troubleshooting
 
@@ -178,7 +181,7 @@ Check:
 
 ### The main reply is delayed
 
-AgentWorld runs before the main model call. Every controller call adds pre-generation latency. Lower the prompt cap, reduce max tokens, choose a faster controller model, or lower the timeout.
+AgentWorld runs before the main model call. Every controller call adds pre-generation latency. Lower the chat-history message count or prompt cap, reduce max tokens, choose a faster controller model, or lower the timeout.
 
 ### The controller writes prose instead of instructions
 

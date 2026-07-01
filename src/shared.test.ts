@@ -11,6 +11,7 @@ import {
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
+  selectChatHistoryMessagesForController,
   serializeMessageContent,
   shouldInterceptGeneration,
   type LlmMessageLike,
@@ -27,7 +28,9 @@ describe("settings normalization", () => {
       maxTokens: 2,
       timeoutMs: 500,
       maxInputChars: 20,
+      historyMessageLimit: -4,
       generationTypes: ["normal", "quiet", "swipe", "normal"],
+      additionalNotes: "  remember the silver key ",
       systemTemplate: "",
       userTemplate: "",
       runLogLimit: 999,
@@ -40,7 +43,9 @@ describe("settings normalization", () => {
     expect(settings.maxTokens).toBe(64);
     expect(settings.timeoutMs).toBe(1000);
     expect(settings.maxInputChars).toBe(4000);
+    expect(settings.historyMessageLimit).toBe(0);
     expect(settings.generationTypes).toEqual(["normal", "swipe"]);
+    expect(settings.additionalNotes).toBe("remember the silver key");
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
     expect(settings.runLogLimit).toBe(50);
@@ -132,6 +137,22 @@ describe("message serialization and prompt trimming", () => {
     expect(snapshot.prompt).toContain("LATEST USER TURN SHOULD REMAIN");
     expect(snapshot.prompt).toContain("omitted");
   });
+
+  test("selects only recent Lumiverse chat-history messages for the controller", () => {
+    const messages: LlmMessageLike[] = [
+      { role: "system", content: "persona scaffold" },
+      { role: "user", content: "old user", __isChatHistory: true },
+      { role: "assistant", content: "old assistant", __isChatHistory: true },
+      { role: "system", content: "non-chat injected block" },
+      { role: "user", content: "recent user", sourceIndexInChat: 12 },
+      { role: "assistant", content: "recent assistant", sourceMessageId: "message-13" },
+      { role: "system", content: "post-history instruction" },
+    ];
+
+    const selected = selectChatHistoryMessagesForController(messages, 2);
+    expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
+    expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
 });
 
 describe("controller prompt and directive parsing", () => {
@@ -148,6 +169,32 @@ describe("controller prompt and directive parsing", () => {
     expect(messages[0].content).toBe("System sees swipe");
     expect(messages[1].content).toContain("Prompt=hello");
     expect(messages[1].content).toContain("Chat=chat-1");
+  });
+
+  test("adds controller-only additional notes when templates do not place them", () => {
+    const messages = buildControllerMessages(
+      normalizeSettings({ additionalNotes: "The tower bell is already cracked." }),
+      { prompt: "hello", truncated: false, originalChars: 5, includedChars: 5, messageCount: 1 },
+      { generationType: "normal", chatId: "chat-1", connectionId: "conn-1", timestamp: "now" },
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[1].role).toBe("system");
+    expect(messages[1].content).toContain("The tower bell is already cracked.");
+  });
+
+  test("lets templates place additional notes explicitly", () => {
+    const messages = buildControllerMessages(
+      normalizeSettings({
+        additionalNotes: "Only the steward knows.",
+        userTemplate: "Notes={{additionalNotes}} Prompt={{prompt}}",
+      }),
+      { prompt: "hello", truncated: false, originalChars: 5, includedChars: 5, messageCount: 1 },
+      { generationType: "normal", chatId: "chat-1", connectionId: "conn-1", timestamp: "now" },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1].content).toContain("Notes=Only the steward knows.");
   });
 
   test("parses json, fenced json, and plain text directives", () => {
