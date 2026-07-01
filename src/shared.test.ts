@@ -183,7 +183,7 @@ describe("controller prompt and directive parsing", () => {
     expect(messages[1].content).toContain("The tower bell is already cracked.");
   });
 
-  test("lets templates place additional notes explicitly", () => {
+  test("always sends additional notes as a controller-only system message", () => {
     const messages = buildControllerMessages(
       normalizeSettings({
         additionalNotes: "Only the steward knows.",
@@ -193,8 +193,11 @@ describe("controller prompt and directive parsing", () => {
       { generationType: "normal", chatId: "chat-1", connectionId: "conn-1", timestamp: "now" },
     );
 
-    expect(messages).toHaveLength(2);
-    expect(messages[1].content).toContain("Notes=Only the steward knows.");
+    expect(messages).toHaveLength(3);
+    expect(messages[1].role).toBe("system");
+    expect(messages[1].content).toContain("Only the steward knows.");
+    expect(messages[2].content).toContain("Notes=");
+    expect(messages[2].content).not.toContain("Only the steward knows.");
   });
 
   test("parses json, fenced json, and plain text directives", () => {

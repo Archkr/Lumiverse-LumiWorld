@@ -301,13 +301,12 @@ function buildControllerMessages(settings, snapshot, context) {
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
     maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
-    additionalNotes
+    additionalNotes: ""
   };
   const renderedSystem = renderTemplate(settings.systemTemplate, vars);
   const renderedUser = renderTemplate(settings.userTemplate, vars);
   const messages = [{ role: "system", content: renderedSystem }];
-  const templateHandlesNotes = /{{\s*additionalNotes\s*}}/.test(settings.systemTemplate) || /{{\s*additionalNotes\s*}}/.test(settings.userTemplate);
-  if (additionalNotes && !templateHandlesNotes) {
+  if (additionalNotes) {
     messages.push({
       role: "system",
       content: ["Additional AgentWorld controller notes:", additionalNotes].join(`

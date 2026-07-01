@@ -415,14 +415,13 @@ export function buildControllerMessages(
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
     maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
-    additionalNotes,
+    // Notes are sent as their own controller-only message; keep the legacy token empty to avoid duplication.
+    additionalNotes: "",
   };
   const renderedSystem = renderTemplate(settings.systemTemplate, vars);
   const renderedUser = renderTemplate(settings.userTemplate, vars);
   const messages: LlmMessageLike[] = [{ role: "system", content: renderedSystem }];
-  const templateHandlesNotes = /{{\s*additionalNotes\s*}}/.test(settings.systemTemplate) ||
-    /{{\s*additionalNotes\s*}}/.test(settings.userTemplate);
-  if (additionalNotes && !templateHandlesNotes) {
+  if (additionalNotes) {
     messages.push({
       role: "system",
       content: ["Additional AgentWorld controller notes:", additionalNotes].join("\n"),

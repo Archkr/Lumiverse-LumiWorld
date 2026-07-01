@@ -24,7 +24,7 @@ AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile ca
 - Controller connection selector powered by Lumiverse connection profiles.
 - Optional model override, or use the selected connection's configured model.
 - Configurable chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Editable additional notes plus advanced system/user templates for the controller prompt.
+- Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
 - Prompt Breakdown attribution through `AgentWorld Director`.
 - Recent run log with status, timing, connection/model, error, and directive preview only.
 - Graceful pass-through when disabled, unconfigured, missing permission, timed out, or errored.
@@ -64,7 +64,7 @@ https://github.com/Archkr/Lumiverse-AgentWorld
 
 3. Enable AgentWorld and grant the requested permissions.
 4. Open the `AgentWorld` drawer tab.
-5. Select a controller LLM connection and save.
+5. Select a controller LLM connection. Settings auto-save as you edit.
 
 ## Setup
 
@@ -74,8 +74,7 @@ https://github.com/Archkr/Lumiverse-AgentWorld
 4. Optionally set a model override. Leave it blank to use the connection default.
 5. Adjust chat-history message count, timeout, prompt cap, temperature, and output token cap if needed.
 6. Click `Test` to run a sample controller call that does not use your real chat history.
-7. Click `Save`.
-8. Send a normal chat message and inspect Prompt Breakdown for `AgentWorld Director`.
+7. Send a normal chat message and inspect Prompt Breakdown for `AgentWorld Director`.
 
 ## Controller output
 
@@ -110,7 +109,7 @@ If the controller returns malformed JSON, AgentWorld trims the raw text and uses
 | `maxInputChars` | `60000` | Character cap for the serialized chat-history snapshot. |
 | `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
 | `generationTypes` | All visible types | Controls which visible generation modes AgentWorld intercepts. |
-| `additionalNotes` | Empty | Controller-only context notes. Not injected into the main model prompt. |
+| `additionalNotes` | Empty | Controller-only context notes. Always sent to the AgentWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
 | `systemTemplate` | Built-in world-director prompt | Advanced controller system prompt. |
 | `userTemplate` | Built-in chat-history wrapper | Advanced controller user prompt. |
 | `runLogLimit` | `12` | Number of recent runs retained per user. |
@@ -119,7 +118,6 @@ Available template variables:
 
 ```text
 {{prompt}}
-{{additionalNotes}}
 {{generationType}}
 {{chatId}}
 {{connectionId}}
@@ -173,7 +171,7 @@ If the connection list fails to load, AgentWorld shows the connection-list error
 
 Check:
 
-- a controller connection is selected and saved;
+- a controller connection is selected;
 - the current generation type is enabled;
 - the generation is not `quiet`;
 - `interceptor` and `generation` permissions are both granted;

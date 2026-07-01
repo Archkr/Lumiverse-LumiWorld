@@ -90,7 +90,7 @@ const CSS = `
   font-size: 13px;
   font-weight: 650;
 }
-.agent-world-form { display: grid; gap: 10px; }
+.agent-world-form { display: grid; gap: 12px; }
 .agent-world-field { display: grid; gap: 5px; min-width: 0; }
 .agent-world-field label, .agent-world-toggle-label {
   font-size: 12px;
@@ -114,7 +114,14 @@ const CSS = `
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.agent-world-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.agent-world-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 12px;
+  row-gap: 12px;
+  align-items: start;
+}
+.agent-world-two .agent-world-field { align-self: start; }
 .agent-world-setting-row, .agent-world-toggle {
   display: flex;
   gap: 8px;
@@ -251,8 +258,17 @@ function connectionLabel(connection: ConnectionOption): string {
   return `${bits.join(" / ")}${connection.hasApiKey ? "" : " (no key)"}`;
 }
 
-function setDirty(tab: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]>, value: boolean): void {
-  tab.setBadge(value ? "Unsaved" : null);
+function settingsKey(settings: AgentWorldSettings): string {
+  return JSON.stringify(settings);
+}
+
+function stateUiKey(state: FrontendState): string {
+  return JSON.stringify({
+    connections: state.connections,
+    connectionError: state.connectionError ?? null,
+    permissions: state.permissions,
+    runs: state.runs,
+  });
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -260,7 +276,10 @@ export function setup(ctx: SpindleFrontendContext) {
   const componentHandles: MountedHandle[] = [];
   let state: FrontendState | null = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
-  let dirty = false;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let localRevision = 0;
+  let saveRevision = 0;
+  let saveInFlight = false;
   let notice: { tone: "info" | "warn" | "error" | "success"; text: string } | null = null;
 
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -287,9 +306,15 @@ export function setup(ctx: SpindleFrontendContext) {
     }
   }
 
-  function markDirty(): void {
-    dirty = true;
-    setDirty(tab, true);
+  function scheduleAutoSave(): void {
+    if (saveTimer) clearTimeout(saveTimer);
+    tab.setBadge("Saving");
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      saveRevision = localRevision;
+      saveInFlight = true;
+      send(ctx, { type: "save_settings", settings: draft });
+    }, 500);
   }
 
   function selectedConnection(): ConnectionOption | null {
@@ -299,7 +324,8 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function updateDraft(patch: Partial<AgentWorldSettings>): void {
     draft = normalizeSettings({ ...draft, ...patch });
-    markDirty();
+    localRevision += 1;
+    scheduleAutoSave();
   }
 
   function field(label: string, control: HTMLElement, hint?: string): HTMLElement {
@@ -587,8 +613,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const summary = createElement("summary", undefined, "Advanced controller prompt");
     const body = createElement("div", "agent-world-details-body");
     body.append(
-      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Controller-only context. If templates do not include {{additionalNotes}}, AgentWorld sends these notes as a separate system message."),
-      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{additionalNotes}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
+      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the AgentWorld controller as a separate private system message. Never injected directly into the main model prompt."),
+      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
       numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })),
     );
@@ -679,16 +705,7 @@ export function setup(ctx: SpindleFrontendContext) {
       render();
       send(ctx, { type: "test_controller", settings: draft });
     });
-    const save = createElement("button", "agent-world-btn agent-world-btn-primary", dirty ? "Save" : "Saved");
-    save.type = "button";
-    save.disabled = !dirty;
-    save.addEventListener("click", () => {
-      dirty = false;
-      setDirty(tab, false);
-      send(ctx, { type: "save_settings", settings: draft });
-      render();
-    });
-    actions.append(refresh, test, save);
+    actions.append(refresh, test);
     toolbar.append(title, actions);
     shell.appendChild(toolbar);
   }
@@ -720,19 +737,30 @@ export function setup(ctx: SpindleFrontendContext) {
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw as BackendToFrontend;
     switch (message.type) {
-      case "state":
+      case "state": {
+        const previous = state;
+        const previousSettingsKey = previous ? settingsKey(previous.settings) : "";
+        const previousUiKey = previous ? stateUiKey(previous) : "";
         state = message.state;
-        if (!dirty) {
+        const canHydrateSettings = localRevision === saveRevision && !saveTimer && !saveInFlight;
+        let shouldRender = !previous || previousUiKey !== stateUiKey(message.state);
+        if (canHydrateSettings) {
+          const previousDraftKey = settingsKey(draft);
           draft = cloneSettings(message.state.settings);
+          shouldRender ||= previousSettingsKey !== settingsKey(message.state.settings) && previousDraftKey !== settingsKey(draft);
         }
-        render();
+        if (shouldRender) render();
         break;
+      }
       case "settings_saved":
-        dirty = false;
-        setDirty(tab, false);
-        draft = cloneSettings(message.settings);
-        notice = { tone: "success", text: "AgentWorld settings saved." };
-        render();
+        saveInFlight = false;
+        if (saveRevision === localRevision) {
+          draft = cloneSettings(message.settings);
+          if (state) state = { ...state, settings: message.settings };
+          tab.setBadge(null);
+        } else if (!saveTimer) {
+          scheduleAutoSave();
+        }
         break;
       case "run_logged":
         if (state) {
@@ -747,6 +775,8 @@ export function setup(ctx: SpindleFrontendContext) {
         render();
         break;
       case "error":
+        saveInFlight = false;
+        if (!saveTimer && localRevision === saveRevision) tab.setBadge("Error");
         notice = { tone: "error", text: message.message };
         render();
         break;
@@ -765,6 +795,10 @@ export function setup(ctx: SpindleFrontendContext) {
   render();
 
   return () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     destroyComponents();
     for (const cleanup of cleanups.reverse()) {
       try {
