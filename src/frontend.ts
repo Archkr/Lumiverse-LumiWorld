@@ -153,6 +153,11 @@ const CSS = `
   background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
 }
 .agent-world-runs { display: grid; gap: 8px; }
+.agent-world-runs-scroll {
+  max-height: min(360px, 42vh);
+  overflow-y: auto;
+  padding-right: 4px;
+}
 .agent-world-run {
   display: grid;
   gap: 5px;
@@ -535,7 +540,7 @@ export function setup(ctx: SpindleFrontendContext) {
       numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
       numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
       numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })),
-      numberField("Chat history messages", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value }), "Only this many recent Lumiverse chat-history messages are sent to the controller."),
+      numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })),
       numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
     );
     form.appendChild(two);
@@ -632,9 +637,11 @@ export function setup(ctx: SpindleFrontendContext) {
     title.appendChild(clear);
     panel.appendChild(title);
 
+    const scroll = createElement("div", "agent-world-runs-scroll");
     const runs = state?.runs ?? [];
     if (!runs.length) {
-      panel.appendChild(createElement("div", "agent-world-empty", "No controller runs yet."));
+      scroll.appendChild(createElement("div", "agent-world-empty", "No controller runs yet."));
+      panel.appendChild(scroll);
       shell.appendChild(panel);
       return;
     }
@@ -656,7 +663,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (run.error) item.appendChild(createElement("div", "agent-world-subtle", run.error));
       list.appendChild(item);
     }
-    panel.appendChild(list);
+    scroll.appendChild(list);
+    panel.appendChild(scroll);
     shell.appendChild(panel);
   }
 
