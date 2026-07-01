@@ -247,10 +247,15 @@ function makeRunBase(status: RunLogEntry["status"], startedAt: number, patch: Pa
 }
 
 async function callController(
+  userId: string | null,
   settings: AgentWorldSettings,
   target: ControllerTarget,
   messages: LlmMessageLike[],
 ): Promise<{ directive: string; durationMs: number }> {
+  if (!userId) {
+    throw new Error("AgentWorld could not resolve the active Lumiverse user for the controller call.");
+  }
+
   const startedAt = Date.now();
   const controller = new AbortController();
   let timedOut = false;
@@ -264,6 +269,7 @@ async function callController(
       provider: target.provider,
       model: target.model,
       connection_id: target.connectionId,
+      userId,
       messages,
       parameters: {
         temperature: settings.temperature,
@@ -346,7 +352,7 @@ async function handleInterceptor(
       chatId: chatId || "",
       connectionId: extractConnectionId(context),
     });
-    const { directive, durationMs } = await callController(settings, target, controllerMessages);
+    const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     const injected: LlmMessageDTO = {
       role: "system",
       content: buildInjectedDirective(directive),
@@ -431,7 +437,7 @@ async function runControllerTest(userId: string | null, patch?: Partial<AgentWor
       chatId: "agentworld-test",
       connectionId: target.connectionId,
     });
-    const { directive, durationMs } = await callController(settings, target, controllerMessages);
+    const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     await recordRun(
       makeRunBase("test_success", startedAt, {
         durationMs,
