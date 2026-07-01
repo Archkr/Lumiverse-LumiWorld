@@ -4,7 +4,7 @@ AgentWorld is a Lumiverse Spindle extension that adds a controller-model pass be
 
 When enabled, AgentWorld runs as a late prompt interceptor. It receives the already-assembled Lumiverse prompt, sends a capped snapshot of that prompt to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
 
-It is designed for [Qwen-AgentWorld](https://github.com/QwenLM/Qwen-AgentWorld)-style world simulation, but it is connection-agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
+AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
 
 ## At a glance
 

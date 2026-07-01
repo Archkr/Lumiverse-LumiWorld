@@ -4,6 +4,7 @@ import {
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
+  describeEmptyControllerResponse,
   extractControllerResponseText,
   formatPromptForController,
   normalizeSettings,
@@ -66,7 +67,7 @@ describe("connection/model resolution", () => {
     const settings = normalizeSettings({ connectionId: "conn-1", modelOverride: "override-model" });
     const target = resolveControllerTarget(settings, {
       id: "conn-1",
-      name: "Qwen",
+      name: "Controller",
       provider: "custom",
       model: "connection-model",
       isDefault: false,
@@ -162,6 +163,18 @@ describe("controller prompt and directive parsing", () => {
     expect(parseControllerDirectiveFromResponse({ choices: [{ message: { content: "{\"director_note\":\"Keep watch.\"}" } }] })).toBe(
       "Keep watch.",
     );
+  });
+
+  test("describes reasoning-only controller responses without model-specific advice", () => {
+    const message = describeEmptyControllerResponse({
+      choices: [{ message: { content: "", reasoning_content: "analysis only" }, finish_reason: "stop" }],
+      usage: { completion_tokens_details: { reasoning_tokens: 820 } },
+    });
+
+    expect(message).toContain("reasoning-only output");
+    expect(message).toContain("820 reasoning tokens");
+    expect(message).not.toContain("/no_think");
+    expect(message).not.toContain("Qwen");
   });
 
   test("builds private injected directive block", () => {

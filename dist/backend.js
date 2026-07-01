@@ -343,6 +343,23 @@ function readStringAtPath(value, path) {
   }
   return typeof current === "string" && current.trim() ? current : null;
 }
+function readNumberAtPath(value, path) {
+  let current = value;
+  for (const key of path) {
+    if (current == null || typeof current !== "object")
+      return null;
+    if (Array.isArray(current)) {
+      if (typeof key !== "number")
+        return null;
+      current = current[key];
+    } else {
+      if (typeof key !== "string")
+        return null;
+      current = current[key];
+    }
+  }
+  return typeof current === "number" && Number.isFinite(current) ? current : null;
+}
 function extractTextFromContentParts(value) {
   if (!Array.isArray(value))
     return null;
@@ -399,6 +416,41 @@ function extractControllerResponseText(response) {
   }
   return null;
 }
+function extractControllerReasoningText(response) {
+  const paths = [
+    ["reasoning"],
+    ["reasoning_content"],
+    ["message", "reasoning"],
+    ["message", "reasoning_content"],
+    ["choices", 0, "message", "reasoning"],
+    ["choices", 0, "message", "reasoning_content"]
+  ];
+  for (const path of paths) {
+    const text = readStringAtPath(response, path);
+    if (text)
+      return text.trim();
+  }
+  return null;
+}
+function describeEmptyControllerResponse(response) {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null
+  ].filter(Boolean).join(", ");
+  if (reasoning) {
+    return [
+      `AgentWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No director note was injected because AgentWorld only uses final controller content."
+    ].join(" ");
+  }
+  return [
+    `AgentWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
+    "No director note was injected."
+  ].join(" ");
+}
 function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE_CHARS) {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
 }
@@ -437,8 +489,8 @@ class ControllerTimeoutError extends Error {
 }
 
 class EmptyControllerDirectiveError extends Error {
-  constructor() {
-    super("AgentWorld controller returned no final directive. Try a non-reasoning controller model, or raise Max tokens if this keeps happening.");
+  constructor(response) {
+    super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
   }
 }
@@ -519,18 +571,6 @@ function toConnectionLike(connection) {
     ...toConnectionOption(connection),
     api_url: typeof connection.api_url === "string" ? connection.api_url : ""
   };
-}
-function controllerReasoningOverride(provider) {
-  const normalized = provider.toLowerCase();
-  if (["openrouter", "bedrock", "nanogpt"].includes(normalized)) {
-    return {
-      source: "custom",
-      apiReasoning: true,
-      effort: "none",
-      thinkingDisplay: "omitted"
-    };
-  }
-  return { source: "off" };
 }
 async function ensureFolders(userId) {
   await storageApi().mkdir("global", userId ?? undefined).catch(() => {});
@@ -657,12 +697,12 @@ async function callController(userId, settings, target, messages) {
         temperature: settings.temperature,
         max_tokens: settings.maxTokens
       },
-      reasoning: controllerReasoningOverride(target.provider),
+      reasoning: { source: "off" },
       signal: controller.signal
     });
     const directive = parseControllerDirectiveFromResponse(response);
     if (!directive) {
-      throw new EmptyControllerDirectiveError;
+      throw new EmptyControllerDirectiveError(response);
     }
     return { directive, durationMs: Date.now() - startedAt };
   } catch (error) {

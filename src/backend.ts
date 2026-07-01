@@ -7,6 +7,7 @@ import {
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
+  describeEmptyControllerResponse,
   formatPromptForController,
   makeDirectivePreview,
   normalizeRunLog,
@@ -42,8 +43,8 @@ class ControllerTimeoutError extends Error {
 }
 
 class EmptyControllerDirectiveError extends Error {
-  constructor() {
-    super("AgentWorld controller returned no final directive. Try a non-reasoning controller model, or raise Max tokens if this keeps happening.");
+  constructor(response: unknown) {
+    super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
   }
 }
@@ -134,19 +135,6 @@ function toConnectionLike(connection: ConnectionProfileDTO | any): ConnectionLik
     ...toConnectionOption(connection),
     api_url: typeof connection.api_url === "string" ? connection.api_url : "",
   };
-}
-
-function controllerReasoningOverride(provider: string): Record<string, unknown> {
-  const normalized = provider.toLowerCase();
-  if (["openrouter", "bedrock", "nanogpt"].includes(normalized)) {
-    return {
-      source: "custom",
-      apiReasoning: true,
-      effort: "none",
-      thinkingDisplay: "omitted",
-    };
-  }
-  return { source: "off" };
 }
 
 async function ensureFolders(userId?: string | null): Promise<void> {
@@ -295,12 +283,12 @@ async function callController(
         temperature: settings.temperature,
         max_tokens: settings.maxTokens,
       },
-      reasoning: controllerReasoningOverride(target.provider),
+      reasoning: { source: "off" },
       signal: controller.signal,
     });
     const directive = parseControllerDirectiveFromResponse(response);
     if (!directive) {
-      throw new EmptyControllerDirectiveError();
+      throw new EmptyControllerDirectiveError(response);
     }
     return { directive, durationMs: Date.now() - startedAt };
   } catch (error) {

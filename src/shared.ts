@@ -447,6 +447,21 @@ function readStringAtPath(value: unknown, path: Array<string | number>): string 
   return typeof current === "string" && current.trim() ? current : null;
 }
 
+function readNumberAtPath(value: unknown, path: Array<string | number>): number | null {
+  let current = value;
+  for (const key of path) {
+    if (current == null || typeof current !== "object") return null;
+    if (Array.isArray(current)) {
+      if (typeof key !== "number") return null;
+      current = current[key];
+    } else {
+      if (typeof key !== "string") return null;
+      current = (current as Record<string, unknown>)[key];
+    }
+  }
+  return typeof current === "number" && Number.isFinite(current) ? current : null;
+}
+
 function extractTextFromContentParts(value: unknown): string | null {
   if (!Array.isArray(value)) return null;
   const parts = value
@@ -498,6 +513,44 @@ export function extractControllerResponseText(response: unknown): string | null 
   }
 
   return null;
+}
+
+export function extractControllerReasoningText(response: unknown): string | null {
+  const paths: Array<Array<string | number>> = [
+    ["reasoning"],
+    ["reasoning_content"],
+    ["message", "reasoning"],
+    ["message", "reasoning_content"],
+    ["choices", 0, "message", "reasoning"],
+    ["choices", 0, "message", "reasoning_content"],
+  ];
+  for (const path of paths) {
+    const text = readStringAtPath(response, path);
+    if (text) return text.trim();
+  }
+  return null;
+}
+
+export function describeEmptyControllerResponse(response: unknown): string {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null,
+  ].filter(Boolean).join(", ");
+
+  if (reasoning) {
+    return [
+      `AgentWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No director note was injected because AgentWorld only uses final controller content.",
+    ].join(" ");
+  }
+
+  return [
+    `AgentWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
+    "No director note was injected.",
+  ].join(" ");
 }
 
 export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
