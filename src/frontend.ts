@@ -2,6 +2,7 @@ import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import {
   DEFAULT_SETTINGS,
   EXTENSION_NAME,
+  MAX_CONTROLLER_OUTPUT_TOKENS,
   VISIBLE_GENERATION_TYPES,
   normalizeSettings,
   type AgentWorldGenerationType,
@@ -504,7 +505,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const two = createElement("div", "agent-world-two");
     two.append(
       numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
-      numberField("Max tokens", draft.maxTokens, 64, 4096, 1, (value) => updateDraft({ maxTokens: value })),
+      numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
       numberField("Timeout ms", draft.timeoutMs, 1000, 55000, 1000, (value) => updateDraft({ timeoutMs: value })),
       numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
     );

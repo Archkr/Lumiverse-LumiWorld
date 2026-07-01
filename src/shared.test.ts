@@ -44,6 +44,10 @@ describe("settings normalization", () => {
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
     expect(settings.runLogLimit).toBe(50);
   });
+
+  test("does not cap controller max tokens at legacy 4096", () => {
+    expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
+  });
 });
 
 describe("generation gating", () => {

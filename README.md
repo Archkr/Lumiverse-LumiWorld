@@ -105,7 +105,7 @@ If the controller returns malformed JSON, AgentWorld trims the raw text and uses
 | `connectionId` | None | Lumiverse LLM connection profile used for the controller. |
 | `modelOverride` | Empty | Optional model id. Empty means use the connection default. |
 | `temperature` | `0.35` | Sampling temperature for the controller call. |
-| `maxTokens` | `420` | Output cap for the controller directive. |
+| `maxTokens` | `420` | Output cap sent to the controller connection; the provider/model enforces its real maximum. |
 | `timeoutMs` | `45000` | Controller-call timeout inside the interceptor budget. |
 | `maxInputChars` | `60000` | Character cap for the serialized prompt snapshot. |
 | `generationTypes` | All visible types | Controls which visible generation modes AgentWorld intercepts. |

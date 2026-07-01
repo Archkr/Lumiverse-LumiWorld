@@ -7,6 +7,7 @@ var VISIBLE_GENERATION_TYPES = [
   "swipe",
   "impersonate"
 ];
+var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
@@ -76,7 +77,7 @@ function normalizeSettings(value) {
     connectionId: cleanNullableString(obj.connectionId),
     modelOverride: cleanString(obj.modelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
-    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, 4096),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 55000),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
@@ -519,7 +520,7 @@ function setup(ctx) {
     form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
     renderModelControl(modelSlot);
     const two = createElement("div", "agent-world-two");
-    two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, 4096, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, 55000, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
+    two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, 55000, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
     form.appendChild(two);
     panel.appendChild(form);
     shell.appendChild(panel);
