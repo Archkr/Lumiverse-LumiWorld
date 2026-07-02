@@ -24,7 +24,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 - Controller connection selector powered by Lumiverse connection profiles.
 - Optional model override, or use the selected connection's configured model.
 - Configurable context sources, chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Sends recent chat history, the active user persona, and the active chat character card to the controller when enabled.
+- Sends recent chat history, the active user persona, and the active character card to the controller when enabled.
 - World Info entry context is prepared for host support but the UI toggle is disabled until `__isWorldInfoEntry` is available.
 - Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
 - Prompt Breakdown attribution through `LumiWorld Director`.
@@ -36,7 +36,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 1. Lumiverse assembles the normal prompt for a visible chat generation.
 2. LumiWorld receives the in-flight message array through the Spindle interceptor API.
 3. LumiWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
-4. LumiWorld optionally fetches the active persona and active chat character card through Lumiverse APIs and adds them to the controller-only context.
+4. LumiWorld optionally fetches the active persona and active character card through Lumiverse APIs and adds them to the controller-only context.
 5. The selected controller connection is called through `spindle.generate.raw()`.
 6. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
 7. A private system block is injected above the original prompt:
@@ -114,7 +114,7 @@ If the controller returns malformed JSON, LumiWorld trims the raw text and uses 
 | `generationTypes` | All visible types | Controls which visible generation modes LumiWorld intercepts. |
 | `includeWorldInfoEntries` | Off | Entry context toggle. Disabled in the UI until `__isWorldInfoEntry` support is available. |
 | `includeUserPersona` | On | Sends the active user persona to the controller only. |
-| `includeCharacter` | On | Sends the active chat character card to the controller only. |
+| `includeCharacter` | On | Sends the active character card to the controller only. |
 | `additionalNotes` | Empty | Controller-only context notes. Always sent to the LumiWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
 | `systemTemplate` | Built-in world-director prompt | Advanced controller system prompt. |
 | `userTemplate` | Built-in chat-history wrapper | Advanced controller user prompt. |

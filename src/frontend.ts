@@ -657,7 +657,7 @@ export function setup(ctx: SpindleFrontendContext) {
     body.append(
       toggleField("Entries", draft.includeWorldInfoEntries, () => {}, "Coming soon", true),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
-      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active chat character card to the controller."),
+      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
       textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."),
       textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
