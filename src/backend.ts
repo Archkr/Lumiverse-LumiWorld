@@ -16,7 +16,7 @@ import {
   resolveControllerTarget,
   selectChatHistoryMessagesForController,
   shouldInterceptGeneration,
-  type AgentWorldSettings,
+  type LumiWorldSettings,
   type ConnectionLike,
   type ConnectionOption,
   type ControllerTarget,
@@ -38,7 +38,7 @@ let controllerBusy = false;
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs: number) {
-    super(`AgentWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    super(`LumiWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "ControllerTimeoutError";
   }
 }
@@ -142,19 +142,19 @@ async function ensureFolders(userId?: string | null): Promise<void> {
   await storageApi().mkdir("global", userId ?? undefined).catch(() => {});
 }
 
-async function loadSettings(userId?: string | null): Promise<AgentWorldSettings> {
+async function loadSettings(userId?: string | null): Promise<LumiWorldSettings> {
   try {
     const stored = await storageApi().getJson(SETTINGS_PATH, {
       fallback: DEFAULT_SETTINGS,
       userId: userId ?? undefined,
-    }) as Partial<AgentWorldSettings>;
+    }) as Partial<LumiWorldSettings>;
     return normalizeSettings(stored);
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
-async function saveSettings(patch: Partial<AgentWorldSettings>, userId?: string | null): Promise<AgentWorldSettings> {
+async function saveSettings(patch: Partial<LumiWorldSettings>, userId?: string | null): Promise<LumiWorldSettings> {
   await ensureFolders(userId);
   const current = await loadSettings(userId);
   const next = normalizeSettings({ ...current, ...patch });
@@ -179,7 +179,7 @@ async function saveRuns(runs: RunLogEntry[], userId?: string | null): Promise<vo
   await storageApi().setJson(RUNS_PATH, runs, { indent: 2, userId: userId ?? undefined });
 }
 
-async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: AgentWorldSettings): Promise<void> {
+async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: LumiWorldSettings): Promise<void> {
   try {
     const resolvedSettings = settings ?? (await loadSettings(userId));
     const existing = await loadRuns(userId, resolvedSettings.runLogLimit);
@@ -187,7 +187,7 @@ async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: 
     await saveRuns(next, userId);
     send({ type: "run_logged", run: entry }, userId ?? undefined);
   } catch (error) {
-    spindle.log.warn(`AgentWorld could not record run: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not record run: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -195,7 +195,7 @@ async function listConnections(userId?: string | null): Promise<{ connections: C
   if (!permissionHas("generation")) {
     return {
       connections: [],
-      error: "Generation permission is not granted, so AgentWorld cannot list LLM connection profiles.",
+      error: "Generation permission is not granted, so LumiWorld cannot list LLM connection profiles.",
     };
   }
 
@@ -208,7 +208,7 @@ async function listConnections(userId?: string | null): Promise<{ connections: C
     return { connections, error: null };
   } catch (error) {
     const description = error instanceof Error ? error.message : String(error);
-    spindle.log.warn(`AgentWorld could not list connection profiles: ${description}`);
+    spindle.log.warn(`LumiWorld could not list connection profiles: ${description}`);
     return {
       connections: [],
       error: `Could not list LLM connection profiles: ${description}`,
@@ -257,12 +257,12 @@ function makeRunBase(status: RunLogEntry["status"], startedAt: number, patch: Pa
 
 async function callController(
   userId: string | null,
-  settings: AgentWorldSettings,
+  settings: LumiWorldSettings,
   target: ControllerTarget,
   messages: LlmMessageLike[],
 ): Promise<{ directive: string; durationMs: number }> {
   if (!userId) {
-    throw new Error("AgentWorld could not resolve the active Lumiverse user for the controller call.");
+    throw new Error("LumiWorld could not resolve the active Lumiverse user for the controller call.");
   }
 
   const startedAt = Date.now();
@@ -331,7 +331,7 @@ async function handleInterceptor(
     await recordRun(
       makeRunBase("skipped", startedAt, {
         generationType,
-        error: "Another AgentWorld controller call is already running.",
+        error: "Another LumiWorld controller call is already running.",
       }),
       userId,
       settings,
@@ -401,7 +401,7 @@ async function handleInterceptor(
       userId,
       settings,
     );
-    spindle.log.warn(`AgentWorld interceptor skipped injection: ${message}`);
+    spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
   } finally {
     controllerBusy = false;
@@ -413,10 +413,10 @@ function tryRegisterInterceptor(): void {
   if (!permissionHas("interceptor")) return;
   spindle.registerInterceptor(handleInterceptor, INTERCEPTOR_PRIORITY);
   interceptorRegistered = true;
-  spindle.log.info("AgentWorld interceptor registered.");
+  spindle.log.info("LumiWorld interceptor registered.");
 }
 
-async function runControllerTest(userId: string | null, patch?: Partial<AgentWorldSettings>): Promise<void> {
+async function runControllerTest(userId: string | null, patch?: Partial<LumiWorldSettings>): Promise<void> {
   const baseSettings = await loadSettings(userId);
   const settings = normalizeSettings({ ...baseSettings, ...patch });
   const startedAt = Date.now();
@@ -439,14 +439,14 @@ async function runControllerTest(userId: string | null, patch?: Partial<AgentWor
   try {
     const snapshot = formatPromptForController(
       [
-        { role: "system", content: "You are running a short AgentWorld controller smoke test." },
+        { role: "system", content: "You are running a short LumiWorld controller smoke test." },
         { role: "user", content: "The player opens an ancient observatory door during a storm. Decide how the world reacts." },
       ],
       settings.maxInputChars,
     );
     const controllerMessages = buildControllerMessages(settings, snapshot, {
       generationType: "normal",
-      chatId: "agentworld-test",
+      chatId: "lumiworld-test",
       connectionId: target.connectionId,
     });
     const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
@@ -493,7 +493,7 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
 });
 
 permissionsApi()?.onDenied?.(({ permission, operation }: { permission: string; operation: string }) => {
-  spindle.log.warn(`AgentWorld permission denied for ${operation}: ${permission}`);
+  spindle.log.warn(`LumiWorld permission denied for ${operation}: ${permission}`);
 });
 
 spindle.onFrontendMessage(async (raw, userId) => {
@@ -524,10 +524,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
     }
   } catch (error) {
-    const description = error instanceof Error ? error.message : "Unknown AgentWorld error.";
-    spindle.log.error(`AgentWorld backend error: ${description}`);
+    const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";
+    spindle.log.error(`LumiWorld backend error: ${description}`);
     send({ type: "error", message: description }, userId);
   }
 });
 
-spindle.log.info("AgentWorld loaded.");
+spindle.log.info("LumiWorld loaded.");

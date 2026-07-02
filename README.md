@@ -1,10 +1,10 @@
-# AgentWorld
+# LumiWorld
 
-AgentWorld is a Lumiverse Spindle extension that adds a controller-model pass before the main chat model replies.
+LumiWorld is a Lumiverse Spindle extension that adds a controller-model pass before the main chat model replies.
 
-When enabled, AgentWorld runs as a late prompt interceptor. It receives Lumiverse's in-flight message array, sends only the recent messages marked as chat history plus optional controller notes to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
+When enabled, LumiWorld runs as a late prompt interceptor. It receives Lumiverse's in-flight message array, sends only the recent messages marked as chat history plus optional controller notes to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
 
-AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
+LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
 
 ## At a glance
 
@@ -13,7 +13,7 @@ AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile ca
 | Extension type | Prompt interceptor |
 | Main use | Let a controller model decide how the world should react before the visible reply |
 | Controller model | Any Lumiverse LLM connection profile |
-| Prompt Breakdown label | `AgentWorld Director` |
+| Prompt Breakdown label | `LumiWorld Director` |
 | Runs on | `normal`, `continue`, `regenerate`, `swipe`, `impersonate` |
 | Skips | `quiet` and any disabled generation type |
 | Default permissions | `interceptor`, `generation` |
@@ -25,21 +25,21 @@ AgentWorld is controller-model agnostic. Any Lumiverse LLM connection profile ca
 - Optional model override, or use the selected connection's configured model.
 - Configurable chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
 - Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
-- Prompt Breakdown attribution through `AgentWorld Director`.
+- Prompt Breakdown attribution through `LumiWorld Director`.
 - Recent run log with status, timing, connection/model, error, and directive preview only.
 - Graceful pass-through when disabled, unconfigured, missing permission, timed out, or errored.
 
 ## How it works
 
 1. Lumiverse assembles the normal prompt for a visible chat generation.
-2. AgentWorld receives the in-flight message array through the Spindle interceptor API.
-3. AgentWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
+2. LumiWorld receives the in-flight message array through the Spindle interceptor API.
+3. LumiWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
 4. The selected controller connection is called through `spindle.generate.raw()`.
 5. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
 6. A private system block is injected above the original prompt:
 
 ```text
-[AgentWorld Director]
+[LumiWorld Director]
 ...
 ```
 
@@ -62,23 +62,23 @@ https://github.com/Archkr/Lumiverse-AgentWorld
 - Paste the repository URL
 - Click `Install`
 
-3. Enable AgentWorld and grant the requested permissions.
-4. Open the `AgentWorld` drawer tab.
+3. Enable LumiWorld and grant the requested permissions.
+4. Open the `LumiWorld` drawer tab.
 5. Select a controller LLM connection. Settings auto-save as you edit.
 
 ## Setup
 
-1. Open the AgentWorld drawer tab.
-2. Enable AgentWorld.
+1. Open the LumiWorld drawer tab.
+2. Enable LumiWorld.
 3. Pick a controller connection profile.
 4. Optionally set a model override. Leave it blank to use the connection default.
 5. Adjust chat-history message count, timeout, prompt cap, temperature, and output token cap if needed.
 6. Click `Test` to run a sample controller call that does not use your real chat history.
-7. Send a normal chat message and inspect Prompt Breakdown for `AgentWorld Director`.
+7. Send a normal chat message and inspect Prompt Breakdown for `LumiWorld Director`.
 
 ## Controller output
 
-AgentWorld prefers JSON but accepts plain text.
+LumiWorld prefers JSON but accepts plain text.
 
 Preferred:
 
@@ -94,7 +94,7 @@ Accepted:
 The storm intensifies around the observatory. The main model should make the door feel heavy, show NPC alarm, and preserve the mystery.
 ```
 
-If the controller returns malformed JSON, AgentWorld trims the raw text and uses it as the directive. If no usable directive is returned, the main generation continues unchanged.
+If the controller returns malformed JSON, LumiWorld trims the raw text and uses it as the directive. If no usable directive is returned, the main generation continues unchanged.
 
 ## Settings reference
 
@@ -105,11 +105,11 @@ If the controller returns malformed JSON, AgentWorld trims the raw text and uses
 | `modelOverride` | Empty | Optional model id. Empty means use the connection default. |
 | `temperature` | `0.35` | Sampling temperature for the controller call. |
 | `maxTokens` | `420` | Output cap sent to the controller connection; the provider/model enforces its real maximum. |
-| `timeoutMs` | `45000` | Controller-call timeout in milliseconds. AgentWorld does not impose a short cap. |
+| `timeoutMs` | `45000` | Controller-call timeout in milliseconds. LumiWorld does not impose a short cap. |
 | `maxInputChars` | `60000` | Character cap for the serialized chat-history snapshot. |
 | `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
-| `generationTypes` | All visible types | Controls which visible generation modes AgentWorld intercepts. |
-| `additionalNotes` | Empty | Controller-only context notes. Always sent to the AgentWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
+| `generationTypes` | All visible types | Controls which visible generation modes LumiWorld intercepts. |
+| `additionalNotes` | Empty | Controller-only context notes. Always sent to the LumiWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
 | `systemTemplate` | Built-in world-director prompt | Advanced controller system prompt. |
 | `userTemplate` | Built-in chat-history wrapper | Advanced controller user prompt. |
 | `runLogLimit` | `12` | Number of recent runs retained per user. |
@@ -127,12 +127,12 @@ Available template variables:
 
 ## Permissions
 
-AgentWorld requests:
+LumiWorld requests:
 
 - `interceptor` to receive the in-flight message array and inject the director block.
 - `generation` to call `spindle.generate.raw()` and list/inspect Lumiverse LLM connection profiles.
 
-AgentWorld does **not** request `chats` or `chat_mutation`.
+LumiWorld does **not** request `chats` or `chat_mutation`.
 
 The extension does not call chat CRUD APIs, inspect raw stored message history, append messages, edit messages, delete messages, hide messages, or mutate swipes. It only uses:
 
@@ -144,12 +144,12 @@ If a future feature needs stored chat reads or message edits, that should be tre
 
 ## Privacy
 
-AgentWorld stores:
+LumiWorld stores:
 
 - settings;
 - a small recent-run ring buffer with status, timing, controller connection/model, error text, and directive preview.
 
-AgentWorld does not persist:
+LumiWorld does not persist:
 
 - full prompts;
 - full stored chat history beyond the configured recent message count;
@@ -165,9 +165,9 @@ The controller call sends the capped recent chat-history snapshot and any additi
 
 Make sure the `generation` permission is granted. Lumiverse exposes connection profiles through the generation permission because the extension needs to call the selected controller model.
 
-If the connection list fails to load, AgentWorld shows the connection-list error in the drawer instead of silently showing an empty selector.
+If the connection list fails to load, LumiWorld shows the connection-list error in the drawer instead of silently showing an empty selector.
 
-### AgentWorld is enabled but nothing appears in Prompt Breakdown
+### LumiWorld is enabled but nothing appears in Prompt Breakdown
 
 Check:
 
@@ -179,7 +179,7 @@ Check:
 
 ### The main reply is delayed
 
-AgentWorld runs before the main model call. Every controller call adds pre-generation latency. Lower the chat-history message count or prompt cap, reduce max tokens, choose a faster controller model, or lower the timeout.
+LumiWorld runs before the main model call. Every controller call adds pre-generation latency. Lower the chat-history message count or prompt cap, reduce max tokens, choose a faster controller model, or lower the timeout.
 
 ### The controller writes prose instead of instructions
 
@@ -187,7 +187,7 @@ Open `Advanced controller prompt` and tighten the templates. The built-in prompt
 
 ### Controller failure blocks the chat
 
-It should not. AgentWorld is designed to pass the original messages through unchanged on missing config, permission denial, controller error, or timeout. If the main generation is blocked, check Lumiverse logs for a host-level interceptor error.
+It should not. LumiWorld is designed to pass the original messages through unchanged on missing config, permission denial, controller error, or timeout. If the main generation is blocked, check Lumiverse logs for a host-level interceptor error.
 
 ## Project layout
 

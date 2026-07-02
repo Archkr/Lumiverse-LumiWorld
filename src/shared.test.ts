@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
@@ -25,7 +26,7 @@ describe("settings normalization", () => {
     const settings = normalizeSettings({
       enabled: true,
       connectionId: "  conn-1 ",
-      modelOverride: "  qwen-agentworld ",
+      modelOverride: "  controller-model ",
       temperature: 9,
       maxTokens: 2,
       timeoutMs: 500,
@@ -40,7 +41,7 @@ describe("settings normalization", () => {
 
     expect(settings.enabled).toBe(true);
     expect(settings.connectionId).toBe("conn-1");
-    expect(settings.modelOverride).toBe("qwen-agentworld");
+    expect(settings.modelOverride).toBe("controller-model");
     expect(settings.temperature).toBe(2);
     expect(settings.maxTokens).toBe(64);
     expect(settings.timeoutMs).toBe(1000);
@@ -61,6 +62,14 @@ describe("settings normalization", () => {
 
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
+  });
+
+  test("migrates pre-rebrand built-in controller template", () => {
+    const settings = normalizeSettings({
+      systemTemplate: PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
+    });
+
+    expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
   });
 
   test("does not cap controller max tokens at legacy 4096", () => {
@@ -240,13 +249,13 @@ describe("controller prompt and directive parsing", () => {
     expect(message).toContain("reasoning-only output");
     expect(message).toContain("820 reasoning tokens");
     expect(message).not.toContain("/no_think");
-    expect(message).not.toContain("Qwen");
+    expect(message).not.toContain("model-specific");
   });
 
   test("builds private injected directive block", () => {
     const injected = buildInjectedDirective("The lock clicks from the other side.");
-    expect(injected).toContain("[AgentWorld Director]");
-    expect(injected).toContain("Do not mention AgentWorld");
+    expect(injected).toContain("[LumiWorld Director]");
+    expect(injected).toContain("Do not mention LumiWorld");
     expect(injected).toContain("The lock clicks");
   });
 });

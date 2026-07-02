@@ -1,5 +1,5 @@
 // src/shared.ts
-var EXTENSION_NAME = "AgentWorld";
+var EXTENSION_NAME = "LumiWorld";
 var VISIBLE_GENERATION_TYPES = [
   "normal",
   "continue",
@@ -54,7 +54,7 @@ var PREVIOUS_DEFAULT_USER_TEMPLATE = [
   "Return one private director note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_SYSTEM_TEMPLATE = [
+var PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -72,6 +72,31 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "The directive should feel like the world moving forward, not a recap of the scene.",
   "",
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention AgentWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  '{"director_note":"..."}',
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
+].join(`
+`);
+var DEFAULT_SYSTEM_TEMPLATE = [
+  "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  'Use imperative language. Start with a verb such as "Make", "Let", "Have", "Keep", "Escalate", "Pressure", or "Treat".',
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
   '{"director_note":"..."}',
@@ -136,7 +161,7 @@ function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
   const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
@@ -156,9 +181,9 @@ function normalizeSettings(value) {
 }
 
 // src/frontend.ts
-var AGENTWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 3.5c2.2 2.1 3.2 4.9 3 8.5-.2 3.5-1.2 6.3-3 8.5"/><path d="M12 3.5c-2.2 2.1-3.2 4.9-3 8.5.2 3.5 1.2 6.3 3 8.5"/><path d="M3.8 10h10.4"/><path d="M4.8 15h9.8"/><path d="M16.5 4.2l1.4 2.8 3.1.4-2.2 2.2.5 3.1-2.8-1.5-2.8 1.5.5-3.1L12 7.4l3.1-.4 1.4-2.8z"/></svg>`;
+var LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 3.5c2.2 2.1 3.2 4.9 3 8.5-.2 3.5-1.2 6.3-3 8.5"/><path d="M12 3.5c-2.2 2.1-3.2 4.9-3 8.5.2 3.5 1.2 6.3 3 8.5"/><path d="M3.8 10h10.4"/><path d="M4.8 15h9.8"/><path d="M16.5 4.2l1.4 2.8 3.1.4-2.2 2.2.5 3.1-2.8-1.5-2.8 1.5.5-3.1L12 7.4l3.1-.4 1.4-2.8z"/></svg>`;
 var CSS = `
-.agent-world-root {
+.lumi-world-root {
   min-height: 100%;
   padding: 12px;
   color: var(--lumiverse-text);
@@ -168,12 +193,12 @@ var CSS = `
   font-size: calc(13px * var(--lumiverse-font-scale, 1));
   line-height: 1.45;
 }
-.agent-world-root * { box-sizing: border-box; }
-.agent-world-root input, .agent-world-root textarea, .agent-world-root select {
+.lumi-world-root * { box-sizing: border-box; }
+.lumi-world-root input, .lumi-world-root textarea, .lumi-world-root select {
   accent-color: var(--lumiverse-primary, var(--lumiverse-accent));
 }
-.agent-world-shell { display: flex; flex-direction: column; gap: 12px; }
-.agent-world-toolbar {
+.lumi-world-shell { display: flex; flex-direction: column; gap: 12px; }
+.lumi-world-toolbar {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -181,8 +206,8 @@ var CSS = `
   padding-bottom: 6px;
   border-bottom: 1px solid var(--lumiverse-border);
 }
-.agent-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
-.agent-world-mark {
+.lumi-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.lumi-world-mark {
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -190,9 +215,9 @@ var CSS = `
   justify-content: center;
   color: var(--lumiverse-primary-text, var(--lumiverse-accent));
 }
-.agent-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
-.agent-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
-.agent-world-actions {
+.lumi-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
+.lumi-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
+.lumi-world-actions {
   display: flex;
   flex: 0 0 auto;
   flex-wrap: nowrap;
@@ -200,7 +225,7 @@ var CSS = `
   gap: 8px;
   align-items: center;
 }
-.agent-world-btn {
+.lumi-world-btn {
   appearance: none;
   border: 1px solid var(--lumiverse-border);
   background: var(--lumiverse-fill);
@@ -211,42 +236,42 @@ var CSS = `
   cursor: pointer;
   transition: border-color var(--lumiverse-transition-fast), background var(--lumiverse-transition-fast), opacity var(--lumiverse-transition-fast);
 }
-.agent-world-btn:hover { border-color: var(--lumiverse-border-hover, var(--lumiverse-primary-050)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
-.agent-world-btn:disabled { cursor: default; opacity: 0.6; }
-.agent-world-btn-primary {
+.lumi-world-btn:hover { border-color: var(--lumiverse-border-hover, var(--lumiverse-primary-050)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
+.lumi-world-btn:disabled { cursor: default; opacity: 0.6; }
+.lumi-world-btn-primary {
   background: var(--lumiverse-primary, var(--lumiverse-accent));
   color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
   border-color: var(--lumiverse-primary, var(--lumiverse-accent));
 }
-.agent-world-btn-danger { color: var(--lumiverse-danger, currentColor); }
-.agent-world-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
-.agent-world-panel {
+.lumi-world-btn-danger { color: var(--lumiverse-danger, currentColor); }
+.lumi-world-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.lumi-world-panel {
   border: 1px solid var(--lumiverse-border);
   background: var(--lumiverse-fill-subtle);
   border-radius: var(--lumiverse-radius);
   padding: 12px;
 }
-.agent-world-panel-title {
+.lumi-world-panel-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
 }
-.agent-world-panel-title h3 {
+.lumi-world-panel-title h3 {
   margin: 0;
   font-size: 13px;
   font-weight: 650;
 }
-.agent-world-form { display: grid; gap: 12px; }
-.agent-world-field { display: grid; gap: 5px; min-width: 0; }
-.agent-world-field label, .agent-world-toggle-label {
+.lumi-world-form { display: grid; gap: 12px; }
+.lumi-world-field { display: grid; gap: 5px; min-width: 0; }
+.lumi-world-field label, .lumi-world-toggle-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--lumiverse-text);
 }
-.agent-world-hint { font-size: 11.5px; color: var(--lumiverse-text-dim); }
-.agent-world-input, .agent-world-select, .agent-world-textarea {
+.lumi-world-hint { font-size: 11.5px; color: var(--lumiverse-text-dim); }
+.lumi-world-input, .lumi-world-select, .lumi-world-textarea {
   width: 100%;
   border: 1px solid var(--lumiverse-border);
   border-radius: var(--lumiverse-radius);
@@ -255,31 +280,31 @@ var CSS = `
   font: inherit;
   padding: 8px 9px;
 }
-.agent-world-textarea {
+.lumi-world-textarea {
   resize: vertical;
   min-height: 132px;
   line-height: 1.35;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.agent-world-two {
+.lumi-world-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 12px;
   row-gap: 12px;
   align-items: start;
 }
-.agent-world-two .agent-world-field { align-self: start; }
-.agent-world-setting-row, .agent-world-toggle {
+.lumi-world-two .lumi-world-field { align-self: start; }
+.lumi-world-setting-row, .lumi-world-toggle {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   padding: 8px 0;
 }
-.agent-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
-.agent-world-toggle input { margin-top: 2px; }
-.agent-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.agent-world-chip {
+.lumi-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
+.lumi-world-toggle input { margin-top: 2px; }
+.lumi-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lumi-world-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -288,25 +313,25 @@ var CSS = `
   padding: 7px 8px;
   background: var(--lumiverse-fill);
 }
-.agent-world-chip input { margin: 0; }
-.agent-world-banner {
+.lumi-world-chip input { margin: 0; }
+.lumi-world-banner {
   border: 1px solid var(--lumiverse-border);
   border-radius: var(--lumiverse-radius);
   padding: 9px 10px;
   background: var(--lumiverse-primary-010, var(--lumiverse-fill-subtle));
   color: var(--lumiverse-text);
 }
-.agent-world-banner.warn {
+.lumi-world-banner.warn {
   border-color: var(--lumiverse-warning-050, var(--lumiverse-border));
   background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
 }
-.agent-world-runs { display: grid; gap: 8px; }
-.agent-world-runs-scroll {
+.lumi-world-runs { display: grid; gap: 8px; }
+.lumi-world-runs-scroll {
   max-height: min(360px, 42vh);
   overflow-y: auto;
   padding-right: 4px;
 }
-.agent-world-run {
+.lumi-world-run {
   display: grid;
   gap: 5px;
   padding: 9px;
@@ -314,13 +339,13 @@ var CSS = `
   border-radius: var(--lumiverse-radius);
   background: var(--lumiverse-fill);
 }
-.agent-world-run-head {
+.lumi-world-run-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.agent-world-status {
+.lumi-world-status {
   display: inline-flex;
   align-items: center;
   border-radius: var(--lumiverse-radius-xl, 999px);
@@ -329,25 +354,25 @@ var CSS = `
   border: 1px solid var(--lumiverse-border);
   color: var(--lumiverse-text);
 }
-.agent-world-status.success, .agent-world-status.test_success {
+.lumi-world-status.success, .lumi-world-status.test_success {
   color: var(--lumiverse-success, currentColor);
 }
-.agent-world-status.error, .agent-world-status.timeout, .agent-world-status.test_error {
+.lumi-world-status.error, .lumi-world-status.timeout, .lumi-world-status.test_error {
   color: var(--lumiverse-danger, currentColor);
 }
-.agent-world-details {
+.lumi-world-details {
   border: 1px solid var(--lumiverse-border);
   border-radius: var(--lumiverse-radius);
   background: var(--lumiverse-fill-subtle);
   padding: 0;
 }
-.agent-world-details summary {
+.lumi-world-details summary {
   cursor: pointer;
   padding: 10px 12px;
   font-weight: 650;
 }
-.agent-world-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
-.agent-world-empty {
+.lumi-world-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
+.lumi-world-empty {
   padding: 14px;
   text-align: center;
   color: var(--lumiverse-text-dim);
@@ -355,9 +380,9 @@ var CSS = `
   border-radius: var(--lumiverse-radius);
 }
 @media (max-width: 520px) {
-  .agent-world-two, .agent-world-type-grid { grid-template-columns: 1fr; }
-  .agent-world-toolbar { align-items: stretch; flex-direction: column; }
-  .agent-world-actions { width: 100%; }
+  .lumi-world-two, .lumi-world-type-grid { grid-template-columns: 1fr; }
+  .lumi-world-toolbar { align-items: stretch; flex-direction: column; }
+  .lumi-world-actions { width: 100%; }
 }
 `;
 function createElement(tag, className, text) {
@@ -424,13 +449,13 @@ function setup(ctx) {
   let notice = null;
   cleanups.push(ctx.dom.addStyle(CSS));
   const tab = ctx.ui.registerDrawerTab({
-    id: "agent-world",
+    id: "lumi-world",
     title: EXTENSION_NAME,
     shortName: "World",
-    headerTitle: "AgentWorld",
-    description: "Configure the AgentWorld prompt interceptor",
-    keywords: ["agentworld", "qwen", "director", "interceptor", "world"],
-    iconSvg: AGENTWORLD_ICON
+    headerTitle: "LumiWorld",
+    description: "Configure the LumiWorld prompt interceptor",
+    keywords: ["lumiworld", "director", "interceptor", "world"],
+    iconSvg: LUMIWORLD_ICON
   });
   cleanups.push(() => tab.destroy());
   function destroyComponents() {
@@ -463,15 +488,15 @@ function setup(ctx) {
     scheduleAutoSave();
   }
   function field(label, control, hint) {
-    const wrap = createElement("div", "agent-world-field");
+    const wrap = createElement("div", "lumi-world-field");
     const labelEl = createElement("label", undefined, label);
     wrap.append(labelEl, control);
     if (hint)
-      wrap.appendChild(createElement("div", "agent-world-hint", hint));
+      wrap.appendChild(createElement("div", "lumi-world-hint", hint));
     return wrap;
   }
   function numberInput(value, min, max, step, onChange) {
-    const input = createElement("input", "agent-world-input");
+    const input = createElement("input", "lumi-world-input");
     input.type = "number";
     input.min = String(min);
     input.max = String(max);
@@ -481,7 +506,7 @@ function setup(ctx) {
     return input;
   }
   function textarea(value, onChange) {
-    const input = createElement("textarea", "agent-world-textarea");
+    const input = createElement("textarea", "lumi-world-textarea");
     input.value = value;
     input.spellcheck = false;
     input.addEventListener("input", () => onChange(input.value));
@@ -530,14 +555,14 @@ function setup(ctx) {
     return field(label, slot, hint);
   }
   function renderEnabledControl(form) {
-    const row = createElement("div", "agent-world-setting-row");
-    const switchSlot = createElement("div", "agent-world-switch-slot");
+    const row = createElement("div", "lumi-world-setting-row");
+    const switchSlot = createElement("div", "lumi-world-switch-slot");
     const components = ctx.components;
     if (components?.mountSwitch) {
       const handle = components.mountSwitch(switchSlot, {
         checked: draft.enabled,
         size: "md",
-        ariaLabel: "Enable AgentWorld",
+        ariaLabel: "Enable LumiWorld",
         onChange: (checked) => updateDraft({ enabled: checked })
       });
       componentHandles.push(handle);
@@ -549,7 +574,7 @@ function setup(ctx) {
       switchSlot.appendChild(enabled);
     }
     const enabledText = createElement("div");
-    enabledText.append(createElement("div", "agent-world-toggle-label", "Enable AgentWorld"), createElement("div", "agent-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
+    enabledText.append(createElement("div", "lumi-world-toggle-label", "Enable LumiWorld"), createElement("div", "lumi-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
     row.append(switchSlot, enabledText);
     form.appendChild(row);
   }
@@ -590,7 +615,7 @@ function setup(ctx) {
         noResultsMessage: "No matching LLM connection profiles.",
         clearable: true,
         clearLabel: "No controller connection",
-        ariaLabel: "AgentWorld controller connection",
+        ariaLabel: "LumiWorld controller connection",
         portal: true,
         maxHeight: 320,
         onChange: (value) => {
@@ -601,7 +626,7 @@ function setup(ctx) {
       componentHandles.push(handle);
       return;
     }
-    const connectionSelect = createElement("select", "agent-world-select");
+    const connectionSelect = createElement("select", "lumi-world-select");
     connectionSelect.appendChild(new Option("Select controller connection...", ""));
     for (const connection of connections) {
       connectionSelect.appendChild(new Option(connectionLabel(connection), connection.id));
@@ -614,11 +639,11 @@ function setup(ctx) {
     slot.appendChild(connectionSelect);
   }
   function renderEnabledPanel(shell) {
-    const panel = createElement("section", "agent-world-panel");
-    const title = createElement("div", "agent-world-panel-title");
+    const panel = createElement("section", "lumi-world-panel");
+    const title = createElement("div", "lumi-world-panel-title");
     title.appendChild(createElement("h3", undefined, "Controller"));
     panel.appendChild(title);
-    const form = createElement("div", "agent-world-form");
+    const form = createElement("div", "lumi-world-form");
     renderEnabledControl(form);
     const connectionSlot = createElement("div");
     form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
@@ -626,7 +651,7 @@ function setup(ctx) {
     const modelSlot = createElement("div");
     form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
     renderModelControl(modelSlot);
-    const two = createElement("div", "agent-world-two");
+    const two = createElement("div", "lumi-world-two");
     two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
     form.appendChild(two);
     panel.appendChild(form);
@@ -647,7 +672,7 @@ function setup(ctx) {
       componentHandles.push(handle);
       return;
     }
-    const input = createElement("input", "agent-world-input");
+    const input = createElement("input", "lumi-world-input");
     input.type = "text";
     input.placeholder = selected?.model || "model id";
     input.value = draft.modelOverride;
@@ -656,12 +681,12 @@ function setup(ctx) {
     slot.appendChild(input);
   }
   function renderGenerationTypes(shell) {
-    const panel = createElement("section", "agent-world-panel");
-    const title = createElement("div", "agent-world-panel-title");
+    const panel = createElement("section", "lumi-world-panel");
+    const title = createElement("div", "lumi-world-panel-title");
     title.appendChild(createElement("h3", undefined, "Runs On"));
-    title.appendChild(createElement("span", "agent-world-subtle", "Quiet/background jobs are skipped"));
+    title.appendChild(createElement("span", "lumi-world-subtle", "Quiet/background jobs are skipped"));
     panel.appendChild(title);
-    const grid = createElement("div", "agent-world-type-grid");
+    const grid = createElement("div", "lumi-world-type-grid");
     const components = ctx.components;
     for (const type of VISIBLE_GENERATION_TYPES) {
       const updateType = (checked) => {
@@ -682,7 +707,7 @@ function setup(ctx) {
         componentHandles.push(handle);
         grid.appendChild(slot);
       } else {
-        const label = createElement("label", "agent-world-chip");
+        const label = createElement("label", "lumi-world-chip");
         const input = createElement("input");
         input.type = "checkbox";
         input.checked = draft.generationTypes.includes(type);
@@ -695,43 +720,43 @@ function setup(ctx) {
     shell.appendChild(panel);
   }
   function renderTemplates(shell) {
-    const details = createElement("details", "agent-world-details");
+    const details = createElement("details", "lumi-world-details");
     const summary = createElement("summary", undefined, "Advanced controller prompt");
-    const body = createElement("div", "agent-world-details-body");
-    body.append(textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the AgentWorld controller as a separate private system message. Never injected directly into the main model prompt."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
+    const body = createElement("div", "lumi-world-details-body");
+    body.append(textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
     details.append(summary, body);
     shell.appendChild(details);
   }
   function renderRuns(shell) {
-    const panel = createElement("section", "agent-world-panel");
-    const title = createElement("div", "agent-world-panel-title");
+    const panel = createElement("section", "lumi-world-panel");
+    const title = createElement("div", "lumi-world-panel-title");
     title.appendChild(createElement("h3", undefined, "Recent Runs"));
-    const clear = createElement("button", "agent-world-btn", "Clear");
+    const clear = createElement("button", "lumi-world-btn", "Clear");
     clear.type = "button";
     clear.addEventListener("click", () => send(ctx, { type: "clear_runs" }));
     title.appendChild(clear);
     panel.appendChild(title);
-    const scroll = createElement("div", "agent-world-runs-scroll");
+    const scroll = createElement("div", "lumi-world-runs-scroll");
     const runs = state?.runs ?? [];
     if (!runs.length) {
-      scroll.appendChild(createElement("div", "agent-world-empty", "No controller runs yet."));
+      scroll.appendChild(createElement("div", "lumi-world-empty", "No controller runs yet."));
       panel.appendChild(scroll);
       shell.appendChild(panel);
       return;
     }
-    const list = createElement("div", "agent-world-runs");
+    const list = createElement("div", "lumi-world-runs");
     for (const run of runs) {
-      const item = createElement("article", "agent-world-run");
-      const head = createElement("div", "agent-world-run-head");
-      head.append(createElement("span", `agent-world-status ${run.status}`, formatStatus(run.status)), createElement("span", "agent-world-subtle", formatTime(run.timestamp)));
+      const item = createElement("article", "lumi-world-run");
+      const head = createElement("div", "lumi-world-run-head");
+      head.append(createElement("span", `lumi-world-status ${run.status}`, formatStatus(run.status)), createElement("span", "lumi-world-subtle", formatTime(run.timestamp)));
       item.appendChild(head);
       const meta = [run.connectionName, run.model, run.durationMs != null ? `${Math.round(run.durationMs)} ms` : null].filter(Boolean).join(" / ");
       if (meta)
-        item.appendChild(createElement("div", "agent-world-subtle", meta));
+        item.appendChild(createElement("div", "lumi-world-subtle", meta));
       if (run.directivePreview)
         item.appendChild(createElement("div", undefined, run.directivePreview));
       if (run.error)
-        item.appendChild(createElement("div", "agent-world-subtle", run.error));
+        item.appendChild(createElement("div", "lumi-world-subtle", run.error));
       list.appendChild(item);
     }
     scroll.appendChild(list);
@@ -741,35 +766,35 @@ function setup(ctx) {
   function renderNotice(shell) {
     if (!notice)
       return;
-    const banner = createElement("div", `agent-world-banner ${notice.tone === "warn" || notice.tone === "error" ? "warn" : ""}`, notice.text);
+    const banner = createElement("div", `lumi-world-banner ${notice.tone === "warn" || notice.tone === "error" ? "warn" : ""}`, notice.text);
     shell.appendChild(banner);
   }
   function renderBanners(shell) {
     if (!state)
       return;
     if (!state.permissions.interceptor || !state.permissions.generation) {
-      shell.appendChild(createElement("div", "agent-world-banner warn", "Grant the Interceptor and Generation permissions in Lumiverse's Extensions panel to activate AgentWorld."));
+      shell.appendChild(createElement("div", "lumi-world-banner warn", "Grant the Interceptor and Generation permissions in Lumiverse's Extensions panel to activate LumiWorld."));
     }
     if (state.connectionError) {
-      shell.appendChild(createElement("div", "agent-world-banner warn", state.connectionError));
+      shell.appendChild(createElement("div", "lumi-world-banner warn", state.connectionError));
     }
     if (draft.enabled && !draft.connectionId) {
-      shell.appendChild(createElement("div", "agent-world-banner warn", "AgentWorld is enabled but no controller connection is selected."));
+      shell.appendChild(createElement("div", "lumi-world-banner warn", "LumiWorld is enabled but no controller connection is selected."));
     }
   }
   function renderToolbar(shell) {
-    const toolbar = createElement("div", "agent-world-toolbar");
-    const title = createElement("div", "agent-world-title");
-    const mark = createElement("span", "agent-world-mark");
-    mark.innerHTML = AGENTWORLD_ICON;
+    const toolbar = createElement("div", "lumi-world-toolbar");
+    const title = createElement("div", "lumi-world-title");
+    const mark = createElement("span", "lumi-world-mark");
+    mark.innerHTML = LUMIWORLD_ICON;
     const text = createElement("div");
-    text.append(createElement("h2", "agent-world-heading", EXTENSION_NAME), createElement("div", "agent-world-subtle", "Private world-director prompt interceptor"));
+    text.append(createElement("h2", "lumi-world-heading", EXTENSION_NAME), createElement("div", "lumi-world-subtle", "Private world-director prompt interceptor"));
     title.append(mark, text);
-    const actions = createElement("div", "agent-world-actions");
-    const refresh = createElement("button", "agent-world-btn", "Refresh");
+    const actions = createElement("div", "lumi-world-actions");
+    const refresh = createElement("button", "lumi-world-btn", "Refresh");
     refresh.type = "button";
     refresh.addEventListener("click", () => send(ctx, { type: "refresh_state" }));
-    const test = createElement("button", "agent-world-btn", "Test");
+    const test = createElement("button", "lumi-world-btn", "Test");
     test.type = "button";
     test.addEventListener("click", () => {
       notice = { tone: "info", text: "Running controller test..." };
@@ -783,14 +808,14 @@ function setup(ctx) {
   function render() {
     destroyComponents();
     tab.root.replaceChildren();
-    const root = createElement("div", "agent-world-root");
-    const shell = createElement("div", "agent-world-shell");
+    const root = createElement("div", "lumi-world-root");
+    const shell = createElement("div", "lumi-world-shell");
     root.appendChild(shell);
     tab.root.appendChild(root);
     renderToolbar(shell);
     renderNotice(shell);
     if (!state) {
-      shell.appendChild(createElement("div", "agent-world-empty", "Loading AgentWorld settings..."));
+      shell.appendChild(createElement("div", "lumi-world-empty", "Loading LumiWorld settings..."));
       return;
     }
     renderBanners(shell);

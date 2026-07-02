@@ -1,6 +1,6 @@
 // @bun
 // src/shared.ts
-var BREAKDOWN_NAME = "AgentWorld Director";
+var BREAKDOWN_NAME = "LumiWorld Director";
 var VISIBLE_GENERATION_TYPES = [
   "normal",
   "continue",
@@ -56,7 +56,7 @@ var PREVIOUS_DEFAULT_USER_TEMPLATE = [
   "Return one private director note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_SYSTEM_TEMPLATE = [
+var PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -74,6 +74,31 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "The directive should feel like the world moving forward, not a recap of the scene.",
   "",
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention AgentWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  '{"director_note":"..."}',
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
+].join(`
+`);
+var DEFAULT_SYSTEM_TEMPLATE = [
+  "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  'Use imperative language. Start with a verb such as "Make", "Let", "Have", "Keep", "Escalate", "Pressure", or "Treat".',
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
   '{"director_note":"..."}',
@@ -138,7 +163,7 @@ function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
   const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
@@ -189,22 +214,22 @@ function appendRunLog(existing, entry, limit) {
 function shouldInterceptGeneration(settings, generationType) {
   const type = typeof generationType === "string" && generationType.trim() ? generationType.trim() : "normal";
   if (!settings.enabled)
-    return { intercept: false, reason: "AgentWorld is disabled.", generationType: type };
+    return { intercept: false, reason: "LumiWorld is disabled.", generationType: type };
   if (!settings.generationTypes.includes(type)) {
-    return { intercept: false, reason: `Generation type "${type}" is not enabled for AgentWorld.`, generationType: type };
+    return { intercept: false, reason: `Generation type "${type}" is not enabled for LumiWorld.`, generationType: type };
   }
   return { intercept: true, generationType: type };
 }
 function resolveControllerTarget(settings, connection) {
   if (!settings.connectionId) {
-    return { ok: false, reason: "Choose an AgentWorld controller connection first." };
+    return { ok: false, reason: "Choose a LumiWorld controller connection first." };
   }
   if (!connection) {
-    return { ok: false, reason: "The selected AgentWorld controller connection could not be found." };
+    return { ok: false, reason: "The selected LumiWorld controller connection could not be found." };
   }
   const model = settings.modelOverride.trim() || connection.model.trim();
   if (!model) {
-    return { ok: false, reason: "The selected AgentWorld controller connection has no model configured." };
+    return { ok: false, reason: "The selected LumiWorld controller connection has no model configured." };
   }
   return {
     ok: true,
@@ -298,7 +323,7 @@ function formatPromptForController(messages, maxChars) {
   }
   const omission = `
 
-[... middle of chat history omitted to fit AgentWorld context cap ...]
+[... middle of chat history omitted to fit LumiWorld context cap ...]
 
 `;
   const frontRaw = blocks.slice(0, leadingSystemCount).join(`
@@ -347,7 +372,7 @@ function buildControllerMessages(settings, snapshot, context) {
   if (additionalNotes) {
     messages.push({
       role: "system",
-      content: ["Additional AgentWorld controller notes:", additionalNotes].join(`
+      content: ["Additional LumiWorld controller notes:", additionalNotes].join(`
 `)
     });
   }
@@ -529,12 +554,12 @@ function describeEmptyControllerResponse(response) {
   ].filter(Boolean).join(", ");
   if (reasoning) {
     return [
-      `AgentWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
-      "No director note was injected because AgentWorld only uses final controller content."
+      `LumiWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No director note was injected because LumiWorld only uses final controller content."
     ].join(" ");
   }
   return [
-    `AgentWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
+    `LumiWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
     "No director note was injected."
   ].join(" ");
 }
@@ -543,8 +568,8 @@ function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE
 }
 function buildInjectedDirective(directive) {
   return [
-    "[AgentWorld Director]",
-    "Use this private world-state directive to guide the next visible reply. Do not mention AgentWorld, the controller, or this note.",
+    "[LumiWorld Director]",
+    "Use this private world-state directive to guide the next visible reply. Do not mention LumiWorld, the controller, or this note.",
     "",
     directive.trim()
   ].join(`
@@ -570,7 +595,7 @@ var controllerBusy = false;
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs) {
-    super(`AgentWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    super(`LumiWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "ControllerTimeoutError";
   }
 }
@@ -703,14 +728,14 @@ async function recordRun(entry, userId, settings) {
     await saveRuns(next, userId);
     send({ type: "run_logged", run: entry }, userId ?? undefined);
   } catch (error) {
-    spindle.log.warn(`AgentWorld could not record run: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not record run: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 async function listConnections(userId) {
   if (!permissionHas("generation")) {
     return {
       connections: [],
-      error: "Generation permission is not granted, so AgentWorld cannot list LLM connection profiles."
+      error: "Generation permission is not granted, so LumiWorld cannot list LLM connection profiles."
     };
   }
   try {
@@ -719,7 +744,7 @@ async function listConnections(userId) {
     return { connections, error: null };
   } catch (error) {
     const description = error instanceof Error ? error.message : String(error);
-    spindle.log.warn(`AgentWorld could not list connection profiles: ${description}`);
+    spindle.log.warn(`LumiWorld could not list connection profiles: ${description}`);
     return {
       connections: [],
       error: `Could not list LLM connection profiles: ${description}`
@@ -764,7 +789,7 @@ function makeRunBase(status, startedAt, patch = {}) {
 }
 async function callController(userId, settings, target, messages) {
   if (!userId) {
-    throw new Error("AgentWorld could not resolve the active Lumiverse user for the controller call.");
+    throw new Error("LumiWorld could not resolve the active Lumiverse user for the controller call.");
   }
   const startedAt = Date.now();
   const controller = new AbortController;
@@ -820,7 +845,7 @@ async function handleInterceptor(messages, context) {
   if (controllerBusy) {
     await recordRun(makeRunBase("skipped", startedAt, {
       generationType,
-      error: "Another AgentWorld controller call is already running."
+      error: "Another LumiWorld controller call is already running."
     }), userId, settings);
     return messages;
   }
@@ -871,7 +896,7 @@ async function handleInterceptor(messages, context) {
       model: target.model,
       error: message
     }), userId, settings);
-    spindle.log.warn(`AgentWorld interceptor skipped injection: ${message}`);
+    spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
   } finally {
     controllerBusy = false;
@@ -884,7 +909,7 @@ function tryRegisterInterceptor() {
     return;
   spindle.registerInterceptor(handleInterceptor, INTERCEPTOR_PRIORITY);
   interceptorRegistered = true;
-  spindle.log.info("AgentWorld interceptor registered.");
+  spindle.log.info("LumiWorld interceptor registered.");
 }
 async function runControllerTest(userId, patch) {
   const baseSettings = await loadSettings(userId);
@@ -905,12 +930,12 @@ async function runControllerTest(userId, patch) {
   }
   try {
     const snapshot = formatPromptForController([
-      { role: "system", content: "You are running a short AgentWorld controller smoke test." },
+      { role: "system", content: "You are running a short LumiWorld controller smoke test." },
       { role: "user", content: "The player opens an ancient observatory door during a storm. Decide how the world reacts." }
     ], settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, snapshot, {
       generationType: "normal",
-      chatId: "agentworld-test",
+      chatId: "lumiworld-test",
       connectionId: target.connectionId
     });
     const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
@@ -947,7 +972,7 @@ permissionsApi()?.onChanged?.(({ permission, granted }) => {
   pushState();
 });
 permissionsApi()?.onDenied?.(({ permission, operation }) => {
-  spindle.log.warn(`AgentWorld permission denied for ${operation}: ${permission}`);
+  spindle.log.warn(`LumiWorld permission denied for ${operation}: ${permission}`);
 });
 spindle.onFrontendMessage(async (raw, userId) => {
   lastFrontendUserId = userId;
@@ -976,9 +1001,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
     }
   } catch (error) {
-    const description = error instanceof Error ? error.message : "Unknown AgentWorld error.";
-    spindle.log.error(`AgentWorld backend error: ${description}`);
+    const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";
+    spindle.log.error(`LumiWorld backend error: ${description}`);
     send({ type: "error", message: description }, userId);
   }
 });
-spindle.log.info("AgentWorld loaded.");
+spindle.log.info("LumiWorld loaded.");

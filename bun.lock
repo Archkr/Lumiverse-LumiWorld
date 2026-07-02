@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "lumiverse-agent-world",
+      "name": "lumiverse-lumi-world",
       "devDependencies": {
         "@types/bun": "^1.3.14",
         "lumiverse-spindle-types": "0.4.39",

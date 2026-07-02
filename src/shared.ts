@@ -1,6 +1,6 @@
 export const EXTENSION_ID = "agent_world";
-export const EXTENSION_NAME = "AgentWorld";
-export const BREAKDOWN_NAME = "AgentWorld Director";
+export const EXTENSION_NAME = "LumiWorld";
+export const BREAKDOWN_NAME = "LumiWorld Director";
 
 export const VISIBLE_GENERATION_TYPES = [
   "normal",
@@ -10,7 +10,7 @@ export const VISIBLE_GENERATION_TYPES = [
   "impersonate",
 ] as const;
 
-export type AgentWorldGenerationType = (typeof VISIBLE_GENERATION_TYPES)[number];
+export type LumiWorldGenerationType = (typeof VISIBLE_GENERATION_TYPES)[number];
 export type MessageRole = "system" | "user" | "assistant";
 
 export type LlmMessagePartLike =
@@ -27,7 +27,7 @@ export interface LlmMessageLike {
   [key: string]: unknown;
 }
 
-export interface AgentWorldSettings {
+export interface LumiWorldSettings {
   enabled: boolean;
   connectionId: string | null;
   modelOverride: string;
@@ -36,7 +36,7 @@ export interface AgentWorldSettings {
   timeoutMs: number;
   maxInputChars: number;
   historyMessageLimit: number;
-  generationTypes: AgentWorldGenerationType[];
+  generationTypes: LumiWorldGenerationType[];
   additionalNotes: string;
   systemTemplate: string;
   userTemplate: string;
@@ -153,7 +153,7 @@ export const PREVIOUS_DEFAULT_USER_TEMPLATE = [
   "Return one private director note under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
-export const DEFAULT_SYSTEM_TEMPLATE = [
+export const PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -178,6 +178,31 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
+export const DEFAULT_SYSTEM_TEMPLATE = [
+  "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  "Use imperative language. Start with a verb such as \"Make\", \"Let\", \"Have\", \"Keep\", \"Escalate\", \"Pressure\", or \"Treat\".",
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  "{\"director_note\":\"...\"}",
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
+].join("\n");
+
 export const DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
@@ -191,7 +216,7 @@ export const DEFAULT_USER_TEMPLATE = [
   "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
 ].join("\n");
 
-export const DEFAULT_SETTINGS: AgentWorldSettings = {
+export const DEFAULT_SETTINGS: LumiWorldSettings = {
   enabled: false,
   connectionId: null,
   modelOverride: "",
@@ -230,21 +255,22 @@ function integerInRange(value: unknown, fallback: number, min: number, max: numb
   return Math.round(numberInRange(value, fallback, min, max));
 }
 
-export function normalizeGenerationTypes(value: unknown): AgentWorldGenerationType[] {
+export function normalizeGenerationTypes(value: unknown): LumiWorldGenerationType[] {
   const incoming = Array.isArray(value) ? value : DEFAULT_SETTINGS.generationTypes;
   const allowed = new Set<string>(VISIBLE_GENERATION_TYPES);
-  const normalized = incoming.filter((item): item is AgentWorldGenerationType => typeof item === "string" && allowed.has(item));
+  const normalized = incoming.filter((item): item is LumiWorldGenerationType => typeof item === "string" && allowed.has(item));
   return normalized.length ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
 
-export function normalizeSettings(value: unknown): AgentWorldSettings {
+export function normalizeSettings(value: unknown): LumiWorldSettings {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate =
     !storedSystemTemplate ||
     storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ||
-    storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE
+    storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE
       ? DEFAULT_SYSTEM_TEMPLATE
       : storedSystemTemplate;
   const userTemplate =
@@ -304,27 +330,27 @@ export function appendRunLog(existing: RunLogEntry[], entry: RunLogEntry, limit:
 }
 
 export function shouldInterceptGeneration(
-  settings: AgentWorldSettings,
+  settings: LumiWorldSettings,
   generationType: unknown,
 ): { intercept: boolean; reason?: string; generationType: string } {
   const type = typeof generationType === "string" && generationType.trim() ? generationType.trim() : "normal";
-  if (!settings.enabled) return { intercept: false, reason: "AgentWorld is disabled.", generationType: type };
-  if (!settings.generationTypes.includes(type as AgentWorldGenerationType)) {
-    return { intercept: false, reason: `Generation type "${type}" is not enabled for AgentWorld.`, generationType: type };
+  if (!settings.enabled) return { intercept: false, reason: "LumiWorld is disabled.", generationType: type };
+  if (!settings.generationTypes.includes(type as LumiWorldGenerationType)) {
+    return { intercept: false, reason: `Generation type "${type}" is not enabled for LumiWorld.`, generationType: type };
   }
   return { intercept: true, generationType: type };
 }
 
-export function resolveControllerTarget(settings: AgentWorldSettings, connection: ConnectionLike | null | undefined): ControllerTargetResult {
+export function resolveControllerTarget(settings: LumiWorldSettings, connection: ConnectionLike | null | undefined): ControllerTargetResult {
   if (!settings.connectionId) {
-    return { ok: false, reason: "Choose an AgentWorld controller connection first." };
+    return { ok: false, reason: "Choose a LumiWorld controller connection first." };
   }
   if (!connection) {
-    return { ok: false, reason: "The selected AgentWorld controller connection could not be found." };
+    return { ok: false, reason: "The selected LumiWorld controller connection could not be found." };
   }
   const model = settings.modelOverride.trim() || connection.model.trim();
   if (!model) {
-    return { ok: false, reason: "The selected AgentWorld controller connection has no model configured." };
+    return { ok: false, reason: "The selected LumiWorld controller connection has no model configured." };
   }
   return {
     ok: true,
@@ -418,7 +444,7 @@ export function formatPromptForController(messages: LlmMessageLike[], maxChars: 
     leadingSystemCount += 1;
   }
 
-  const omission = "\n\n[... middle of chat history omitted to fit AgentWorld context cap ...]\n\n";
+  const omission = "\n\n[... middle of chat history omitted to fit LumiWorld context cap ...]\n\n";
   const frontRaw = blocks.slice(0, leadingSystemCount).join("\n\n");
   const tailRaw = blocks.slice(leadingSystemCount).join("\n\n") || fullPrompt;
   const frontBudget = frontRaw ? Math.min(Math.floor(limit * 0.35), frontRaw.length) : 0;
@@ -449,7 +475,7 @@ export function renderTemplate(template: string, vars: ControllerTemplateContext
 }
 
 export function buildControllerMessages(
-  settings: AgentWorldSettings,
+  settings: LumiWorldSettings,
   snapshot: PromptSnapshot,
   context: Omit<ControllerTemplateContext, "prompt" | "maxDirectiveChars" | "timestamp" | "additionalNotes"> & Partial<Pick<ControllerTemplateContext, "timestamp">>,
 ): LlmMessageLike[] {
@@ -470,7 +496,7 @@ export function buildControllerMessages(
   if (additionalNotes) {
     messages.push({
       role: "system",
-      content: ["Additional AgentWorld controller notes:", additionalNotes].join("\n"),
+      content: ["Additional LumiWorld controller notes:", additionalNotes].join("\n"),
     });
   }
   messages.push({ role: "user", content: renderedUser });
@@ -645,13 +671,13 @@ export function describeEmptyControllerResponse(response: unknown): string {
 
   if (reasoning) {
     return [
-      `AgentWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
-      "No director note was injected because AgentWorld only uses final controller content.",
+      `LumiWorld controller returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No director note was injected because LumiWorld only uses final controller content.",
     ].join(" ");
   }
 
   return [
-    `AgentWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
+    `LumiWorld controller returned no final directive${suffix ? ` (${suffix})` : ""}.`,
     "No director note was injected.",
   ].join(" ");
 }
@@ -662,8 +688,8 @@ export function parseControllerDirectiveFromResponse(response: unknown, maxChars
 
 export function buildInjectedDirective(directive: string): string {
   return [
-    "[AgentWorld Director]",
-    "Use this private world-state directive to guide the next visible reply. Do not mention AgentWorld, the controller, or this note.",
+    "[LumiWorld Director]",
+    "Use this private world-state directive to guide the next visible reply. Do not mention LumiWorld, the controller, or this note.",
     "",
     directive.trim(),
   ].join("\n");
