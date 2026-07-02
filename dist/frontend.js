@@ -104,13 +104,26 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_USER_TEMPLATE = [
+var PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
   "Recent chat history:",
   "<chat_history>",
   "{{prompt}}",
   "</chat_history>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
+].join(`
+`);
+var DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Controller context:",
+  "<controller_context>",
+  "{{prompt}}",
+  "</controller_context>",
   "",
   "Write the next world-state directive now.",
   "",
@@ -126,6 +139,9 @@ var DEFAULT_SETTINGS = {
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeWorldInfoEntries: false,
+  includeUserPersona: true,
+  includeCharacter: true,
   generationTypes: [...VISIBLE_GENERATION_TYPES],
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
@@ -162,7 +178,7 @@ function normalizeSettings(value) {
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
-  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -172,6 +188,9 @@ function normalizeSettings(value) {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
@@ -301,6 +320,7 @@ var CSS = `
   align-items: flex-start;
   padding: 8px 0;
 }
+.lumi-world-setting-row.is-disabled { opacity: 0.55; }
 .lumi-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
 .lumi-world-toggle input { margin-top: 2px; }
 .lumi-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -554,25 +574,40 @@ function setup(ctx) {
     renderTextareaControl(slot, value, onChange, label);
     return field(label, slot, hint);
   }
+  function renderSwitchControl(slot, checked, onChange, ariaLabel, disabled = false) {
+    const components = ctx.components;
+    if (components?.mountSwitch && !disabled) {
+      const handle = components.mountSwitch(slot, {
+        checked,
+        size: "md",
+        ariaLabel,
+        onChange
+      });
+      componentHandles.push(handle);
+      return;
+    }
+    const input = createElement("input");
+    input.type = "checkbox";
+    input.checked = checked;
+    input.disabled = disabled;
+    input.addEventListener("change", () => onChange(input.checked));
+    slot.appendChild(input);
+  }
+  function toggleField(label, checked, onChange, hint, disabled = false) {
+    const row = createElement("div", `lumi-world-setting-row${disabled ? " is-disabled" : ""}`);
+    const switchSlot = createElement("div", "lumi-world-switch-slot");
+    renderSwitchControl(switchSlot, checked, onChange, label, disabled);
+    const text = createElement("div");
+    text.appendChild(createElement("div", "lumi-world-toggle-label", label));
+    if (hint)
+      text.appendChild(createElement("div", "lumi-world-hint", hint));
+    row.append(switchSlot, text);
+    return row;
+  }
   function renderEnabledControl(form) {
     const row = createElement("div", "lumi-world-setting-row");
     const switchSlot = createElement("div", "lumi-world-switch-slot");
-    const components = ctx.components;
-    if (components?.mountSwitch) {
-      const handle = components.mountSwitch(switchSlot, {
-        checked: draft.enabled,
-        size: "md",
-        ariaLabel: "Enable LumiWorld",
-        onChange: (checked) => updateDraft({ enabled: checked })
-      });
-      componentHandles.push(handle);
-    } else {
-      const enabled = createElement("input");
-      enabled.type = "checkbox";
-      enabled.checked = draft.enabled;
-      enabled.addEventListener("change", () => updateDraft({ enabled: enabled.checked }));
-      switchSlot.appendChild(enabled);
-    }
+    renderSwitchControl(switchSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable LumiWorld");
     const enabledText = createElement("div");
     enabledText.append(createElement("div", "lumi-world-toggle-label", "Enable LumiWorld"), createElement("div", "lumi-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
     row.append(switchSlot, enabledText);
@@ -721,9 +756,9 @@ function setup(ctx) {
   }
   function renderTemplates(shell) {
     const details = createElement("details", "lumi-world-details");
-    const summary = createElement("summary", undefined, "Advanced controller prompt");
+    const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lumi-world-details-body");
-    body.append(textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
+    body.append(toggleField("Entries", draft.includeWorldInfoEntries, () => {}, "Coming soon", true), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active chat character card to the controller."), textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
     details.append(summary, body);
     shell.appendChild(details);
   }
@@ -772,8 +807,15 @@ function setup(ctx) {
   function renderBanners(shell) {
     if (!state)
       return;
-    if (!state.permissions.interceptor || !state.permissions.generation) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", "Grant the Interceptor and Generation permissions in Lumiverse's Extensions panel to activate LumiWorld."));
+    const missingPermissions = [
+      !state.permissions.interceptor ? "Interceptor" : null,
+      !state.permissions.generation ? "Generation" : null,
+      draft.includeCharacter && !state.permissions.chats ? "Chats" : null,
+      draft.includeCharacter && !state.permissions.characters ? "Characters" : null,
+      draft.includeUserPersona && !state.permissions.personas ? "Personas" : null
+    ].filter(Boolean);
+    if (missingPermissions.length) {
+      shell.appendChild(createElement("div", "lumi-world-banner warn", `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel to activate the selected LumiWorld context sources.`));
     }
     if (state.connectionError) {
       shell.appendChild(createElement("div", "lumi-world-banner warn", state.connectionError));

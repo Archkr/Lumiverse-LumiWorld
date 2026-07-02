@@ -14,6 +14,7 @@ var MAX_CONTROLLER_TIMEOUT_MS = 2147483647;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+var CONTROLLER_CONTEXT_LABEL_KEY = "__lumiWorldContextLabel";
 var LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
@@ -106,13 +107,26 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_USER_TEMPLATE = [
+var PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
   "Recent chat history:",
   "<chat_history>",
   "{{prompt}}",
   "</chat_history>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
+].join(`
+`);
+var DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Controller context:",
+  "<controller_context>",
+  "{{prompt}}",
+  "</controller_context>",
   "",
   "Write the next world-state directive now.",
   "",
@@ -128,6 +142,9 @@ var DEFAULT_SETTINGS = {
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeWorldInfoEntries: false,
+  includeUserPersona: true,
+  includeCharacter: true,
   generationTypes: [...VISIBLE_GENERATION_TYPES],
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
@@ -164,7 +181,7 @@ function normalizeSettings(value) {
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
-  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -174,6 +191,9 @@ function normalizeSettings(value) {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
@@ -272,16 +292,38 @@ function serializeMessageContent(content) {
 function isChatHistoryMessage(message) {
   return message.__isChatHistory === true || typeof message.sourceMessageId === "string" || typeof message.sourceIndexInChat === "number";
 }
+function isWorldInfoEntryMessage(message) {
+  return message.__isWorldInfoEntry === true;
+}
+function makeControllerContextMessage(label, content, role = "system") {
+  const text = content.trim();
+  if (!label.trim() || !text)
+    return null;
+  return {
+    role,
+    content: text,
+    [CONTROLLER_CONTEXT_LABEL_KEY]: label.trim()
+  };
+}
 function selectChatHistoryMessagesForController(messages, limit) {
   const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
   if (cappedLimit <= 0)
     return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
+function selectControllerMessagesForController(messages, settings, contextMessages = []) {
+  const selected = [...contextMessages];
+  if (settings.includeWorldInfoEntries) {
+    selected.push(...messages.filter(isWorldInfoEntryMessage));
+  }
+  selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
+  return selected;
+}
 function formatMessageBlock(message, index) {
   const name = message.name ? ` name=${message.name}` : "";
   const content = serializeMessageContent(message.content).trim() || "[empty]";
-  return `### Chat Message ${index + 1} (${message.role}${name})
+  const label = typeof message[CONTROLLER_CONTEXT_LABEL_KEY] === "string" && message[CONTROLLER_CONTEXT_LABEL_KEY].trim() ? message[CONTROLLER_CONTEXT_LABEL_KEY].trim() : `Chat Message ${index + 1}`;
+  return `### ${label} (${message.role}${name})
 ${content}`;
 }
 function takeStart(value, budget) {
@@ -323,7 +365,7 @@ function formatPromptForController(messages, maxChars) {
   }
   const omission = `
 
-[... middle of chat history omitted to fit LumiWorld context cap ...]
+[... middle of controller context omitted to fit LumiWorld context cap ...]
 
 `;
   const frontRaw = blocks.slice(0, leadingSystemCount).join(`
@@ -612,6 +654,15 @@ function storageApi() {
 function connectionsApi() {
   return spindle.connections;
 }
+function chatsApi() {
+  return spindle.chats;
+}
+function charactersApi() {
+  return spindle.characters;
+}
+function personasApi() {
+  return spindle.personas;
+}
 function permissionsApi() {
   return spindle.permissions;
 }
@@ -631,7 +682,10 @@ function permissionHas(permission) {
 function currentPermissions() {
   return {
     interceptor: permissionHas("interceptor"),
-    generation: permissionHas("generation")
+    generation: permissionHas("generation"),
+    chats: permissionHas("chats"),
+    characters: permissionHas("characters"),
+    personas: permissionHas("personas")
   };
 }
 function rememberChatUser(chatId, userId) {
@@ -664,6 +718,23 @@ function extractConnectionId(value) {
     return "";
   const raw = value.connectionId ?? value.connection_id;
   return typeof raw === "string" ? raw : "";
+}
+function readContextString(value, keys) {
+  if (!value || typeof value !== "object")
+    return null;
+  const obj = value;
+  for (const key of keys) {
+    const raw = obj[key];
+    if (typeof raw === "string" && raw.trim())
+      return raw.trim();
+  }
+  return null;
+}
+function extractPersonaId(value) {
+  return readContextString(value, ["personaId", "persona_id"]);
+}
+function extractCharacterId(value) {
+  return readContextString(value, ["characterId", "character_id", "targetCharacterId", "target_character_id"]);
 }
 function readChatIdFromMessage(message) {
   return "chatId" in message && typeof message.chatId === "string" && message.chatId.trim() ? message.chatId : null;
@@ -760,6 +831,74 @@ async function getConnection(connectionId, userId) {
   } catch {
     return null;
   }
+}
+function section(label, value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? `${label}:
+${text}` : null;
+}
+function formatPersonaContext(persona) {
+  return [
+    `Name: ${persona.name}`,
+    section("Title", persona.title),
+    section("Description", persona.description),
+    persona.is_default ? "Default persona: yes" : null,
+    persona.is_narrator === true ? "Narrator persona: yes" : null
+  ].filter(Boolean).join(`
+
+`);
+}
+function formatCharacterContext(character) {
+  return [
+    `Name: ${character.name}`,
+    section("Description", character.description),
+    section("Personality", character.personality),
+    section("Scenario", character.scenario),
+    section("Creator notes", character.creator_notes),
+    section("System prompt", character.system_prompt),
+    section("Post-history instructions", character.post_history_instructions),
+    section("Example messages", character.mes_example),
+    section("Opening message", character.first_mes)
+  ].filter(Boolean).join(`
+
+`);
+}
+async function resolvePersonaContextMessage(settings, context, userId) {
+  if (!settings.includeUserPersona || !permissionHas("personas"))
+    return null;
+  try {
+    const personaId = extractPersonaId(context);
+    const persona = personaId ? await personasApi().get(personaId, userId ?? undefined) : await personasApi().getActive(userId ?? undefined);
+    return persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona)) : null;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld could not resolve user persona context: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+async function resolveCharacterContextMessage(settings, context, chatId, userId) {
+  if (!settings.includeCharacter || !permissionHas("characters"))
+    return null;
+  try {
+    let characterId = extractCharacterId(context);
+    if (!characterId && chatId && permissionHas("chats")) {
+      const chat = await chatsApi().get(chatId, userId ?? undefined);
+      characterId = typeof chat?.character_id === "string" && chat.character_id.trim() ? chat.character_id.trim() : null;
+    }
+    if (!characterId)
+      return null;
+    const character = await charactersApi().get(characterId, userId ?? undefined);
+    return character ? makeControllerContextMessage("Character", formatCharacterContext(character)) : null;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld could not resolve character context: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+async function resolveControllerContextMessages(settings, context, chatId, userId) {
+  const [persona, character] = await Promise.all([
+    resolvePersonaContextMessage(settings, context, userId),
+    resolveCharacterContextMessage(settings, context, chatId, userId)
+  ]);
+  return [persona, character].filter((message) => !!message);
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
@@ -861,7 +1000,8 @@ async function handleInterceptor(messages, context) {
   }
   controllerBusy = true;
   try {
-    const controllerContextMessages = selectChatHistoryMessagesForController(messages, settings.historyMessageLimit);
+    const extraContextMessages = await resolveControllerContextMessages(settings, context, chatId, userId);
+    const controllerContextMessages = selectControllerMessagesForController(messages, settings, extraContextMessages);
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,

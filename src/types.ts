@@ -3,6 +3,9 @@ import type { LumiWorldSettings, ConnectionOption, RunLogEntry } from "./shared"
 export interface PermissionState {
   interceptor: boolean;
   generation: boolean;
+  chats: boolean;
+  characters: boolean;
+  personas: boolean;
 }
 
 export interface FrontendState {

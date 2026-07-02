@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
   appendRunLog,
   buildControllerMessages,
@@ -15,6 +16,7 @@ import {
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
   selectChatHistoryMessagesForController,
+  selectControllerMessagesForController,
   serializeMessageContent,
   shouldInterceptGeneration,
   type LlmMessageLike,
@@ -32,6 +34,9 @@ describe("settings normalization", () => {
       timeoutMs: 500,
       maxInputChars: 20,
       historyMessageLimit: -4,
+      includeWorldInfoEntries: true,
+      includeUserPersona: false,
+      includeCharacter: false,
       generationTypes: ["normal", "quiet", "swipe", "normal"],
       additionalNotes: "  remember the silver key ",
       systemTemplate: "",
@@ -47,6 +52,9 @@ describe("settings normalization", () => {
     expect(settings.timeoutMs).toBe(1000);
     expect(settings.maxInputChars).toBe(4000);
     expect(settings.historyMessageLimit).toBe(0);
+    expect(settings.includeWorldInfoEntries).toBe(true);
+    expect(settings.includeUserPersona).toBe(false);
+    expect(settings.includeCharacter).toBe(false);
     expect(settings.generationTypes).toEqual(["normal", "swipe"]);
     expect(settings.additionalNotes).toBe("remember the silver key");
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
@@ -67,9 +75,11 @@ describe("settings normalization", () => {
   test("migrates pre-rebrand built-in controller template", () => {
     const settings = normalizeSettings({
       systemTemplate: PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
+      userTemplate: PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
     });
 
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
+    expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
   });
 
   test("does not cap controller max tokens at legacy 4096", () => {
@@ -173,6 +183,30 @@ describe("message serialization and prompt trimming", () => {
     const selected = selectChatHistoryMessagesForController(messages, 2);
     expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
+
+  test("builds controller input from context blocks, entries, and recent chat history", () => {
+    const messages: LlmMessageLike[] = [
+      { role: "system", content: "old lore", __isWorldInfoEntry: true },
+      { role: "user", content: "old user", __isChatHistory: true },
+      { role: "assistant", content: "recent assistant", __isChatHistory: true },
+      { role: "system", content: "new lore", __isWorldInfoEntry: true },
+      { role: "user", content: "recent user", __isChatHistory: true },
+    ];
+    const contextMessages: LlmMessageLike[] = [{ role: "system", content: "Persona text" }];
+    const selected = selectControllerMessagesForController(
+      messages,
+      normalizeSettings({ historyMessageLimit: 2, includeWorldInfoEntries: true }),
+      contextMessages,
+    );
+
+    expect(selected.map((message) => message.content)).toEqual([
+      "Persona text",
+      "old lore",
+      "new lore",
+      "recent assistant",
+      "recent user",
+    ]);
   });
 });
 

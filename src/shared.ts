@@ -36,6 +36,9 @@ export interface LumiWorldSettings {
   timeoutMs: number;
   maxInputChars: number;
   historyMessageLimit: number;
+  includeWorldInfoEntries: boolean;
+  includeUserPersona: boolean;
+  includeCharacter: boolean;
   generationTypes: LumiWorldGenerationType[];
   additionalNotes: string;
   systemTemplate: string;
@@ -110,6 +113,7 @@ export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
 export const MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_RUN_LOG_LIMIT = 12;
 export const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+export const CONTROLLER_CONTEXT_LABEL_KEY = "__lumiWorldContextLabel";
 
 export const LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
@@ -203,13 +207,26 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
-export const DEFAULT_USER_TEMPLATE = [
+export const PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
   "Recent chat history:",
   "<chat_history>",
   "{{prompt}}",
   "</chat_history>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
+].join("\n");
+
+export const DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Controller context:",
+  "<controller_context>",
+  "{{prompt}}",
+  "</controller_context>",
   "",
   "Write the next world-state directive now.",
   "",
@@ -225,6 +242,9 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeWorldInfoEntries: false,
+  includeUserPersona: true,
+  includeCharacter: true,
   generationTypes: [...VISIBLE_GENERATION_TYPES],
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
@@ -276,7 +296,8 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
   const userTemplate =
     !storedUserTemplate ||
     storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE ||
-    storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE
+    storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ||
+    storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE
       ? DEFAULT_USER_TEMPLATE
       : storedUserTemplate;
 
@@ -289,6 +310,9 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
@@ -399,16 +423,46 @@ export function isChatHistoryMessage(message: LlmMessageLike): boolean {
     typeof message.sourceIndexInChat === "number";
 }
 
+export function isWorldInfoEntryMessage(message: LlmMessageLike): boolean {
+  return message.__isWorldInfoEntry === true;
+}
+
+export function makeControllerContextMessage(label: string, content: string, role: MessageRole = "system"): LlmMessageLike | null {
+  const text = content.trim();
+  if (!label.trim() || !text) return null;
+  return {
+    role,
+    content: text,
+    [CONTROLLER_CONTEXT_LABEL_KEY]: label.trim(),
+  };
+}
+
 export function selectChatHistoryMessagesForController(messages: LlmMessageLike[], limit: number): LlmMessageLike[] {
   const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
   if (cappedLimit <= 0) return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
 
+export function selectControllerMessagesForController(
+  messages: LlmMessageLike[],
+  settings: LumiWorldSettings,
+  contextMessages: LlmMessageLike[] = [],
+): LlmMessageLike[] {
+  const selected = [...contextMessages];
+  if (settings.includeWorldInfoEntries) {
+    selected.push(...messages.filter(isWorldInfoEntryMessage));
+  }
+  selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
+  return selected;
+}
+
 function formatMessageBlock(message: LlmMessageLike, index: number): string {
   const name = message.name ? ` name=${message.name}` : "";
   const content = serializeMessageContent(message.content).trim() || "[empty]";
-  return `### Chat Message ${index + 1} (${message.role}${name})\n${content}`;
+  const label = typeof message[CONTROLLER_CONTEXT_LABEL_KEY] === "string" && message[CONTROLLER_CONTEXT_LABEL_KEY].trim()
+    ? message[CONTROLLER_CONTEXT_LABEL_KEY].trim()
+    : `Chat Message ${index + 1}`;
+  return `### ${label} (${message.role}${name})\n${content}`;
 }
 
 function takeStart(value: string, budget: number): string {
@@ -444,7 +498,7 @@ export function formatPromptForController(messages: LlmMessageLike[], maxChars: 
     leadingSystemCount += 1;
   }
 
-  const omission = "\n\n[... middle of chat history omitted to fit LumiWorld context cap ...]\n\n";
+  const omission = "\n\n[... middle of controller context omitted to fit LumiWorld context cap ...]\n\n";
   const frontRaw = blocks.slice(0, leadingSystemCount).join("\n\n");
   const tailRaw = blocks.slice(leadingSystemCount).join("\n\n") || fullPrompt;
   const frontBudget = frontRaw ? Math.min(Math.floor(limit * 0.35), frontRaw.length) : 0;

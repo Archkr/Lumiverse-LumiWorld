@@ -135,6 +135,7 @@ const CSS = `
   align-items: flex-start;
   padding: 8px 0;
 }
+.lumi-world-setting-row.is-disabled { opacity: 0.55; }
 .lumi-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
 .lumi-world-toggle input { margin-top: 2px; }
 .lumi-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -433,25 +434,53 @@ export function setup(ctx: SpindleFrontendContext) {
     return field(label, slot, hint);
   }
 
+  function renderSwitchControl(
+    slot: HTMLElement,
+    checked: boolean,
+    onChange: (checked: boolean) => void,
+    ariaLabel: string,
+    disabled = false,
+  ): void {
+    const components = (ctx as any).components;
+    if (components?.mountSwitch && !disabled) {
+      const handle = components.mountSwitch(slot, {
+        checked,
+        size: "md",
+        ariaLabel,
+        onChange,
+      }) as MountedHandle;
+      componentHandles.push(handle);
+      return;
+    }
+    const input = createElement("input") as HTMLInputElement;
+    input.type = "checkbox";
+    input.checked = checked;
+    input.disabled = disabled;
+    input.addEventListener("change", () => onChange(input.checked));
+    slot.appendChild(input);
+  }
+
+  function toggleField(
+    label: string,
+    checked: boolean,
+    onChange: (checked: boolean) => void,
+    hint?: string,
+    disabled = false,
+  ): HTMLElement {
+    const row = createElement("div", `lumi-world-setting-row${disabled ? " is-disabled" : ""}`);
+    const switchSlot = createElement("div", "lumi-world-switch-slot");
+    renderSwitchControl(switchSlot, checked, onChange, label, disabled);
+    const text = createElement("div");
+    text.appendChild(createElement("div", "lumi-world-toggle-label", label));
+    if (hint) text.appendChild(createElement("div", "lumi-world-hint", hint));
+    row.append(switchSlot, text);
+    return row;
+  }
+
   function renderEnabledControl(form: HTMLElement): void {
     const row = createElement("div", "lumi-world-setting-row");
     const switchSlot = createElement("div", "lumi-world-switch-slot");
-    const components = (ctx as any).components;
-    if (components?.mountSwitch) {
-      const handle = components.mountSwitch(switchSlot, {
-        checked: draft.enabled,
-        size: "md",
-        ariaLabel: "Enable LumiWorld",
-        onChange: (checked: boolean) => updateDraft({ enabled: checked }),
-      }) as MountedHandle;
-      componentHandles.push(handle);
-    } else {
-      const enabled = createElement("input") as HTMLInputElement;
-      enabled.type = "checkbox";
-      enabled.checked = draft.enabled;
-      enabled.addEventListener("change", () => updateDraft({ enabled: enabled.checked }));
-      switchSlot.appendChild(enabled);
-    }
+    renderSwitchControl(switchSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable LumiWorld");
 
     const enabledText = createElement("div");
     enabledText.append(
@@ -623,9 +652,12 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderTemplates(shell: HTMLElement): void {
     const details = createElement("details", "lumi-world-details") as HTMLDetailsElement;
-    const summary = createElement("summary", undefined, "Advanced controller prompt");
+    const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lumi-world-details-body");
     body.append(
+      toggleField("Entries", draft.includeWorldInfoEntries, () => {}, "Coming soon", true),
+      toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
+      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active chat character card to the controller."),
       textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."),
       textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}."),
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
@@ -684,12 +716,19 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderBanners(shell: HTMLElement): void {
     if (!state) return;
-    if (!state.permissions.interceptor || !state.permissions.generation) {
+    const missingPermissions = [
+      !state.permissions.interceptor ? "Interceptor" : null,
+      !state.permissions.generation ? "Generation" : null,
+      draft.includeCharacter && !state.permissions.chats ? "Chats" : null,
+      draft.includeCharacter && !state.permissions.characters ? "Characters" : null,
+      draft.includeUserPersona && !state.permissions.personas ? "Personas" : null,
+    ].filter(Boolean);
+    if (missingPermissions.length) {
       shell.appendChild(
         createElement(
           "div",
           "lumi-world-banner warn",
-          "Grant the Interceptor and Generation permissions in Lumiverse's Extensions panel to activate LumiWorld.",
+          `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel to activate the selected LumiWorld context sources.`,
         ),
       );
     }

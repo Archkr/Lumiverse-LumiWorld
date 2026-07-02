@@ -1,6 +1,6 @@
 declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
-import type { ConnectionProfileDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
+import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessageDTO, PersonaDTO } from "lumiverse-spindle-types";
 import {
   BREAKDOWN_NAME,
   DEFAULT_SETTINGS,
@@ -10,11 +10,12 @@ import {
   describeEmptyControllerResponse,
   formatPromptForController,
   makeDirectivePreview,
+  makeControllerContextMessage,
   normalizeRunLog,
   normalizeSettings,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
-  selectChatHistoryMessagesForController,
+  selectControllerMessagesForController,
   shouldInterceptGeneration,
   type LumiWorldSettings,
   type ConnectionLike,
@@ -31,7 +32,7 @@ const INTERCEPTOR_PRIORITY = 150;
 
 let lastFrontendUserId: string | null = null;
 // Routing metadata from free frontend events plus read-only interceptor context.
-// This is not a chat API read and does not require `chats` or `chat_mutation`.
+// Chat reads are used only when the character context source is enabled.
 const chatUserIds = new Map<string, string>();
 let interceptorRegistered = false;
 let controllerBusy = false;
@@ -58,6 +59,18 @@ function connectionsApi(): any {
   return (spindle as any).connections;
 }
 
+function chatsApi(): any {
+  return (spindle as any).chats;
+}
+
+function charactersApi(): any {
+  return (spindle as any).characters;
+}
+
+function personasApi(): any {
+  return (spindle as any).personas;
+}
+
 function permissionsApi(): any {
   return (spindle as any).permissions;
 }
@@ -80,6 +93,9 @@ function currentPermissions(): PermissionState {
   return {
     interceptor: permissionHas("interceptor"),
     generation: permissionHas("generation"),
+    chats: permissionHas("chats"),
+    characters: permissionHas("characters"),
+    personas: permissionHas("personas"),
   };
 }
 
@@ -114,6 +130,24 @@ function extractConnectionId(value: unknown): string {
   const raw = (value as { connectionId?: unknown; connection_id?: unknown }).connectionId ??
     (value as { connection_id?: unknown }).connection_id;
   return typeof raw === "string" ? raw : "";
+}
+
+function readContextString(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = obj[key];
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
+  return null;
+}
+
+function extractPersonaId(value: unknown): string | null {
+  return readContextString(value, ["personaId", "persona_id"]);
+}
+
+function extractCharacterId(value: unknown): string | null {
+  return readContextString(value, ["characterId", "character_id", "targetCharacterId", "target_character_id"]);
 }
 
 function readChatIdFromMessage(message: FrontendToBackend): string | null {
@@ -224,6 +258,84 @@ async function getConnection(connectionId: string | null, userId?: string | null
   } catch {
     return null;
   }
+}
+
+function section(label: string, value: unknown): string | null {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? `${label}:\n${text}` : null;
+}
+
+function formatPersonaContext(persona: PersonaDTO): string {
+  return [
+    `Name: ${persona.name}`,
+    section("Title", persona.title),
+    section("Description", persona.description),
+    persona.is_default ? "Default persona: yes" : null,
+    (persona as any).is_narrator === true ? "Narrator persona: yes" : null,
+  ].filter(Boolean).join("\n\n");
+}
+
+function formatCharacterContext(character: CharacterDTO): string {
+  return [
+    `Name: ${character.name}`,
+    section("Description", character.description),
+    section("Personality", character.personality),
+    section("Scenario", character.scenario),
+    section("Creator notes", character.creator_notes),
+    section("System prompt", character.system_prompt),
+    section("Post-history instructions", character.post_history_instructions),
+    section("Example messages", character.mes_example),
+    section("Opening message", character.first_mes),
+  ].filter(Boolean).join("\n\n");
+}
+
+async function resolvePersonaContextMessage(settings: LumiWorldSettings, context: unknown, userId?: string | null): Promise<LlmMessageLike | null> {
+  if (!settings.includeUserPersona || !permissionHas("personas")) return null;
+  try {
+    const personaId = extractPersonaId(context);
+    const persona = personaId
+      ? await personasApi().get(personaId, userId ?? undefined)
+      : await personasApi().getActive(userId ?? undefined);
+    return persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona)) : null;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld could not resolve user persona context: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+async function resolveCharacterContextMessage(
+  settings: LumiWorldSettings,
+  context: unknown,
+  chatId?: string | null,
+  userId?: string | null,
+): Promise<LlmMessageLike | null> {
+  if (!settings.includeCharacter || !permissionHas("characters")) return null;
+  try {
+    let characterId = extractCharacterId(context);
+    if (!characterId && chatId && permissionHas("chats")) {
+      const chat = await chatsApi().get(chatId, userId ?? undefined);
+      characterId = typeof chat?.character_id === "string" && chat.character_id.trim() ? chat.character_id.trim() : null;
+    }
+    if (!characterId) return null;
+    const character = await charactersApi().get(characterId, userId ?? undefined);
+    return character ? makeControllerContextMessage("Character", formatCharacterContext(character)) : null;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld could not resolve character context: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+async function resolveControllerContextMessages(
+  settings: LumiWorldSettings,
+  context: unknown,
+  chatId?: string | null,
+  userId?: string | null,
+): Promise<LlmMessageLike[]> {
+  const [persona, character] = await Promise.all([
+    resolvePersonaContextMessage(settings, context, userId),
+    resolveCharacterContextMessage(settings, context, chatId, userId),
+  ]);
+  return [persona, character].filter((message): message is LlmMessageLike => !!message);
 }
 
 async function buildState(userId?: string | null): Promise<FrontendState> {
@@ -356,7 +468,8 @@ async function handleInterceptor(
 
   controllerBusy = true;
   try {
-    const controllerContextMessages = selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.historyMessageLimit);
+    const extraContextMessages = await resolveControllerContextMessages(settings, context, chatId, userId);
+    const controllerContextMessages = selectControllerMessagesForController(messages as LlmMessageLike[], settings, extraContextMessages);
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
