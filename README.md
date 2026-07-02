@@ -55,7 +55,7 @@ The controller should not write the visible assistant reply. Its job is to descr
 1. Copy the repository URL:
 
 ```text
-https://github.com/Archkr/Lumiverse-AgentWorld
+https://github.com/Archkr/Lumiverse-LumiWorld
 ```
 
 2. In Lumiverse:
