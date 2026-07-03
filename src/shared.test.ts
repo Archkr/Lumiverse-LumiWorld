@@ -5,17 +5,26 @@ import {
   PREVIOUS_DEFAULT_USER_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
+  advanceWorldAgentHour,
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
+  buildWorldAgentStateInjection,
   describeEmptyControllerResponse,
   extractControllerResponseText,
   formatPromptForController,
+  formatWorldAgentClock,
+  isWorldAgentHourDue,
+  makeDefaultWorldAgentState,
   normalizeRunLog,
   normalizeSettings,
+  normalizeWorldAgentState,
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
+  parseWorldAgentSchedule,
+  parseWorldAgentUpdate,
   resolveControllerTarget,
+  resolveWorldAgentTarget,
   resolveWorldInfoContextMessages,
   extractActivatedWorldInfoEntries,
   resolveIdentityMacros,
@@ -93,6 +102,43 @@ describe("settings normalization", () => {
   test("does not cap controller timeout at legacy 55 seconds", () => {
     expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(600000);
   });
+
+  test("migrates 0.2 settings into nested 0.3 world agent defaults", () => {
+    const settings = normalizeSettings({
+      enabled: true,
+      connectionId: "director",
+      worldAgent: {
+        enabled: true,
+        connectionId: "world",
+        modelOverride: "sim-model",
+        temperature: 0.9,
+        maxTokens: 32000,
+        timeoutMs: 180000,
+        hourDurationMs: 120000,
+        injectState: false,
+        autoTickVisibleOnly: false,
+        scheduleTemplate: "schedule {{char}}",
+        updateTemplate: "update {{user}}",
+      },
+    });
+
+    expect(settings.enabled).toBe(true);
+    expect(settings.worldAgent).toMatchObject({
+      enabled: true,
+      connectionId: "world",
+      modelOverride: "sim-model",
+      temperature: 0.9,
+      maxTokens: 32000,
+      timeoutMs: 180000,
+      hourDurationMs: 120000,
+      injectState: false,
+      autoTickVisibleOnly: false,
+      scheduleTemplate: "schedule {{char}}",
+      updateTemplate: "update {{user}}",
+    });
+
+    expect(normalizeSettings({}).worldAgent.enabled).toBe(false);
+  });
 });
 
 describe("generation gating", () => {
@@ -137,6 +183,28 @@ describe("connection/model resolution", () => {
         hasApiKey: true,
       }).ok,
     ).toBe(false);
+  });
+
+  test("resolves the World Agent connection independently", () => {
+    const settings = normalizeSettings({
+      connectionId: "director",
+      modelOverride: "director-model",
+      worldAgent: { connectionId: "world", modelOverride: "world-model" },
+    });
+    const target = resolveWorldAgentTarget(settings.worldAgent, {
+      id: "world",
+      name: "World",
+      provider: "custom",
+      model: "default-world",
+      isDefault: false,
+      hasApiKey: true,
+    });
+
+    expect(target.ok).toBe(true);
+    if (target.ok) {
+      expect(target.connectionId).toBe("world");
+      expect(target.model).toBe("world-model");
+    }
   });
 });
 
@@ -303,6 +371,108 @@ describe("activated World Info context", () => {
     expect(result.diagnostics.fetchedEntryCount).toBe(1);
     expect(result.diagnostics.fallbackTaggedEntryCount).toBe(0);
     expect(result.diagnostics.fetchError).toBe("entry lookup failed");
+  });
+});
+
+describe("World Agent state and parsing", () => {
+  test("normalizes per-chat state and trims history", () => {
+    const state = normalizeWorldAgentState(
+      {
+        day: -1,
+        hour: 99,
+        running: true,
+        schedule: [
+          { hour: 23, activity: "Watch the station", location: "Platform" },
+          { hour: 23, activity: "Watch the station", location: "Platform" },
+          { hour: "7:00", note: "Check the signal" },
+        ],
+        history: Array.from({ length: 30 }, (_, index) => ({
+          id: `h-${index}`,
+          timestamp: index + 1,
+          day: 1,
+          hour: index,
+          action: "tick",
+          preview: "x",
+        })),
+      },
+      "chat-1",
+    );
+
+    expect(state.chatId).toBe("chat-1");
+    expect(state.day).toBe(1);
+    expect(state.hour).toBe(23);
+    expect(state.schedule).toHaveLength(2);
+    expect(state.schedule.map((item) => item.hour)).toEqual([7, 23]);
+    expect(state.history).toHaveLength(24);
+    expect(state.history[0].timestamp).toBe(30);
+  });
+
+  test("advances one simulated hour and clears schedule on day rollover", () => {
+    const state = normalizeWorldAgentState({ day: 2, hour: 23, scheduleDay: 2, schedule: [{ hour: 23, activity: "Sleep" }] }, "chat-1");
+    const next = advanceWorldAgentHour(state, 1000);
+
+    expect(formatWorldAgentClock(next.day, next.hour)).toBe("Day 3, 00:00");
+    expect(next.lastTickAt).toBe(1000);
+    expect(next.scheduleDay).toBeNull();
+    expect(next.schedule).toEqual([]);
+  });
+
+  test("checks due hours without catch-up behavior", () => {
+    const settings = normalizeSettings({
+      worldAgent: { enabled: true, hourDurationMs: 1000, autoTickVisibleOnly: true },
+    }).worldAgent;
+    const state = normalizeWorldAgentState({ running: true, lastTickAt: 1000 }, "chat-1");
+
+    expect(isWorldAgentHourDue(state, settings, 1500, true).due).toBe(false);
+    expect(isWorldAgentHourDue(state, settings, 2500, true).due).toBe(true);
+    expect(isWorldAgentHourDue(state, settings, 2500, false)).toMatchObject({
+      due: false,
+      shouldResetLastTick: true,
+      reason: "hidden",
+    });
+    expect(isWorldAgentHourDue(normalizeWorldAgentState({ running: true, lastTickAt: null }, "chat-1"), settings, 2500, true)).toMatchObject({
+      due: false,
+      shouldResetLastTick: true,
+      reason: "initialized",
+    });
+  });
+
+  test("parses schedule and update JSON with plain-text fallbacks", () => {
+    expect(parseWorldAgentSchedule('{"schedule":[{"hour":9,"location":"Cafe","activity":"Write notes"}]}')).toEqual([
+      { hour: 9, location: "Cafe", activity: "Write notes" },
+    ]);
+    expect(parseWorldAgentSchedule("A loose private day plan.")[0].activity).toBe("A loose private day plan.");
+    expect(parseWorldAgentUpdate('{"location":"Library","mood":"focused","activity":"reading","thought":"The key is missing","goal":"find it"}')).toEqual({
+      location: "Library",
+      mood: "focused",
+      activity: "reading",
+      thought: "The key is missing",
+      goal: "find it",
+    });
+    expect(parseWorldAgentUpdate("She keeps watching the north window.")).toEqual({
+      thought: "She keeps watching the north window.",
+    });
+  });
+
+  test("formats private World Agent injection without raw logs", () => {
+    const state = makeDefaultWorldAgentState("chat-1");
+    const injected = buildWorldAgentStateInjection({
+      ...state,
+      day: 4,
+      hour: 14,
+      location: "Archive",
+      mood: "wary",
+      activity: "cataloging broken seals",
+      thought: "Someone moved the brass case.",
+      goal: "confirm who entered after midnight",
+      schedule: [{ hour: 14, location: "Archive", activity: "cataloging broken seals" }],
+      history: [{ id: "hidden", timestamp: 1, day: 4, hour: 14, action: "update", preview: "private raw output" }],
+    });
+
+    expect(injected).toContain("[LumiWorld World Agent]");
+    expect(injected).toContain("Day 4, 14:00");
+    expect(injected).toContain("Archive");
+    expect(injected).not.toContain("private raw output");
   });
 });
 

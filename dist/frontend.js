@@ -1,17 +1,15 @@
-// src/shared.ts
+// src/frontend.ts
 var EXTENSION_NAME = "LumiWorld";
-var VISIBLE_GENERATION_TYPES = [
-  "normal",
-  "continue",
-  "regenerate",
-  "swipe",
-  "impersonate"
-];
+var BREAKDOWN_NAME = "LumiWorld Director";
+var WORLD_AGENT_BREAKDOWN_NAME = "LumiWorld World Agent";
+var VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"];
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_CONTROLLER_TIMEOUT_MS = 2147483647;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+var DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
+var LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/><path d="M8.3 10.2h3.8"/><path d="M8.2 15.8h4.5"/></svg>`;
 var LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
@@ -130,6 +128,44 @@ var DEFAULT_USER_TEMPLATE = [
   'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
+var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create the current day's background schedule for {{char}}.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "",
+  "Return compact JSON only:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"...","mood":"...","goal":"..."}]}',
+  "",
+  "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override."
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule, current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, mood, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  '{"location":"...","mood":"...","activity":"...","thought":"...","goal":"..."}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SETTINGS = {
+  enabled: false,
+  connectionId: null,
+  modelOverride: "",
+  temperature: 0.45,
+  maxTokens: 700,
+  timeoutMs: 60000,
+  hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  injectState: true,
+  autoTickVisibleOnly: true,
+  scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+  updateTemplate: DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+};
 var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
@@ -146,8 +182,243 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
-  runLogLimit: DEFAULT_RUN_LOG_LIMIT
+  runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  worldAgent: DEFAULT_WORLD_AGENT_SETTINGS
 };
+var CSS = `
+.lw-root {
+  min-height: 100%;
+  padding: 12px;
+  color: var(--lumiverse-text);
+  background: transparent;
+  box-sizing: border-box;
+  font-family: var(--lumiverse-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: calc(13px * var(--lumiverse-font-scale, 1));
+  line-height: 1.45;
+  --lw-accent: var(--lumiverse-primary, #6fb7a6);
+  --lw-accent-soft: color-mix(in srgb, var(--lw-accent) 18%, transparent);
+  --lw-gold: color-mix(in srgb, #d8aa63 70%, var(--lumiverse-text) 30%);
+  --lw-rose: color-mix(in srgb, #cf7e7e 72%, var(--lumiverse-text) 28%);
+}
+.lw-root * { box-sizing: border-box; }
+.lw-root input, .lw-root textarea, .lw-root select { accent-color: var(--lw-accent); }
+.lw-shell { display: flex; flex-direction: column; gap: 12px; }
+.lw-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 0 10px;
+  border-bottom: 1px solid var(--lumiverse-border);
+}
+.lw-title { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 auto; }
+.lw-mark {
+  width: 25px;
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lw-gold);
+}
+.lw-heading { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0; }
+.lw-muted { color: var(--lumiverse-text-dim); font-size: 12px; }
+.lw-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.lw-btn {
+  appearance: none;
+  border: 1px solid var(--lumiverse-border);
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  padding: 7px 10px;
+  font: inherit;
+  cursor: pointer;
+  min-height: 34px;
+  transition: border-color var(--lumiverse-transition-fast), background var(--lumiverse-transition-fast), opacity var(--lumiverse-transition-fast);
+}
+.lw-btn:hover { border-color: var(--lumiverse-border-hover, var(--lw-accent)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
+.lw-btn:disabled { cursor: default; opacity: 0.55; }
+.lw-btn-primary { background: var(--lw-accent); border-color: var(--lw-accent); color: var(--lumiverse-primary-contrast, CanvasText); }
+.lw-btn-danger { color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill-subtle);
+}
+.lw-tab {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lumiverse-text-dim);
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.lw-tab.is-active {
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  box-shadow: inset 0 0 0 1px var(--lumiverse-border);
+}
+.lw-panel {
+  border: 1px solid var(--lumiverse-border);
+  background: var(--lumiverse-fill-subtle);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  padding: 12px;
+}
+.lw-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+.lw-panel-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0; }
+.lw-form { display: grid; gap: 12px; }
+.lw-field { display: grid; gap: 5px; min-width: 0; }
+.lw-field label, .lw-toggle-label { font-size: 12px; font-weight: 650; color: var(--lumiverse-text); }
+.lw-hint { color: var(--lumiverse-text-dim); font-size: 11.5px; }
+.lw-input, .lw-select, .lw-textarea {
+  width: 100%;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  font: inherit;
+  padding: 8px 9px;
+}
+.lw-textarea {
+  resize: vertical;
+  min-height: 132px;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.lw-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.lw-three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lw-setting-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 7px 0;
+}
+.lw-setting-row.is-disabled { opacity: 0.55; }
+.lw-switch-slot { flex: 0 0 auto; padding-top: 1px; }
+.lw-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  padding: 7px 8px;
+  background: var(--lumiverse-fill);
+}
+.lw-chip input { margin: 0; }
+.lw-banner {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  padding: 9px 10px;
+  background: var(--lw-accent-soft);
+}
+.lw-banner.warn { border-color: var(--lumiverse-warning-050, var(--lw-gold)); }
+.lw-banner.error { border-color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-details {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill-subtle);
+  padding: 0;
+}
+.lw-details summary { cursor: pointer; padding: 10px 12px; font-weight: 700; }
+.lw-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
+.lw-clock {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--lw-gold) 12%, transparent), transparent 55%),
+    var(--lumiverse-fill);
+}
+.lw-clock-time {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+.lw-clock-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.lw-meter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lw-state-card {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+  padding: 9px;
+  min-height: 74px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+.lw-state-label { color: var(--lumiverse-text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.lw-state-value { overflow-wrap: anywhere; }
+.lw-schedule-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+}
+.lw-slot {
+  flex: 0 0 150px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+.lw-slot.is-now { border-color: var(--lw-accent); box-shadow: inset 0 0 0 1px var(--lw-accent); }
+.lw-runs { display: grid; gap: 8px; }
+.lw-scrollbox {
+  max-height: min(360px, 42vh);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.lw-run {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+}
+.lw-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lw-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--lumiverse-radius-xl, 999px);
+  padding: 2px 7px;
+  font-size: 11px;
+  border: 1px solid var(--lumiverse-border);
+}
+.lw-status.success, .lw-status.test_success { color: var(--lumiverse-success, var(--lw-accent)); }
+.lw-status.error, .lw-status.timeout, .lw-status.test_error { color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-empty {
+  padding: 14px;
+  text-align: center;
+  color: var(--lumiverse-text-dim);
+  border: 1px dashed var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+}
+@media (max-width: 520px) {
+  .lw-toolbar { align-items: stretch; flex-direction: column; }
+  .lw-actions { width: 100%; justify-content: flex-start; }
+  .lw-two, .lw-three, .lw-meter-grid, .lw-type-grid { grid-template-columns: 1fr; }
+  .lw-clock-time { font-size: 26px; }
+}
+`;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -173,6 +444,22 @@ function normalizeGenerationTypes(value) {
   const normalized = incoming.filter((item) => typeof item === "string" && allowed.has(item));
   return normalized.length ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
+function normalizeWorldAgentSettings(value) {
+  const obj = asRecord(value);
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
+    connectionId: cleanNullableString(obj.connectionId),
+    modelOverride: cleanString(obj.modelOverride),
+    temperature: numberInRange(obj.temperature, DEFAULT_WORLD_AGENT_SETTINGS.temperature, 0, 2),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
+    autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
+    scheduleTemplate: cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE) || DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+    updateTemplate: cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE) || DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+  };
+}
 function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -195,216 +482,10 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
-    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50)
+    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    worldAgent: normalizeWorldAgentSettings(obj.worldAgent)
   };
 }
-
-// src/frontend.ts
-var LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 3.5c2.2 2.1 3.2 4.9 3 8.5-.2 3.5-1.2 6.3-3 8.5"/><path d="M12 3.5c-2.2 2.1-3.2 4.9-3 8.5.2 3.5 1.2 6.3 3 8.5"/><path d="M3.8 10h10.4"/><path d="M4.8 15h9.8"/><path d="M16.5 4.2l1.4 2.8 3.1.4-2.2 2.2.5 3.1-2.8-1.5-2.8 1.5.5-3.1L12 7.4l3.1-.4 1.4-2.8z"/></svg>`;
-var CSS = `
-.lumi-world-root {
-  min-height: 100%;
-  padding: 12px;
-  color: var(--lumiverse-text);
-  background: transparent;
-  box-sizing: border-box;
-  font-family: var(--lumiverse-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-  font-size: calc(13px * var(--lumiverse-font-scale, 1));
-  line-height: 1.45;
-}
-.lumi-world-root * { box-sizing: border-box; }
-.lumi-world-root input, .lumi-world-root textarea, .lumi-world-root select {
-  accent-color: var(--lumiverse-primary, var(--lumiverse-accent));
-}
-.lumi-world-shell { display: flex; flex-direction: column; gap: 12px; }
-.lumi-world-toolbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--lumiverse-border);
-}
-.lumi-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
-.lumi-world-mark {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--lumiverse-primary-text, var(--lumiverse-accent));
-}
-.lumi-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
-.lumi-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
-.lumi-world-actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 8px;
-  align-items: center;
-}
-.lumi-world-btn {
-  appearance: none;
-  border: 1px solid var(--lumiverse-border);
-  background: var(--lumiverse-fill);
-  color: var(--lumiverse-text);
-  border-radius: var(--lumiverse-radius);
-  padding: 7px 10px;
-  font: inherit;
-  cursor: pointer;
-  transition: border-color var(--lumiverse-transition-fast), background var(--lumiverse-transition-fast), opacity var(--lumiverse-transition-fast);
-}
-.lumi-world-btn:hover { border-color: var(--lumiverse-border-hover, var(--lumiverse-primary-050)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
-.lumi-world-btn:disabled { cursor: default; opacity: 0.6; }
-.lumi-world-btn-primary {
-  background: var(--lumiverse-primary, var(--lumiverse-accent));
-  color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
-  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
-}
-.lumi-world-btn-danger { color: var(--lumiverse-danger, currentColor); }
-.lumi-world-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
-.lumi-world-panel {
-  border: 1px solid var(--lumiverse-border);
-  background: var(--lumiverse-fill-subtle);
-  border-radius: var(--lumiverse-radius);
-  padding: 12px;
-}
-.lumi-world-panel-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.lumi-world-panel-title h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-}
-.lumi-world-form { display: grid; gap: 12px; }
-.lumi-world-field { display: grid; gap: 5px; min-width: 0; }
-.lumi-world-field label, .lumi-world-toggle-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--lumiverse-text);
-}
-.lumi-world-hint { font-size: 11.5px; color: var(--lumiverse-text-dim); }
-.lumi-world-input, .lumi-world-select, .lumi-world-textarea {
-  width: 100%;
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  background: var(--lumiverse-fill);
-  color: var(--lumiverse-text);
-  font: inherit;
-  padding: 8px 9px;
-}
-.lumi-world-textarea {
-  resize: vertical;
-  min-height: 132px;
-  line-height: 1.35;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-}
-.lumi-world-two {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 12px;
-  row-gap: 12px;
-  align-items: start;
-}
-.lumi-world-two .lumi-world-field { align-self: start; }
-.lumi-world-setting-row, .lumi-world-toggle {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 8px 0;
-}
-.lumi-world-setting-row.is-disabled { opacity: 0.55; }
-.lumi-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
-.lumi-world-toggle input { margin-top: 2px; }
-.lumi-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.lumi-world-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  padding: 7px 8px;
-  background: var(--lumiverse-fill);
-}
-.lumi-world-chip input { margin: 0; }
-.lumi-world-banner {
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  padding: 9px 10px;
-  background: var(--lumiverse-primary-010, var(--lumiverse-fill-subtle));
-  color: var(--lumiverse-text);
-}
-.lumi-world-banner.warn {
-  border-color: var(--lumiverse-warning-050, var(--lumiverse-border));
-  background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
-}
-.lumi-world-runs { display: grid; gap: 8px; }
-.lumi-world-runs-scroll {
-  max-height: min(360px, 42vh);
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.lumi-world-run {
-  display: grid;
-  gap: 5px;
-  padding: 9px;
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  background: var(--lumiverse-fill);
-}
-.lumi-world-run-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.lumi-world-status {
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--lumiverse-radius-xl, 999px);
-  padding: 2px 7px;
-  font-size: 11px;
-  border: 1px solid var(--lumiverse-border);
-  color: var(--lumiverse-text);
-}
-.lumi-world-status.success, .lumi-world-status.test_success {
-  color: var(--lumiverse-success, currentColor);
-}
-.lumi-world-status.error, .lumi-world-status.timeout, .lumi-world-status.test_error {
-  color: var(--lumiverse-danger, currentColor);
-}
-.lumi-world-details {
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  background: var(--lumiverse-fill-subtle);
-  padding: 0;
-}
-.lumi-world-details summary {
-  cursor: pointer;
-  padding: 10px 12px;
-  font-weight: 650;
-}
-.lumi-world-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
-.lumi-world-empty {
-  padding: 14px;
-  text-align: center;
-  color: var(--lumiverse-text-dim);
-  border: 1px dashed var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-}
-@media (max-width: 520px) {
-  .lumi-world-two, .lumi-world-type-grid { grid-template-columns: 1fr; }
-  .lumi-world-toolbar { align-items: stretch; flex-direction: column; }
-  .lumi-world-actions { width: 100%; }
-}
-`;
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
   if (className)
@@ -413,13 +494,26 @@ function createElement(tag, className, text) {
     element.textContent = text;
   return element;
 }
+function activeChat(ctx) {
+  try {
+    return ctx.getActiveChat();
+  } catch {
+    return { chatId: null, characterId: null };
+  }
+}
 function send(ctx, message) {
-  ctx.sendToBackend(message);
+  const active = activeChat(ctx);
+  ctx.sendToBackend({
+    ...message,
+    chatId: "chatId" in message ? message.chatId ?? active.chatId : active.chatId,
+    characterId: "characterId" in message ? message.characterId ?? active.characterId : active.characterId
+  });
 }
 function cloneSettings(settings) {
   return normalizeSettings({
     ...settings,
-    generationTypes: [...settings.generationTypes]
+    generationTypes: [...settings.generationTypes],
+    worldAgent: { ...settings.worldAgent }
   });
 }
 function readChatId(payload) {
@@ -428,19 +522,33 @@ function readChatId(payload) {
   const raw = payload.chatId ?? payload.chat_id;
   return typeof raw === "string" && raw.trim() ? raw : null;
 }
+function readCharacterId(payload) {
+  if (!payload || typeof payload !== "object")
+    return null;
+  const raw = payload.characterId ?? payload.character_id;
+  return typeof raw === "string" && raw.trim() ? raw : null;
+}
 function formatStatus(status) {
   return status.replace(/_/g, " ");
 }
 function formatTime(timestamp) {
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit"
-    }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
   } catch {
     return "";
   }
+}
+function formatClock(state) {
+  if (!state)
+    return "Day 1, 08:00";
+  return `Day ${state.day}, ${String(state.hour).padStart(2, "0")}:00`;
+}
+function formatDurationMs(ms) {
+  if (ms % 60000 === 0)
+    return `${Math.round(ms / 60000)} min`;
+  if (ms % 1000 === 0)
+    return `${Math.round(ms / 1000)} sec`;
+  return `${Math.round(ms)} ms`;
 }
 function formatWorldInfoRunDiagnostics(run) {
   const hasDiagnostics = run.worldInfoActivatedCount != null || run.worldInfoFetchedCount != null || run.worldInfoFallbackTaggedCount != null;
@@ -464,14 +572,20 @@ function stateUiKey(state) {
     connections: state.connections,
     connectionError: state.connectionError ?? null,
     permissions: state.permissions,
-    runs: state.runs
+    runs: state.runs,
+    worldState: state.worldState ?? null
   });
+}
+function worldStateCardValue(value, fallback = "Unset") {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || fallback;
 }
 function setup(ctx) {
   const cleanups = [];
   const componentHandles = [];
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
+  let activeChannel = "director";
   let saveTimer = null;
   let localRevision = 0;
   let saveRevision = 0;
@@ -483,8 +597,8 @@ function setup(ctx) {
     title: EXTENSION_NAME,
     shortName: "World",
     headerTitle: "LumiWorld",
-    description: "Configure the LumiWorld prompt interceptor",
-    keywords: ["lumiworld", "director", "interceptor", "world"],
+    description: "World simulation channels",
+    keywords: ["lumiworld", "world", "director", "interceptor", "simulation"],
     iconSvg: LUMIWORLD_ICON
   });
   cleanups.push(() => tab.destroy());
@@ -505,41 +619,44 @@ function setup(ctx) {
       saveRevision = localRevision;
       saveInFlight = true;
       send(ctx, { type: "save_settings", settings: draft });
-    }, 500);
-  }
-  function selectedConnection() {
-    if (!state || !draft.connectionId)
-      return null;
-    return state.connections.find((connection) => connection.id === draft.connectionId) ?? null;
+    }, 450);
   }
   function updateDraft(patch) {
-    draft = normalizeSettings({ ...draft, ...patch });
+    draft = normalizeSettings({
+      ...draft,
+      ...patch,
+      worldAgent: normalizeWorldAgentSettings({
+        ...draft.worldAgent,
+        ...patch.worldAgent ?? {}
+      })
+    });
     localRevision += 1;
     scheduleAutoSave();
   }
+  function updateWorldAgent(patch) {
+    updateDraft({ worldAgent: { ...draft.worldAgent, ...patch } });
+  }
+  function selectedConnection(connectionId) {
+    if (!state || !connectionId)
+      return null;
+    return state.connections.find((connection) => connection.id === connectionId) ?? null;
+  }
   function field(label, control, hint) {
-    const wrap = createElement("div", "lumi-world-field");
-    const labelEl = createElement("label", undefined, label);
-    wrap.append(labelEl, control);
+    const wrap = createElement("div", "lw-field");
+    wrap.appendChild(createElement("label", undefined, label));
+    wrap.appendChild(control);
     if (hint)
-      wrap.appendChild(createElement("div", "lumi-world-hint", hint));
+      wrap.appendChild(createElement("div", "lw-hint", hint));
     return wrap;
   }
   function numberInput(value, min, max, step, onChange) {
-    const input = createElement("input", "lumi-world-input");
+    const input = createElement("input", "lw-input");
     input.type = "number";
     input.min = String(min);
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
     input.addEventListener("change", () => onChange(Number(input.value)));
-    return input;
-  }
-  function textarea(value, onChange) {
-    const input = createElement("textarea", "lumi-world-textarea");
-    input.value = value;
-    input.spellcheck = false;
-    input.addEventListener("input", () => onChange(input.value));
     return input;
   }
   function renderNumberControl(slot, value, min, max, step, onChange) {
@@ -568,16 +685,15 @@ function setup(ctx) {
   function renderTextareaControl(slot, value, onChange, ariaLabel) {
     const components = ctx.components;
     if (components?.mountTextArea) {
-      const handle = components.mountTextArea(slot, {
-        value,
-        rows: 8,
-        ariaLabel,
-        onChange
-      });
+      const handle = components.mountTextArea(slot, { value, rows: 8, ariaLabel, onChange });
       componentHandles.push(handle);
       return;
     }
-    slot.appendChild(textarea(value, onChange));
+    const input = createElement("textarea", "lw-textarea");
+    input.value = value;
+    input.spellcheck = false;
+    input.addEventListener("input", () => onChange(input.value));
+    slot.appendChild(input);
   }
   function textareaField(label, value, onChange, hint) {
     const slot = createElement("div");
@@ -587,12 +703,7 @@ function setup(ctx) {
   function renderSwitchControl(slot, checked, onChange, ariaLabel, disabled = false) {
     const components = ctx.components;
     if (components?.mountSwitch && !disabled) {
-      const handle = components.mountSwitch(slot, {
-        checked,
-        size: "md",
-        ariaLabel,
-        onChange
-      });
+      const handle = components.mountSwitch(slot, { checked, size: "md", ariaLabel, onChange });
       componentHandles.push(handle);
       return;
     }
@@ -604,134 +715,134 @@ function setup(ctx) {
     slot.appendChild(input);
   }
   function toggleField(label, checked, onChange, hint, disabled = false) {
-    const row = createElement("div", `lumi-world-setting-row${disabled ? " is-disabled" : ""}`);
-    const switchSlot = createElement("div", "lumi-world-switch-slot");
+    const row = createElement("div", `lw-setting-row${disabled ? " is-disabled" : ""}`);
+    const switchSlot = createElement("div", "lw-switch-slot");
     renderSwitchControl(switchSlot, checked, onChange, label, disabled);
     const text = createElement("div");
-    text.appendChild(createElement("div", "lumi-world-toggle-label", label));
+    text.appendChild(createElement("div", "lw-toggle-label", label));
     if (hint)
-      text.appendChild(createElement("div", "lumi-world-hint", hint));
+      text.appendChild(createElement("div", "lw-hint", hint));
     row.append(switchSlot, text);
     return row;
   }
-  function renderEnabledControl(form) {
-    const row = createElement("div", "lumi-world-setting-row");
-    const switchSlot = createElement("div", "lumi-world-switch-slot");
-    renderSwitchControl(switchSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable LumiWorld");
-    const enabledText = createElement("div");
-    enabledText.append(createElement("div", "lumi-world-toggle-label", "Enable LumiWorld"), createElement("div", "lumi-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."));
-    row.append(switchSlot, enabledText);
-    form.appendChild(row);
-  }
-  function renderConnectionControl(slot) {
+  function renderConnectionControl(slot, value, onChange, ariaLabel) {
     const connections = state?.connections ?? [];
     const components = ctx.components;
     const options = connections.map((connection) => ({
       value: connection.id,
       label: connection.name || connection.id,
-      sublabel: [
-        connection.provider || null,
-        connection.model || null,
-        connection.hasApiKey ? null : "no API key",
-        connection.isDefault ? "default" : null
-      ].filter(Boolean).join(" / "),
+      sublabel: [connection.provider || null, connection.model || null, connection.hasApiKey ? null : "no API key", connection.isDefault ? "default" : null].filter(Boolean).join(" / "),
       group: connection.provider || "Connections",
-      leading: {
-        type: "initial",
-        text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase()
-      }
+      leading: { type: "initial", text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase() }
     }));
-    if (draft.connectionId && !options.some((option) => option.value === draft.connectionId)) {
+    if (value && !options.some((option) => option.value === value)) {
       options.unshift({
-        value: draft.connectionId,
+        value,
         label: "Saved connection not found",
-        sublabel: draft.connectionId,
+        sublabel: value,
         group: "Unavailable",
         leading: { type: "initial", text: "!" }
       });
     }
     if (components?.mountSelect) {
       const handle = components.mountSelect(slot, {
-        value: draft.connectionId ?? "",
+        value: value ?? "",
         options,
-        placeholder: "Select controller connection...",
+        placeholder: "Select connection...",
         searchPlaceholder: "Search LLM connections...",
         emptyMessage: state?.connectionError || "No LLM connection profiles found.",
         noResultsMessage: "No matching LLM connection profiles.",
         clearable: true,
-        clearLabel: "No controller connection",
-        ariaLabel: "LumiWorld controller connection",
+        clearLabel: "No connection",
+        ariaLabel,
         portal: true,
         maxHeight: 320,
-        onChange: (value) => {
-          updateDraft({ connectionId: value || null, modelOverride: "" });
+        onChange: (next) => {
+          onChange(next || null);
           render();
         }
       });
       componentHandles.push(handle);
       return;
     }
-    const connectionSelect = createElement("select", "lumi-world-select");
-    connectionSelect.appendChild(new Option("Select controller connection...", ""));
+    const select = createElement("select", "lw-select");
+    select.appendChild(new Option("Select connection...", ""));
     for (const connection of connections) {
-      connectionSelect.appendChild(new Option(connectionLabel(connection), connection.id));
+      select.appendChild(new Option(connectionLabel(connection), connection.id));
     }
-    connectionSelect.value = draft.connectionId ?? "";
-    connectionSelect.addEventListener("change", () => {
-      updateDraft({ connectionId: connectionSelect.value || null, modelOverride: "" });
+    select.value = value ?? "";
+    select.addEventListener("change", () => {
+      onChange(select.value || null);
       render();
     });
-    slot.appendChild(connectionSelect);
+    slot.appendChild(select);
   }
-  function renderEnabledPanel(shell) {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Controller"));
-    panel.appendChild(title);
-    const form = createElement("div", "lumi-world-form");
-    renderEnabledControl(form);
-    const connectionSlot = createElement("div");
-    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
-    renderConnectionControl(connectionSlot);
-    const modelSlot = createElement("div");
-    form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
-    renderModelControl(modelSlot);
-    const two = createElement("div", "lumi-world-two");
-    two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
-    form.appendChild(two);
-    panel.appendChild(form);
-    shell.appendChild(panel);
-  }
-  function renderModelControl(slot) {
-    const selected = selectedConnection();
+  function renderModelControl(slot, connectionId, value, onChange) {
+    const selected = selectedConnection(connectionId);
     const components = ctx.components;
     if (selected && components?.mountModelCombobox) {
       const handle = components.mountModelCombobox(slot, {
-        value: draft.modelOverride,
+        value,
         connection: { kind: "llm", id: selected.id },
         appearance: "standard",
         placeholder: selected.model || "model id",
         browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
-        onChange: (value) => updateDraft({ modelOverride: value })
+        onChange
       });
       componentHandles.push(handle);
       return;
     }
-    const input = createElement("input", "lumi-world-input");
+    const input = createElement("input", "lw-input");
     input.type = "text";
     input.placeholder = selected?.model || "model id";
-    input.value = draft.modelOverride;
+    input.value = value;
     input.disabled = !selected;
-    input.addEventListener("input", () => updateDraft({ modelOverride: input.value }));
+    input.addEventListener("input", () => onChange(input.value));
     slot.appendChild(input);
   }
+  function renderConnectionFields(shell, channel) {
+    const isDirector = channel === "director";
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, isDirector ? "Controller" : "World Agent Model"));
+    panel.appendChild(head);
+    const form = createElement("div", "lw-form");
+    const connectionSlot = createElement("div");
+    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
+    renderConnectionControl(connectionSlot, isDirector ? draft.connectionId : draft.worldAgent.connectionId, (connectionId) => isDirector ? updateDraft({ connectionId, modelOverride: "" }) : updateWorldAgent({ connectionId, modelOverride: "" }), isDirector ? "Director Note connection" : "World Agent connection");
+    const modelSlot = createElement("div");
+    form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
+    renderModelControl(modelSlot, isDirector ? draft.connectionId : draft.worldAgent.connectionId, isDirector ? draft.modelOverride : draft.worldAgent.modelOverride, (model) => isDirector ? updateDraft({ modelOverride: model }) : updateWorldAgent({ modelOverride: model }));
+    const two = createElement("div", "lw-two");
+    if (isDirector) {
+      two.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })), numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })), numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })), numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })), numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })));
+    } else {
+      two.append(numberField("Temperature", draft.worldAgent.temperature, 0, 2, 0.05, (value) => updateWorldAgent({ temperature: value })), numberField("Max tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateWorldAgent({ maxTokens: value })), numberField("Timeout ms", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateWorldAgent({ timeoutMs: value })), numberField("Hour duration ms", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (value) => updateWorldAgent({ hourDurationMs: value }), `Current: ${formatDurationMs(draft.worldAgent.hourDurationMs)}`));
+    }
+    form.appendChild(two);
+    panel.appendChild(form);
+    shell.appendChild(panel);
+  }
+  function renderDirectorChannel(shell) {
+    const enabled = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Director Note"));
+    head.appendChild(createElement("span", "lw-muted", BREAKDOWN_NAME));
+    enabled.appendChild(head);
+    enabled.appendChild(toggleField("Enable Director Note", draft.enabled, (checked) => updateDraft({ enabled: checked }), "Visible generations receive a private director note before the main model replies."));
+    shell.appendChild(enabled);
+    renderConnectionFields(shell, "director");
+    renderGenerationTypes(shell);
+    renderDirectorAdvanced(shell);
+    renderRuns(shell, "director");
+  }
   function renderGenerationTypes(shell) {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Runs On"));
-    title.appendChild(createElement("span", "lumi-world-subtle", "Quiet/background jobs are skipped"));
-    panel.appendChild(title);
-    const grid = createElement("div", "lumi-world-type-grid");
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Runs On"));
+    head.appendChild(createElement("span", "lw-muted", "Quiet jobs are skipped"));
+    panel.appendChild(head);
+    const grid = createElement("div", "lw-type-grid");
     const components = ctx.components;
     for (const type of VISIBLE_GENERATION_TYPES) {
       const updateType = (checked) => {
@@ -752,7 +863,7 @@ function setup(ctx) {
         componentHandles.push(handle);
         grid.appendChild(slot);
       } else {
-        const label = createElement("label", "lumi-world-chip");
+        const label = createElement("label", "lw-chip");
         const input = createElement("input");
         input.type = "checkbox";
         input.checked = draft.generationTypes.includes(type);
@@ -764,50 +875,197 @@ function setup(ctx) {
     panel.appendChild(grid);
     shell.appendChild(panel);
   }
-  function renderTemplates(shell) {
-    const details = createElement("details", "lumi-world-details");
+  function renderDirectorAdvanced(shell) {
+    const details = createElement("details", "lw-details");
     const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lumi-world-details-body");
+    const body = createElement("div", "lw-details-body");
     const entriesHint = state?.permissions.worldBooks === false ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries." : "Fetch activated World Info entry content and send it to the controller.";
-    body.append(toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."), textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
+    body.append(toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."), textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })), numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })));
     details.append(summary, body);
     shell.appendChild(details);
   }
-  function renderRuns(shell) {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Recent Runs"));
-    const clear = createElement("button", "lumi-world-btn", "Clear");
+  function renderWorldAgentChannel(shell) {
+    renderWorldAgentClock(shell);
+    const settingsPanel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Channel"));
+    head.appendChild(createElement("span", "lw-muted", WORLD_AGENT_BREAKDOWN_NAME));
+    settingsPanel.appendChild(head);
+    settingsPanel.append(toggleField("Enable World Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Use per-chat simulation state for this channel."), toggleField("Inject state", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add the current World Agent state to visible prompt generations."), toggleField("Visible-only ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Automatic ticks only run while Lumiverse is visible."));
+    shell.appendChild(settingsPanel);
+    renderConnectionFields(shell, "world_agent");
+    renderWorldAgentState(shell);
+    renderWorldAgentSchedule(shell);
+    renderWorldAgentAdvanced(shell);
+    renderRuns(shell, "world_agent");
+  }
+  function renderWorldAgentClock(shell) {
+    const panel = createElement("section", "lw-clock");
+    const stateNow = state?.worldState ?? null;
+    const top = createElement("div", "lw-clock-row");
+    top.append(createElement("div", "lw-clock-time", formatClock(stateNow)), createElement("span", "lw-muted", stateNow?.running ? "running" : "paused"));
+    panel.appendChild(top);
+    const actions = createElement("div", "lw-clock-row");
+    const startPause = createElement("button", `lw-btn${stateNow?.running ? "" : " lw-btn-primary"}`, stateNow?.running ? "Pause" : "Start");
+    startPause.type = "button";
+    startPause.addEventListener("click", () => {
+      notice = { tone: "info", text: stateNow?.running ? "Pausing World Agent..." : "Starting World Agent..." };
+      render();
+      send(ctx, { type: stateNow?.running ? "world_agent_pause" : "world_agent_start" });
+    });
+    const advance = createElement("button", "lw-btn", "+1 Hour");
+    advance.type = "button";
+    advance.addEventListener("click", () => {
+      notice = { tone: "info", text: "Advancing one simulated hour..." };
+      render();
+      send(ctx, { type: "world_agent_advance_hour" });
+    });
+    const schedule = createElement("button", "lw-btn", "Schedule");
+    schedule.type = "button";
+    schedule.addEventListener("click", () => {
+      notice = { tone: "info", text: "Regenerating the daily schedule..." };
+      render();
+      send(ctx, { type: "world_agent_regenerate_schedule" });
+    });
+    const reset = createElement("button", "lw-btn lw-btn-danger", "Reset");
+    reset.type = "button";
+    reset.addEventListener("click", () => send(ctx, { type: "world_agent_reset" }));
+    actions.append(startPause, advance, schedule, reset);
+    panel.appendChild(actions);
+    const timeRow = createElement("div", "lw-three");
+    const dayInput = numberInput(stateNow?.day ?? 1, 1, Number.MAX_SAFE_INTEGER, 1, () => {});
+    const hourInput = numberInput(stateNow?.hour ?? 8, 0, 23, 1, () => {});
+    const setButton = createElement("button", "lw-btn", "Set Time");
+    setButton.type = "button";
+    setButton.addEventListener("click", () => send(ctx, { type: "world_agent_set_time", day: Number(dayInput.value), hour: Number(hourInput.value) }));
+    timeRow.append(field("Day", dayInput), field("Hour", hourInput), setButton);
+    panel.appendChild(timeRow);
+    shell.appendChild(panel);
+  }
+  function renderWorldAgentState(shell) {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Current State"));
+    if (state?.worldState?.updatedAt)
+      head.appendChild(createElement("span", "lw-muted", `Updated ${formatTime(state.worldState.updatedAt)}`));
+    panel.appendChild(head);
+    const grid = createElement("div", "lw-meter-grid");
+    const current = state?.worldState ?? null;
+    const cards = [
+      ["Location", worldStateCardValue(current?.location)],
+      ["Mood", worldStateCardValue(current?.mood, "Neutral")],
+      ["Activity", worldStateCardValue(current?.activity, "Idle")],
+      ["Goal", worldStateCardValue(current?.goal)],
+      ["Thought", worldStateCardValue(current?.thought)],
+      ["Schedule", current?.schedule?.length ? `${current.schedule.length} entries` : "No schedule"]
+    ];
+    for (const [label, value] of cards) {
+      const card = createElement("div", "lw-state-card");
+      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
+      grid.appendChild(card);
+    }
+    panel.appendChild(grid);
+    const history = current?.history ?? [];
+    const box = createElement("div", "lw-scrollbox");
+    box.style.marginTop = "10px";
+    if (!history.length) {
+      box.appendChild(createElement("div", "lw-empty", "No World Agent activity yet."));
+    } else {
+      const list = createElement("div", "lw-runs");
+      for (const entry of history) {
+        const item = createElement("article", "lw-run");
+        const row = createElement("div", "lw-run-head");
+        row.append(createElement("strong", undefined, entry.action.replace(/_/g, " ")), createElement("span", "lw-muted", `Day ${entry.day}, ${String(entry.hour).padStart(2, "0")}:00`));
+        item.appendChild(row);
+        if (entry.preview)
+          item.appendChild(createElement("div", undefined, entry.preview));
+        if (entry.error)
+          item.appendChild(createElement("div", "lw-muted", entry.error));
+        item.appendChild(createElement("div", "lw-muted", formatTime(entry.timestamp)));
+        list.appendChild(item);
+      }
+      box.appendChild(list);
+    }
+    panel.appendChild(box);
+    shell.appendChild(panel);
+  }
+  function renderWorldAgentSchedule(shell) {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Daily Schedule"));
+    head.appendChild(createElement("span", "lw-muted", state?.worldState?.scheduleDay ? `Day ${state.worldState.scheduleDay}` : "No day"));
+    panel.appendChild(head);
+    const schedule = state?.worldState?.schedule ?? [];
+    if (!schedule.length) {
+      panel.appendChild(createElement("div", "lw-empty", "No schedule generated."));
+      shell.appendChild(panel);
+      return;
+    }
+    const strip = createElement("div", "lw-schedule-strip");
+    for (const item of schedule) {
+      const slot = createElement("article", `lw-slot${item.hour === state?.worldState?.hour ? " is-now" : ""}`);
+      slot.append(createElement("strong", undefined, `${String(item.hour).padStart(2, "0")}:00`));
+      if (item.location)
+        slot.appendChild(createElement("div", "lw-muted", item.location));
+      slot.appendChild(createElement("div", undefined, item.activity || "Unspecified activity"));
+      if (item.mood)
+        slot.appendChild(createElement("div", "lw-muted", `Mood: ${item.mood}`));
+      if (item.goal)
+        slot.appendChild(createElement("div", "lw-muted", `Goal: ${item.goal}`));
+      strip.appendChild(slot);
+    }
+    panel.appendChild(strip);
+    shell.appendChild(panel);
+  }
+  function renderWorldAgentAdvanced(shell) {
+    const details = createElement("details", "lw-details");
+    const summary = createElement("summary", undefined, "Advanced Settings");
+    const body = createElement("div", "lw-details-body");
+    body.append(textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."), textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."));
+    details.append(summary, body);
+    shell.appendChild(details);
+  }
+  function renderRuns(shell, channel) {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
+    const clear = createElement("button", "lw-btn", "Clear");
     clear.type = "button";
     clear.addEventListener("click", () => send(ctx, { type: "clear_runs" }));
-    title.appendChild(clear);
-    panel.appendChild(title);
-    const scroll = createElement("div", "lumi-world-runs-scroll");
-    const runs = state?.runs ?? [];
+    head.appendChild(clear);
+    panel.appendChild(head);
+    const runs = (state?.runs ?? []).filter((run) => (run.channel ?? "director") === channel);
+    const scroll = createElement("div", "lw-scrollbox");
     if (!runs.length) {
-      scroll.appendChild(createElement("div", "lumi-world-empty", "No controller runs yet."));
+      scroll.appendChild(createElement("div", "lw-empty", channel === "director" ? "No controller runs yet." : "No World Agent runs yet."));
       panel.appendChild(scroll);
       shell.appendChild(panel);
       return;
     }
-    const list = createElement("div", "lumi-world-runs");
+    const list = createElement("div", "lw-runs");
     for (const run of runs) {
-      const item = createElement("article", "lumi-world-run");
-      const head = createElement("div", "lumi-world-run-head");
-      head.append(createElement("span", `lumi-world-status ${run.status}`, formatStatus(run.status)), createElement("span", "lumi-world-subtle", formatTime(run.timestamp)));
-      item.appendChild(head);
+      const item = createElement("article", "lw-run");
+      const runHead = createElement("div", "lw-run-head");
+      runHead.append(createElement("span", `lw-status ${run.status}`, formatStatus(run.status)), createElement("span", "lw-muted", formatTime(run.timestamp)));
+      item.appendChild(runHead);
+      const title = [run.action ? run.action.replace(/_/g, " ") : null, run.generationType ?? null].filter(Boolean).join(" / ");
+      if (title)
+        item.appendChild(createElement("div", "lw-muted", title));
       const meta = [run.connectionName, run.model, run.durationMs != null ? `${Math.round(run.durationMs)} ms` : null].filter(Boolean).join(" / ");
       if (meta)
-        item.appendChild(createElement("div", "lumi-world-subtle", meta));
-      const worldInfoDiagnostics = formatWorldInfoRunDiagnostics(run);
-      if (worldInfoDiagnostics)
-        item.appendChild(createElement("div", "lumi-world-subtle", worldInfoDiagnostics));
+        item.appendChild(createElement("div", "lw-muted", meta));
+      const worldTime = run.worldAgentDay ? `Day ${run.worldAgentDay}, ${String(run.worldAgentHour ?? 0).padStart(2, "0")}:00` : null;
+      if (worldTime)
+        item.appendChild(createElement("div", "lw-muted", worldTime));
+      const wi = formatWorldInfoRunDiagnostics(run);
+      if (wi)
+        item.appendChild(createElement("div", "lw-muted", wi));
       if (run.directivePreview)
         item.appendChild(createElement("div", undefined, run.directivePreview));
       if (run.error)
-        item.appendChild(createElement("div", "lumi-world-subtle", run.error));
+        item.appendChild(createElement("div", "lw-muted", run.error));
       if (run.worldInfoFetchError)
-        item.appendChild(createElement("div", "lumi-world-subtle", `World Info fetch: ${run.worldInfoFetchError}`));
+        item.appendChild(createElement("div", "lw-muted", `World Info fetch: ${run.worldInfoFetchError}`));
       list.appendChild(item);
     }
     scroll.appendChild(list);
@@ -817,8 +1075,7 @@ function setup(ctx) {
   function renderNotice(shell) {
     if (!notice)
       return;
-    const banner = createElement("div", `lumi-world-banner ${notice.tone === "warn" || notice.tone === "error" ? "warn" : ""}`, notice.text);
-    shell.appendChild(banner);
+    shell.appendChild(createElement("div", `lw-banner ${notice.tone === "warn" || notice.tone === "error" ? notice.tone : ""}`, notice.text));
   }
   function renderBanners(shell) {
     if (!state)
@@ -826,34 +1083,34 @@ function setup(ctx) {
     const missingPermissions = [
       !state.permissions.interceptor ? "Interceptor" : null,
       !state.permissions.generation ? "Generation" : null,
-      draft.includeCharacter && !state.permissions.chats ? "Chats" : null,
-      draft.includeCharacter && !state.permissions.characters ? "Characters" : null,
-      draft.includeUserPersona && !state.permissions.personas ? "Personas" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.chats ? "Chats" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.characters ? "Characters" : null,
+      (draft.includeUserPersona || draft.worldAgent.enabled) && !state.permissions.personas ? "Personas" : null,
       draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null
     ].filter(Boolean);
     if (missingPermissions.length) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel to activate the selected LumiWorld context sources.`));
+      shell.appendChild(createElement("div", "lw-banner warn", `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel.`));
     }
-    if (state.connectionError) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", state.connectionError));
-    }
-    if (draft.enabled && !draft.connectionId) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", "LumiWorld is enabled but no controller connection is selected."));
-    }
+    if (state.connectionError)
+      shell.appendChild(createElement("div", "lw-banner warn", state.connectionError));
+    if (draft.enabled && !draft.connectionId)
+      shell.appendChild(createElement("div", "lw-banner warn", "Director Note is enabled but no controller connection is selected."));
+    if (draft.worldAgent.enabled && !draft.worldAgent.connectionId)
+      shell.appendChild(createElement("div", "lw-banner warn", "World Agent is enabled but no model connection is selected."));
   }
   function renderToolbar(shell) {
-    const toolbar = createElement("div", "lumi-world-toolbar");
-    const title = createElement("div", "lumi-world-title");
-    const mark = createElement("span", "lumi-world-mark");
+    const toolbar = createElement("div", "lw-toolbar");
+    const title = createElement("div", "lw-title");
+    const mark = createElement("span", "lw-mark");
     mark.innerHTML = LUMIWORLD_ICON;
     const text = createElement("div");
-    text.append(createElement("h2", "lumi-world-heading", EXTENSION_NAME), createElement("div", "lumi-world-subtle", "Private world-director prompt interceptor"));
+    text.append(createElement("h2", "lw-heading", EXTENSION_NAME), createElement("div", "lw-muted", "Lofi world simulation deck"));
     title.append(mark, text);
-    const actions = createElement("div", "lumi-world-actions");
-    const refresh = createElement("button", "lumi-world-btn", "Refresh");
+    const actions = createElement("div", "lw-actions");
+    const refresh = createElement("button", "lw-btn", "Refresh");
     refresh.type = "button";
     refresh.addEventListener("click", () => send(ctx, { type: "refresh_state" }));
-    const test = createElement("button", "lumi-world-btn", "Test");
+    const test = createElement("button", "lw-btn", "Test");
     test.type = "button";
     test.addEventListener("click", () => {
       notice = { tone: "info", text: "Running controller test..." };
@@ -864,24 +1121,42 @@ function setup(ctx) {
     toolbar.append(title, actions);
     shell.appendChild(toolbar);
   }
+  function renderChannelTabs(shell) {
+    const tabs = createElement("div", "lw-tabs");
+    const channels = [
+      ["director", "Director Note"],
+      ["world_agent", "World Agent"]
+    ];
+    for (const [channel, label] of channels) {
+      const button = createElement("button", `lw-tab${activeChannel === channel ? " is-active" : ""}`, label);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        activeChannel = channel;
+        render();
+      });
+      tabs.appendChild(button);
+    }
+    shell.appendChild(tabs);
+  }
   function render() {
     destroyComponents();
     tab.root.replaceChildren();
-    const root = createElement("div", "lumi-world-root");
-    const shell = createElement("div", "lumi-world-shell");
+    const root = createElement("div", "lw-root");
+    const shell = createElement("div", "lw-shell");
     root.appendChild(shell);
     tab.root.appendChild(root);
     renderToolbar(shell);
     renderNotice(shell);
     if (!state) {
-      shell.appendChild(createElement("div", "lumi-world-empty", "Loading LumiWorld settings..."));
+      shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
       return;
     }
     renderBanners(shell);
-    renderEnabledPanel(shell);
-    renderGenerationTypes(shell);
-    renderTemplates(shell);
-    renderRuns(shell);
+    renderChannelTabs(shell);
+    if (activeChannel === "director")
+      renderDirectorChannel(shell);
+    else
+      renderWorldAgentChannel(shell);
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
@@ -913,6 +1188,18 @@ function setup(ctx) {
           scheduleAutoSave();
         }
         break;
+      case "world_state":
+        if (state) {
+          state = { ...state, worldState: message.state };
+          render();
+        }
+        break;
+      case "world_agent_result":
+        notice = message.ok ? { tone: "success", text: message.message || "World Agent updated." } : { tone: "error", text: message.error };
+        if (message.state && state)
+          state = { ...state, worldState: message.state };
+        render();
+        break;
       case "run_logged":
         if (state) {
           state = { ...state, runs: [message.run, ...state.runs].slice(0, draft.runLogLimit) };
@@ -934,10 +1221,14 @@ function setup(ctx) {
   });
   cleanups.push(onBackendMessage);
   const events = ctx.events;
-  if (events?.on) {
-    cleanups.push(events.on("CHAT_CHANGED", (payload) => send(ctx, { type: "refresh_state", chatId: readChatId(payload) })));
-  }
-  send(ctx, { type: "ready" });
+  cleanups.push(events.on("CHAT_CHANGED", (payload) => {
+    const chatId = readChatId(payload);
+    const characterId = readCharacterId(payload);
+    send(ctx, { type: "refresh_state", chatId, characterId });
+    send(ctx, { type: "refresh_world_state", chatId, characterId });
+  }));
+  const initial = activeChat(ctx);
+  send(ctx, { type: "ready", chatId: initial.chatId, characterId: initial.characterId });
   render();
   return () => {
     if (saveTimer) {

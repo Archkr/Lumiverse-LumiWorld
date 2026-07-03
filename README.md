@@ -1,126 +1,122 @@
 # LumiWorld
 
-LumiWorld is a Lumiverse Spindle extension that adds a controller-model pass before the main chat model replies.
+LumiWorld is a Lumiverse Spindle extension for private world-simulation channels.
 
-When enabled, LumiWorld runs as a late prompt interceptor. It sends recent messages marked as chat history plus enabled controller-only context sources to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
+It ships with two channels:
 
-LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
+- **Director Note**: a late prompt interceptor that asks a controller model how the world should move before the visible reply.
+- **World Agent**: an experimental per-chat simulation clock that tracks a character's schedule, location, mood, activity, thought, and goal.
+
+LumiWorld uses Lumiverse connection profiles through `spindle.generate.raw()`. API keys stay inside Lumiverse.
 
 ## At a glance
 
 | | |
 |---|---|
-| Extension type | Prompt interceptor |
-| Main use | Let a controller model decide how the world should react before the visible reply |
-| Controller model | Any Lumiverse LLM connection profile |
-| Prompt Breakdown label | `LumiWorld Director` |
+| Extension type | Prompt interceptor plus per-chat simulation state |
+| Version | `0.3.0` |
+| Drawer UI | Lofi channel deck |
+| Prompt Breakdown labels | `LumiWorld Director`, `LumiWorld World Agent` |
 | Runs on | `normal`, `continue`, `regenerate`, `swipe`, `impersonate` |
-| Skips | `quiet` and any disabled generation type |
-| Default permissions | `interceptor`, `generation`, `chats`, `characters`, `personas`, `world_books` |
+| Skips | `quiet` and disabled generation types |
+| Permissions | `interceptor`, `generation`, `chats`, `characters`, `personas`, `world_books` |
+| Not requested | `chat_mutation` |
 
-## Features
+## Channels
 
-- Late-running prompt interceptor with priority `150`, so it sees earlier prompt additions such as lore and retrieval.
-- Controller connection selector powered by Lumiverse connection profiles.
-- Optional model override, or use the selected connection's configured model.
-- Configurable context sources, chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Sends recent chat history, activated World Info entries, the active user persona, and the active character card to the controller when enabled.
-- Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
-- Prompt Breakdown attribution through `LumiWorld Director`.
-- Recent run log with status, timing, connection/model, error, and directive preview only.
-- Graceful pass-through when disabled, unconfigured, missing permission, timed out, or errored.
+### Director Note
 
-## How it works
+Director Note preserves the original LumiWorld behavior:
 
-1. Lumiverse assembles the normal prompt for a visible chat generation.
-2. LumiWorld receives the in-flight message array through the Spindle interceptor API.
-3. LumiWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
-4. LumiWorld can include activated World Info entries by reading activation metadata, fetching each entry's content by ID, and falling back to tagged standalone prompt entries if fetching is unavailable.
-5. LumiWorld optionally fetches the active persona and active character card through Lumiverse APIs and adds them to the controller-only context.
-6. The selected controller connection is called through `spindle.generate.raw()`.
-7. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
-8. A private system block is injected above the original prompt:
+1. Lumiverse assembles a visible chat-generation prompt.
+2. LumiWorld receives the in-flight message array through the interceptor API.
+3. LumiWorld sends recent Lumiverse-marked chat-history messages plus enabled controller-only context to the selected controller connection.
+4. The controller returns a private directive.
+5. LumiWorld injects that directive as a top system message for the main model.
 
-```text
-[LumiWorld Director]
-...
-```
+Optional controller context sources:
 
-9. The main model receives the original prompt plus the private directive.
+- activated World Info entries;
+- active user persona;
+- active character card;
+- additional notes;
+- current World Agent state, when available.
 
-The controller should not write the visible assistant reply. Its job is to describe world state, NPC intent, environmental pressure, consequences, and constraints the main model should respect.
+World Info entries are fetched from activated World Info metadata and `world_books.entries.get()`. Tagged prompt entries marked with `__isWorldInfoEntry` remain a fallback only.
 
-## Installation
+### World Agent
 
-1. Copy the repository URL:
+World Agent is a per-chat simulation layer. It has its own LLM connection, model override, temperature, token cap, timeout, and prompt templates.
+
+State is stored per user and chat at:
 
 ```text
-https://github.com/Archkr/Lumiverse-LumiWorld
+world-agent/chats/{chatId}.json
 ```
 
-2. In Lumiverse:
+Tracked state includes:
 
-- Open `Extensions`
-- Click `Install`
-- Paste the repository URL
-- Click `Install`
+- day and hour;
+- running or paused clock status;
+- last tick time;
+- active character/persona ids;
+- daily schedule;
+- location;
+- mood;
+- activity;
+- current thought;
+- goal;
+- short activity history.
 
-3. Enable LumiWorld and grant the requested permissions.
-4. Open the `LumiWorld` drawer tab.
-5. Select a controller LLM connection. Settings auto-save as you edit.
+The clock is intentionally conservative:
 
-## Setup
+- each chat has its own clock;
+- automatic ticks only run while Lumiverse is visible when visible-only ticking is enabled;
+- missed time does not trigger catch-up bursts;
+- manual `+1 Hour` advances exactly one simulated hour.
 
-1. Open the LumiWorld drawer tab.
-2. Enable LumiWorld.
-3. Pick a controller connection profile.
-4. Optionally set a model override. Leave it blank to use the connection default.
-5. Adjust chat-history message count, timeout, prompt cap, temperature, and output token cap if needed.
-6. Click `Test` to run a sample controller call that does not use your real chat history.
-7. Send a normal chat message and inspect Prompt Breakdown for `LumiWorld Director`.
+When World Agent state exists and injection is enabled, LumiWorld injects a separate private `LumiWorld World Agent` system block for visible prompt generations. The block contains only current clock/schedule/state, not raw prompts, full logs, or raw model outputs.
 
-## Controller output
+## Settings
 
-LumiWorld prefers JSON but accepts plain text.
+Director Note settings:
 
-Preferred:
+| Setting | Default |
+|---|---|
+| `enabled` | Off |
+| `connectionId` | None |
+| `modelOverride` | Empty |
+| `temperature` | `0.35` |
+| `maxTokens` | `420` |
+| `timeoutMs` | `45000` |
+| `maxInputChars` | `60000` |
+| `historyMessageLimit` | `12` |
+| `includeWorldInfoEntries` | Off |
+| `includeUserPersona` | On |
+| `includeCharacter` | On |
+| `generationTypes` | All visible types |
+| `additionalNotes` | Empty |
+| `systemTemplate` | Built-in director prompt |
+| `userTemplate` | Built-in controller wrapper |
+| `runLogLimit` | `12` |
 
-```json
-{
-  "director_note": "The observatory door should resist opening as pressure drops; have the NPC notice the storm reacting unnaturally, but do not reveal the hidden entity yet."
-}
-```
+World Agent settings:
 
-Accepted:
+| Setting | Default |
+|---|---|
+| `worldAgent.enabled` | Off |
+| `worldAgent.connectionId` | None |
+| `worldAgent.modelOverride` | Empty |
+| `worldAgent.temperature` | `0.45` |
+| `worldAgent.maxTokens` | `700` |
+| `worldAgent.timeoutMs` | `60000` |
+| `worldAgent.hourDurationMs` | `300000` |
+| `worldAgent.injectState` | On |
+| `worldAgent.autoTickVisibleOnly` | On |
+| `worldAgent.scheduleTemplate` | Built-in schedule prompt |
+| `worldAgent.updateTemplate` | Built-in hourly update prompt |
 
-```text
-The storm intensifies around the observatory. The main model should make the door feel heavy, show NPC alarm, and preserve the mystery.
-```
-
-If the controller returns malformed JSON, LumiWorld trims the raw text and uses it as the directive. If no usable directive is returned, the main generation continues unchanged.
-
-## Settings reference
-
-| Setting | Default | Notes |
-|---|---|---|
-| `enabled` | Off | Global master switch. |
-| `connectionId` | None | Lumiverse LLM connection profile used for the controller. |
-| `modelOverride` | Empty | Optional model id. Empty means use the connection default. |
-| `temperature` | `0.35` | Sampling temperature for the controller call. |
-| `maxTokens` | `420` | Output cap sent to the controller connection; the provider/model enforces its real maximum. |
-| `timeoutMs` | `45000` | Controller-call timeout in milliseconds. LumiWorld does not impose a short cap. |
-| `maxInputChars` | `60000` | Character cap for the serialized controller context snapshot. |
-| `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
-| `generationTypes` | All visible types | Controls which visible generation modes LumiWorld intercepts. |
-| `includeWorldInfoEntries` | Off | Sends activated World Info entry content to the controller. Falls back to standalone prompt entries marked with `__isWorldInfoEntry` if World Books access is unavailable. |
-| `includeUserPersona` | On | Sends the active user persona to the controller only. |
-| `includeCharacter` | On | Sends the active character card to the controller only. |
-| `additionalNotes` | Empty | Controller-only context notes. Always sent to the LumiWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
-| `systemTemplate` | Built-in world-director prompt | Advanced controller system prompt. |
-| `userTemplate` | Built-in chat-history wrapper | Advanced controller user prompt. |
-| `runLogLimit` | `12` | Number of recent runs retained per user. |
-
-Available template variables:
+Template variables include:
 
 ```text
 {{prompt}}
@@ -131,100 +127,47 @@ Available template variables:
 {{maxDirectiveChars}}
 {{user}}
 {{char}}
+{{day}}
+{{hour}}
+{{time}}
+{{state}}
+{{schedule}}
 ```
 
-`{{user}}` resolves to the active persona name, matching Lumiverse's standard macro fallback of `User`. `{{char}}` resolves to the active character name when available.
+`{{user}}` resolves from the active persona name with the Lumiverse-style fallback of `User`. `{{char}}` resolves from the active character name with the fallback of `Character`.
 
 ## Permissions
 
 LumiWorld requests:
 
-- `interceptor` to receive the in-flight message array and inject the director block.
-- `generation` to call `spindle.generate.raw()` and list/inspect Lumiverse LLM connection profiles.
-- `personas` to read the active user persona for controller-only context.
-- `chats` to read the active chat's `character_id`.
-- `characters` to read the active character card for controller-only context.
-- `world_books` to read activated World Info metadata and fetch activated entry content for controller-only context.
+- `interceptor` for reading the in-flight prompt and injecting private system blocks.
+- `generation` for connection-profile access and controller/World Agent model calls.
+- `chats` for active chat and character routing.
+- `characters` for read-only character-card context.
+- `personas` for read-only active persona context.
+- `world_books` for activated World Info metadata and entry fetches.
 
 LumiWorld does **not** request `chat_mutation`.
 
-Although Lumiverse exposes World Books through a broad `world_books` permission, LumiWorld only calls read methods: activated-entry lookup and entry fetch by ID.
-
-The extension does not append messages, edit messages, delete messages, hide messages, or mutate swipes. It only uses:
-
-- the in-flight message array provided by the interceptor API;
-- read-only generation context metadata such as `chatId` and `generationType`;
-- a read-only chat lookup to resolve the active character ID;
-- read-only persona and character lookups for controller-only context;
-- read-only World Books lookups for activated entry metadata and content;
-- frontend `CHAT_CHANGED` routing metadata so per-user settings can be resolved correctly.
-
-If a future feature needs message edits or other mutation APIs, that should be treated as a permission expansion and documented explicitly.
+The extension does not append, edit, delete, hide, or swipe chat messages. It stores only settings, a privacy-safe recent-run log, and per-chat World Agent state.
 
 ## Privacy
 
-LumiWorld stores:
+Stored data:
 
 - settings;
-- a small recent-run ring buffer with status, timing, controller connection/model, error text, and directive preview.
+- recent run/activity log with status, timing, connection/model, error text, counts, and short previews;
+- World Agent per-chat state.
 
-LumiWorld does not persist:
+Not stored:
 
 - full prompts;
-- full stored chat history beyond the configured recent message count;
 - raw controller inputs;
 - API keys;
-- full controller outputs beyond the short preview in recent runs;
-- World Info entry content in recent runs. Recent runs only keep activated/fetched/fallback counts and fetch error text.
+- full controller outputs;
+- World Info entry content in run logs.
 
-The controller call sends the capped controller-context snapshot, including enabled chat-history, activated World Info entries, persona, character, and additional notes, to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
-
-## Troubleshooting
-
-### Connection selector is empty
-
-Make sure the `generation` permission is granted. Lumiverse exposes connection profiles through the generation permission because the extension needs to call the selected controller model.
-
-If the connection list fails to load, LumiWorld shows the connection-list error in the drawer instead of silently showing an empty selector.
-
-### LumiWorld is enabled but nothing appears in Prompt Breakdown
-
-Check:
-
-- a controller connection is selected;
-- the current generation type is enabled;
-- the generation is not `quiet`;
-- `interceptor`, `generation`, and any enabled context-source permissions are granted;
-- the recent run log does not show a timeout or controller error.
-
-### The main reply is delayed
-
-LumiWorld runs before the main model call. Every controller call adds pre-generation latency. Lower the chat-history message count or prompt cap, reduce max tokens, choose a faster controller model, or lower the timeout.
-
-### The controller writes prose instead of instructions
-
-Open `Advanced Settings` and tighten the templates. The built-in prompt tells the controller not to write the visible assistant reply, but smaller or less instruction-following models may need stricter wording.
-
-### Controller failure blocks the chat
-
-It should not. LumiWorld is designed to pass the original messages through unchanged on missing config, permission denial, controller error, or timeout. If the main generation is blocked, check Lumiverse logs for a host-level interceptor error.
-
-## Project layout
-
-```text
-src/
-  backend.ts      Backend storage, permission checks, interceptor, controller calls
-  frontend.ts     Drawer settings UI and recent-run display
-  shared.ts       Defaults, normalization, prompt serialization, parsing helpers
-  types.ts        Frontend/backend message contracts
-  shared.test.ts  Unit tests for shared behavior
-
-dist/
-  backend.js
-  frontend.js
-
-spindle.json      Extension manifest
-```
+The selected LLM connections receive the enabled controller context required for each channel. Choose those connections with the same privacy expectations you would use for any model call.
 
 ## Development
 
@@ -235,4 +178,4 @@ bun test
 bun run build
 ```
 
-Lumiverse can build from `src/` during install, but this repository also ships `dist/` so direct install/update flows can load the extension without an extra build step.
+The repository ships built `dist/` files so direct install/update flows can load LumiWorld without a separate build step.

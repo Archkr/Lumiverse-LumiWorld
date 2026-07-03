@@ -1,23 +1,347 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
-import {
-  DEFAULT_SETTINGS,
-  EXTENSION_NAME,
-  MAX_CHAT_HISTORY_MESSAGES,
-  MAX_CONTROLLER_OUTPUT_TOKENS,
-  MAX_CONTROLLER_TIMEOUT_MS,
-  VISIBLE_GENERATION_TYPES,
-  normalizeSettings,
-  type LumiWorldGenerationType,
-  type LumiWorldSettings,
-  type ConnectionOption,
-  type RunLogEntry,
-} from "./shared";
-import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
-const LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 3.5c2.2 2.1 3.2 4.9 3 8.5-.2 3.5-1.2 6.3-3 8.5"/><path d="M12 3.5c-2.2 2.1-3.2 4.9-3 8.5.2 3.5 1.2 6.3 3 8.5"/><path d="M3.8 10h10.4"/><path d="M4.8 15h9.8"/><path d="M16.5 4.2l1.4 2.8 3.1.4-2.2 2.2.5 3.1-2.8-1.5-2.8 1.5.5-3.1L12 7.4l3.1-.4 1.4-2.8z"/></svg>`;
+const EXTENSION_NAME = "LumiWorld";
+const BREAKDOWN_NAME = "LumiWorld Director";
+const WORLD_AGENT_BREAKDOWN_NAME = "LumiWorld World Agent";
+const VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"] as const;
+const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
+const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
+const MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
+const DEFAULT_RUN_LOG_LIMIT = 12;
+const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+const DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
+
+type LumiWorldGenerationType = (typeof VISIBLE_GENERATION_TYPES)[number];
+type LumiWorldChannel = "director" | "world_agent";
+type RunLogStatus = "success" | "error" | "timeout" | "skipped" | "test_success" | "test_error";
+
+interface WorldAgentSettings {
+  enabled: boolean;
+  connectionId: string | null;
+  modelOverride: string;
+  temperature: number;
+  maxTokens: number;
+  timeoutMs: number;
+  hourDurationMs: number;
+  injectState: boolean;
+  autoTickVisibleOnly: boolean;
+  scheduleTemplate: string;
+  updateTemplate: string;
+}
+
+interface LumiWorldSettings {
+  enabled: boolean;
+  connectionId: string | null;
+  modelOverride: string;
+  temperature: number;
+  maxTokens: number;
+  timeoutMs: number;
+  maxInputChars: number;
+  historyMessageLimit: number;
+  includeWorldInfoEntries: boolean;
+  includeUserPersona: boolean;
+  includeCharacter: boolean;
+  generationTypes: LumiWorldGenerationType[];
+  additionalNotes: string;
+  systemTemplate: string;
+  userTemplate: string;
+  runLogLimit: number;
+  worldAgent: WorldAgentSettings;
+}
+
+interface ConnectionOption {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  isDefault: boolean;
+  hasApiKey: boolean;
+}
+
+interface RunLogEntry {
+  id: string;
+  timestamp: number;
+  status: RunLogStatus;
+  channel?: LumiWorldChannel | null;
+  action?: string | null;
+  generationType?: string | null;
+  durationMs?: number | null;
+  connectionId?: string | null;
+  connectionName?: string | null;
+  model?: string | null;
+  directivePreview?: string | null;
+  error?: string | null;
+  worldAgentDay?: number | null;
+  worldAgentHour?: number | null;
+  worldAgentScheduleCount?: number | null;
+  worldInfoActivatedCount?: number | null;
+  worldInfoFetchedCount?: number | null;
+  worldInfoFallbackTaggedCount?: number | null;
+  worldInfoFetchError?: string | null;
+}
+
+interface PermissionState {
+  interceptor: boolean;
+  generation: boolean;
+  chats: boolean;
+  characters: boolean;
+  personas: boolean;
+  worldBooks: boolean;
+}
+
+interface WorldAgentScheduleItem {
+  hour: number;
+  label?: string;
+  location?: string;
+  activity: string;
+  mood?: string;
+  goal?: string;
+}
+
+interface WorldAgentHistoryEntry {
+  id: string;
+  timestamp: number;
+  day: number;
+  hour: number;
+  action: string;
+  preview?: string | null;
+  error?: string | null;
+}
+
+interface WorldAgentState {
+  chatId: string;
+  day: number;
+  hour: number;
+  running: boolean;
+  lastTickAt: number | null;
+  activeCharacterId: string | null;
+  activePersonaId: string | null;
+  scheduleDay: number | null;
+  schedule: WorldAgentScheduleItem[];
+  location: string;
+  mood: string;
+  activity: string;
+  thought: string;
+  goal: string;
+  updatedAt: number;
+  history: WorldAgentHistoryEntry[];
+}
+
+interface FrontendState {
+  settings: LumiWorldSettings;
+  connections: ConnectionOption[];
+  connectionError?: string | null;
+  runs: RunLogEntry[];
+  permissions: PermissionState;
+  worldState?: WorldAgentState | null;
+}
+
+type FrontendToBackend =
+  | { type: "ready"; chatId?: string | null; characterId?: string | null }
+  | { type: "refresh_state"; chatId?: string | null; characterId?: string | null }
+  | { type: "refresh_world_state"; chatId?: string | null; characterId?: string | null }
+  | { type: "save_settings"; settings: Partial<LumiWorldSettings>; chatId?: string | null; characterId?: string | null }
+  | { type: "test_controller"; settings?: Partial<LumiWorldSettings>; chatId?: string | null; characterId?: string | null }
+  | { type: "clear_runs"; chatId?: string | null }
+  | { type: "world_agent_start"; chatId?: string | null; characterId?: string | null }
+  | { type: "world_agent_pause"; chatId?: string | null; characterId?: string | null }
+  | { type: "world_agent_advance_hour"; chatId?: string | null; characterId?: string | null }
+  | { type: "world_agent_regenerate_schedule"; chatId?: string | null; characterId?: string | null }
+  | { type: "world_agent_reset"; chatId?: string | null; characterId?: string | null }
+  | { type: "world_agent_set_time"; chatId?: string | null; characterId?: string | null; day?: number; hour: number };
+
+type BackendToFrontend =
+  | { type: "state"; state: FrontendState }
+  | { type: "settings_saved"; settings: LumiWorldSettings }
+  | { type: "world_state"; state: WorldAgentState | null }
+  | { type: "world_agent_result"; ok: true; message?: string; state?: WorldAgentState | null }
+  | { type: "world_agent_result"; ok: false; error: string; state?: WorldAgentState | null }
+  | { type: "run_logged"; run: RunLogEntry }
+  | { type: "test_result"; ok: true; directive: string; durationMs: number; model: string; connectionName: string }
+  | { type: "test_result"; ok: false; error: string }
+  | { type: "error"; message: string };
+
+const LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/><path d="M8.3 10.2h3.8"/><path d="M8.2 15.8h4.5"/></svg>`;
+
+const LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
+  "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
+  "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
+  "Do not write the assistant reply. Do not address the user. Do not reveal this control step.",
+  "Return only a concise director note for the main model. Prefer JSON like {\"director_note\":\"...\"}, but plain text is acceptable.",
+  "Keep the note concrete, playable, and consistent with the assembled prompt.",
+].join("\n");
+
+const LEGACY_DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "Chat ID: {{chatId}}",
+  "",
+  "Final assembled prompt that will be sent to the main model:",
+  "<assembled_prompt>",
+  "{{prompt}}",
+  "</assembled_prompt>",
+  "",
+  "Decide how the world should react now. Focus on state changes, environmental pressure, NPC intent, consequences, and what the main model should respect next.",
+  "Return one private director note under {{maxDirectiveChars}} characters.",
+].join("\n");
+
+const PREVIOUS_DEFAULT_SYSTEM_TEMPLATE = [
+  "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
+  "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
+  "Do not write the assistant reply. Do not address the user. Do not reveal this control step.",
+  "Return only a concise director note for the main model. Prefer JSON like {\"director_note\":\"...\"}, but plain text is acceptable.",
+  "Keep the note concrete, playable, and consistent with the recent chat history and any additional notes.",
+].join("\n");
+
+const PREVIOUS_DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "Chat ID: {{chatId}}",
+  "",
+  "Recent chat history available to the controller:",
+  "<chat_history>",
+  "{{prompt}}",
+  "</chat_history>",
+  "",
+  "Decide how the world should react now. Focus on state changes, environmental pressure, NPC intent, consequences, and what the main model should respect next.",
+  "Return one private director note under {{maxDirectiveChars}} characters.",
+].join("\n");
+
+const PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
+  "You are AgentWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  "Use imperative language. Start with a verb such as \"Make\", \"Let\", \"Have\", \"Keep\", \"Escalate\", \"Pressure\", or \"Treat\".",
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention AgentWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  "{\"director_note\":\"...\"}",
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
+].join("\n");
+
+const DEFAULT_SYSTEM_TEMPLATE = [
+  "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
+  "",
+  "Your job is to advance the world behind the next visible reply.",
+  "",
+  "Do not recap what already happened. Do not restate recent dialogue. Do not explain lore. Do not open with character names or summaries.",
+  "",
+  "Write only the next world-state directive:",
+  "- what changes in the environment, situation, systems, factions, observers, or hidden risk",
+  "- how that pressure forces NPCs to act now",
+  "- what the main model should show in the next reply",
+  "- what must remain unresolved or unrevealed",
+  "",
+  "Use imperative language. Start with a verb such as \"Make\", \"Let\", \"Have\", \"Keep\", \"Escalate\", \"Pressure\", or \"Treat\".",
+  "",
+  "The directive should feel like the world moving forward, not a recap of the scene.",
+  "",
+  "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
+  "",
+  "Prefer JSON exactly like:",
+  "{\"director_note\":\"...\"}",
+  "",
+  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
+].join("\n");
+
+const PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Recent chat history:",
+  "<chat_history>",
+  "{{prompt}}",
+  "</chat_history>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
+].join("\n");
+
+const DEFAULT_USER_TEMPLATE = [
+  "Generation type: {{generationType}}",
+  "",
+  "Controller context:",
+  "<controller_context>",
+  "{{prompt}}",
+  "</controller_context>",
+  "",
+  "Write the next world-state directive now.",
+  "",
+  "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
+].join("\n");
+
+const DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create the current day's background schedule for {{char}}.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "",
+  "Return compact JSON only:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"}]}",
+  "",
+  "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override.",
+].join("\n");
+
+const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule, current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, mood, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  "{\"location\":\"...\",\"mood\":\"...\",\"activity\":\"...\",\"thought\":\"...\",\"goal\":\"...\"}",
+].join("\n");
+
+const DEFAULT_WORLD_AGENT_SETTINGS: WorldAgentSettings = {
+  enabled: false,
+  connectionId: null,
+  modelOverride: "",
+  temperature: 0.45,
+  maxTokens: 700,
+  timeoutMs: 60000,
+  hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  injectState: true,
+  autoTickVisibleOnly: true,
+  scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+  updateTemplate: DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+};
+
+const DEFAULT_SETTINGS: LumiWorldSettings = {
+  enabled: false,
+  connectionId: null,
+  modelOverride: "",
+  temperature: 0.35,
+  maxTokens: 420,
+  timeoutMs: 45000,
+  maxInputChars: 60000,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeWorldInfoEntries: false,
+  includeUserPersona: true,
+  includeCharacter: true,
+  generationTypes: [...VISIBLE_GENERATION_TYPES],
+  additionalNotes: "",
+  systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
+  userTemplate: DEFAULT_USER_TEMPLATE,
+  runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  worldAgent: DEFAULT_WORLD_AGENT_SETTINGS,
+};
 
 const CSS = `
-.lumi-world-root {
+.lw-root {
   min-height: 100%;
   padding: 12px;
   color: var(--lumiverse-text);
@@ -26,222 +350,349 @@ const CSS = `
   font-family: var(--lumiverse-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   font-size: calc(13px * var(--lumiverse-font-scale, 1));
   line-height: 1.45;
+  --lw-accent: var(--lumiverse-primary, #6fb7a6);
+  --lw-accent-soft: color-mix(in srgb, var(--lw-accent) 18%, transparent);
+  --lw-gold: color-mix(in srgb, #d8aa63 70%, var(--lumiverse-text) 30%);
+  --lw-rose: color-mix(in srgb, #cf7e7e 72%, var(--lumiverse-text) 28%);
 }
-.lumi-world-root * { box-sizing: border-box; }
-.lumi-world-root input, .lumi-world-root textarea, .lumi-world-root select {
-  accent-color: var(--lumiverse-primary, var(--lumiverse-accent));
-}
-.lumi-world-shell { display: flex; flex-direction: column; gap: 12px; }
-.lumi-world-toolbar {
+.lw-root * { box-sizing: border-box; }
+.lw-root input, .lw-root textarea, .lw-root select { accent-color: var(--lw-accent); }
+.lw-shell { display: flex; flex-direction: column; gap: 12px; }
+.lw-toolbar {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
+  gap: 10px;
+  padding: 14px 0 10px;
   border-bottom: 1px solid var(--lumiverse-border);
 }
-.lumi-world-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
-.lumi-world-mark {
-  width: 24px;
-  height: 24px;
+.lw-title { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 auto; }
+.lw-mark {
+  width: 25px;
+  height: 25px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--lumiverse-primary-text, var(--lumiverse-accent));
+  color: var(--lw-gold);
 }
-.lumi-world-heading { font-size: 15px; font-weight: 650; margin: 0; }
-.lumi-world-subtle { color: var(--lumiverse-text-dim); font-size: 12px; }
-.lumi-world-actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 8px;
-  align-items: center;
-}
-.lumi-world-btn {
+.lw-heading { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0; }
+.lw-muted { color: var(--lumiverse-text-dim); font-size: 12px; }
+.lw-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.lw-btn {
   appearance: none;
   border: 1px solid var(--lumiverse-border);
   background: var(--lumiverse-fill);
   color: var(--lumiverse-text);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   padding: 7px 10px;
   font: inherit;
   cursor: pointer;
+  min-height: 34px;
   transition: border-color var(--lumiverse-transition-fast), background var(--lumiverse-transition-fast), opacity var(--lumiverse-transition-fast);
 }
-.lumi-world-btn:hover { border-color: var(--lumiverse-border-hover, var(--lumiverse-primary-050)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
-.lumi-world-btn:disabled { cursor: default; opacity: 0.6; }
-.lumi-world-btn-primary {
-  background: var(--lumiverse-primary, var(--lumiverse-accent));
-  color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
-  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
+.lw-btn:hover { border-color: var(--lumiverse-border-hover, var(--lw-accent)); background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
+.lw-btn:disabled { cursor: default; opacity: 0.55; }
+.lw-btn-primary { background: var(--lw-accent); border-color: var(--lw-accent); color: var(--lumiverse-primary-contrast, CanvasText); }
+.lw-btn-danger { color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill-subtle);
 }
-.lumi-world-btn-danger { color: var(--lumiverse-danger, currentColor); }
-.lumi-world-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
-.lumi-world-panel {
+.lw-tab {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lumiverse-text-dim);
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.lw-tab.is-active {
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  box-shadow: inset 0 0 0 1px var(--lumiverse-border);
+}
+.lw-panel {
   border: 1px solid var(--lumiverse-border);
   background: var(--lumiverse-fill-subtle);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   padding: 12px;
 }
-.lumi-world-panel-title {
+.lw-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 11px;
 }
-.lumi-world-panel-title h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-}
-.lumi-world-form { display: grid; gap: 12px; }
-.lumi-world-field { display: grid; gap: 5px; min-width: 0; }
-.lumi-world-field label, .lumi-world-toggle-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--lumiverse-text);
-}
-.lumi-world-hint { font-size: 11.5px; color: var(--lumiverse-text-dim); }
-.lumi-world-input, .lumi-world-select, .lumi-world-textarea {
+.lw-panel-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0; }
+.lw-form { display: grid; gap: 12px; }
+.lw-field { display: grid; gap: 5px; min-width: 0; }
+.lw-field label, .lw-toggle-label { font-size: 12px; font-weight: 650; color: var(--lumiverse-text); }
+.lw-hint { color: var(--lumiverse-text-dim); font-size: 11.5px; }
+.lw-input, .lw-select, .lw-textarea {
   width: 100%;
   border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   background: var(--lumiverse-fill);
   color: var(--lumiverse-text);
   font: inherit;
   padding: 8px 9px;
 }
-.lumi-world-textarea {
+.lw-textarea {
   resize: vertical;
   min-height: 132px;
   line-height: 1.35;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.lumi-world-two {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 12px;
-  row-gap: 12px;
-  align-items: start;
-}
-.lumi-world-two .lumi-world-field { align-self: start; }
-.lumi-world-setting-row, .lumi-world-toggle {
+.lw-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.lw-three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lw-setting-row {
   display: flex;
-  gap: 8px;
+  gap: 9px;
   align-items: flex-start;
-  padding: 8px 0;
+  padding: 7px 0;
 }
-.lumi-world-setting-row.is-disabled { opacity: 0.55; }
-.lumi-world-switch-slot { flex: 0 0 auto; padding-top: 1px; }
-.lumi-world-toggle input { margin-top: 2px; }
-.lumi-world-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.lumi-world-chip {
+.lw-setting-row.is-disabled { opacity: 0.55; }
+.lw-switch-slot { flex: 0 0 auto; padding-top: 1px; }
+.lw-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lw-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   padding: 7px 8px;
   background: var(--lumiverse-fill);
 }
-.lumi-world-chip input { margin: 0; }
-.lumi-world-banner {
+.lw-chip input { margin: 0; }
+.lw-banner {
   border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   padding: 9px 10px;
-  background: var(--lumiverse-primary-010, var(--lumiverse-fill-subtle));
-  color: var(--lumiverse-text);
+  background: var(--lw-accent-soft);
 }
-.lumi-world-banner.warn {
-  border-color: var(--lumiverse-warning-050, var(--lumiverse-border));
-  background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
+.lw-banner.warn { border-color: var(--lumiverse-warning-050, var(--lw-gold)); }
+.lw-banner.error { border-color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-details {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill-subtle);
+  padding: 0;
 }
-.lumi-world-runs { display: grid; gap: 8px; }
-.lumi-world-runs-scroll {
+.lw-details summary { cursor: pointer; padding: 10px 12px; font-weight: 700; }
+.lw-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
+.lw-clock {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--lw-gold) 12%, transparent), transparent 55%),
+    var(--lumiverse-fill);
+}
+.lw-clock-time {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+.lw-clock-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.lw-meter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lw-state-card {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+  padding: 9px;
+  min-height: 74px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+.lw-state-label { color: var(--lumiverse-text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.lw-state-value { overflow-wrap: anywhere; }
+.lw-schedule-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+}
+.lw-slot {
+  flex: 0 0 150px;
+  border: 1px solid var(--lumiverse-border);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
+  background: var(--lumiverse-fill);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+.lw-slot.is-now { border-color: var(--lw-accent); box-shadow: inset 0 0 0 1px var(--lw-accent); }
+.lw-runs { display: grid; gap: 8px; }
+.lw-scrollbox {
   max-height: min(360px, 42vh);
   overflow-y: auto;
   padding-right: 4px;
 }
-.lumi-world-run {
+.lw-run {
   display: grid;
   gap: 5px;
   padding: 9px;
   border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
   background: var(--lumiverse-fill);
 }
-.lumi-world-run-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.lumi-world-status {
+.lw-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lw-status {
   display: inline-flex;
   align-items: center;
   border-radius: var(--lumiverse-radius-xl, 999px);
   padding: 2px 7px;
   font-size: 11px;
   border: 1px solid var(--lumiverse-border);
-  color: var(--lumiverse-text);
 }
-.lumi-world-status.success, .lumi-world-status.test_success {
-  color: var(--lumiverse-success, currentColor);
-}
-.lumi-world-status.error, .lumi-world-status.timeout, .lumi-world-status.test_error {
-  color: var(--lumiverse-danger, currentColor);
-}
-.lumi-world-details {
-  border: 1px solid var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
-  background: var(--lumiverse-fill-subtle);
-  padding: 0;
-}
-.lumi-world-details summary {
-  cursor: pointer;
-  padding: 10px 12px;
-  font-weight: 650;
-}
-.lumi-world-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
-.lumi-world-empty {
+.lw-status.success, .lw-status.test_success { color: var(--lumiverse-success, var(--lw-accent)); }
+.lw-status.error, .lw-status.timeout, .lw-status.test_error { color: var(--lumiverse-danger, var(--lw-rose)); }
+.lw-empty {
   padding: 14px;
   text-align: center;
   color: var(--lumiverse-text-dim);
   border: 1px dashed var(--lumiverse-border);
-  border-radius: var(--lumiverse-radius);
+  border-radius: min(var(--lumiverse-radius, 8px), 8px);
 }
 @media (max-width: 520px) {
-  .lumi-world-two, .lumi-world-type-grid { grid-template-columns: 1fr; }
-  .lumi-world-toolbar { align-items: stretch; flex-direction: column; }
-  .lumi-world-actions { width: 100%; }
+  .lw-toolbar { align-items: stretch; flex-direction: column; }
+  .lw-actions { width: 100%; justify-content: flex-start; }
+  .lw-two, .lw-three, .lw-meter-grid, .lw-type-grid { grid-template-columns: 1fr; }
+  .lw-clock-time { font-size: 26px; }
 }
 `;
 
 type MountedHandle = { destroy(): void };
 
-function createElement<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function cleanString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function cleanNullableString(value: unknown): string | null {
+  const text = cleanString(value);
+  return text ? text : null;
+}
+
+function numberInRange(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function integerInRange(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.round(numberInRange(value, fallback, min, max));
+}
+
+function normalizeGenerationTypes(value: unknown): LumiWorldGenerationType[] {
+  const incoming = Array.isArray(value) ? value : DEFAULT_SETTINGS.generationTypes;
+  const allowed = new Set<string>(VISIBLE_GENERATION_TYPES);
+  const normalized = incoming.filter((item): item is LumiWorldGenerationType => typeof item === "string" && allowed.has(item));
+  return normalized.length ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
+}
+
+function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings {
+  const obj = asRecord(value);
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
+    connectionId: cleanNullableString(obj.connectionId),
+    modelOverride: cleanString(obj.modelOverride),
+    temperature: numberInRange(obj.temperature, DEFAULT_WORLD_AGENT_SETTINGS.temperature, 0, 2),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
+    autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
+    scheduleTemplate: cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE) || DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+    updateTemplate: cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE) || DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+  };
+}
+
+function normalizeSettings(value: unknown): LumiWorldSettings {
+  const obj = asRecord(value);
+  const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
+  const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
+  const systemTemplate =
+    !storedSystemTemplate ||
+    storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE
+      ? DEFAULT_SYSTEM_TEMPLATE
+      : storedSystemTemplate;
+  const userTemplate =
+    !storedUserTemplate ||
+    storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE ||
+    storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ||
+    storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE
+      ? DEFAULT_USER_TEMPLATE
+      : storedUserTemplate;
+
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
+    connectionId: cleanNullableString(obj.connectionId),
+    modelOverride: cleanString(obj.modelOverride),
+    temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
+    generationTypes: normalizeGenerationTypes(obj.generationTypes),
+    additionalNotes: cleanString(obj.additionalNotes),
+    systemTemplate,
+    userTemplate,
+    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    worldAgent: normalizeWorldAgentSettings(obj.worldAgent),
+  };
+}
+
+function createElement<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
   if (className) element.className = className;
   if (typeof text === "string") element.textContent = text;
   return element;
 }
 
+function activeChat(ctx: SpindleFrontendContext): { chatId: string | null; characterId: string | null } {
+  try {
+    return ctx.getActiveChat();
+  } catch {
+    return { chatId: null, characterId: null };
+  }
+}
+
 function send(ctx: SpindleFrontendContext, message: FrontendToBackend): void {
-  ctx.sendToBackend(message);
+  const active = activeChat(ctx);
+  ctx.sendToBackend({
+    ...message,
+    chatId: "chatId" in message ? message.chatId ?? active.chatId : active.chatId,
+    characterId: "characterId" in message ? message.characterId ?? active.characterId : active.characterId,
+  });
 }
 
 function cloneSettings(settings: LumiWorldSettings): LumiWorldSettings {
   return normalizeSettings({
     ...settings,
     generationTypes: [...settings.generationTypes],
+    worldAgent: { ...settings.worldAgent },
   });
 }
 
@@ -251,27 +702,37 @@ function readChatId(payload: unknown): string | null {
   return typeof raw === "string" && raw.trim() ? raw : null;
 }
 
-function formatStatus(status: RunLogEntry["status"]): string {
+function readCharacterId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const raw = (payload as { characterId?: unknown; character_id?: unknown }).characterId ?? (payload as { character_id?: unknown }).character_id;
+  return typeof raw === "string" && raw.trim() ? raw : null;
+}
+
+function formatStatus(status: RunLogStatus): string {
   return status.replace(/_/g, " ");
 }
 
 function formatTime(timestamp: number): string {
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
   } catch {
     return "";
   }
 }
 
+function formatClock(state: WorldAgentState | null | undefined): string {
+  if (!state) return "Day 1, 08:00";
+  return `Day ${state.day}, ${String(state.hour).padStart(2, "0")}:00`;
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms % 60000 === 0) return `${Math.round(ms / 60000)} min`;
+  if (ms % 1000 === 0) return `${Math.round(ms / 1000)} sec`;
+  return `${Math.round(ms)} ms`;
+}
+
 function formatWorldInfoRunDiagnostics(run: RunLogEntry): string | null {
-  const hasDiagnostics =
-    run.worldInfoActivatedCount != null ||
-    run.worldInfoFetchedCount != null ||
-    run.worldInfoFallbackTaggedCount != null;
+  const hasDiagnostics = run.worldInfoActivatedCount != null || run.worldInfoFetchedCount != null || run.worldInfoFallbackTaggedCount != null;
   if (!hasDiagnostics) return null;
   return [
     `WI active ${run.worldInfoActivatedCount ?? 0}`,
@@ -295,7 +756,13 @@ function stateUiKey(state: FrontendState): string {
     connectionError: state.connectionError ?? null,
     permissions: state.permissions,
     runs: state.runs,
+    worldState: state.worldState ?? null,
   });
+}
+
+function worldStateCardValue(value: string | null | undefined, fallback = "Unset"): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || fallback;
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -303,6 +770,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const componentHandles: MountedHandle[] = [];
   let state: FrontendState | null = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
+  let activeChannel: LumiWorldChannel = "director";
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let localRevision = 0;
   let saveRevision = 0;
@@ -316,8 +784,8 @@ export function setup(ctx: SpindleFrontendContext) {
     title: EXTENSION_NAME,
     shortName: "World",
     headerTitle: "LumiWorld",
-    description: "Configure the LumiWorld prompt interceptor",
-    keywords: ["lumiworld", "director", "interceptor", "world"],
+    description: "World simulation channels",
+    keywords: ["lumiworld", "world", "director", "interceptor", "simulation"],
     iconSvg: LUMIWORLD_ICON,
   });
   cleanups.push(() => tab.destroy());
@@ -328,7 +796,7 @@ export function setup(ctx: SpindleFrontendContext) {
       try {
         handle?.destroy();
       } catch {
-        // ignore stale host component handles during reload
+        // Host component handles can become stale across hot reloads.
       }
     }
   }
@@ -341,30 +809,41 @@ export function setup(ctx: SpindleFrontendContext) {
       saveRevision = localRevision;
       saveInFlight = true;
       send(ctx, { type: "save_settings", settings: draft });
-    }, 500);
-  }
-
-  function selectedConnection(): ConnectionOption | null {
-    if (!state || !draft.connectionId) return null;
-    return state.connections.find((connection) => connection.id === draft.connectionId) ?? null;
+    }, 450);
   }
 
   function updateDraft(patch: Partial<LumiWorldSettings>): void {
-    draft = normalizeSettings({ ...draft, ...patch });
+    draft = normalizeSettings({
+      ...draft,
+      ...patch,
+      worldAgent: normalizeWorldAgentSettings({
+        ...draft.worldAgent,
+        ...(patch.worldAgent ?? {}),
+      }),
+    });
     localRevision += 1;
     scheduleAutoSave();
   }
 
+  function updateWorldAgent(patch: Partial<WorldAgentSettings>): void {
+    updateDraft({ worldAgent: { ...draft.worldAgent, ...patch } });
+  }
+
+  function selectedConnection(connectionId: string | null): ConnectionOption | null {
+    if (!state || !connectionId) return null;
+    return state.connections.find((connection) => connection.id === connectionId) ?? null;
+  }
+
   function field(label: string, control: HTMLElement, hint?: string): HTMLElement {
-    const wrap = createElement("div", "lumi-world-field");
-    const labelEl = createElement("label", undefined, label);
-    wrap.append(labelEl, control);
-    if (hint) wrap.appendChild(createElement("div", "lumi-world-hint", hint));
+    const wrap = createElement("div", "lw-field");
+    wrap.appendChild(createElement("label", undefined, label));
+    wrap.appendChild(control);
+    if (hint) wrap.appendChild(createElement("div", "lw-hint", hint));
     return wrap;
   }
 
   function numberInput(value: number, min: number, max: number, step: number, onChange: (value: number) => void): HTMLInputElement {
-    const input = createElement("input", "lumi-world-input") as HTMLInputElement;
+    const input = createElement("input", "lw-input") as HTMLInputElement;
     input.type = "number";
     input.min = String(min);
     input.max = String(max);
@@ -374,22 +853,7 @@ export function setup(ctx: SpindleFrontendContext) {
     return input;
   }
 
-  function textarea(value: string, onChange: (value: string) => void): HTMLTextAreaElement {
-    const input = createElement("textarea", "lumi-world-textarea") as HTMLTextAreaElement;
-    input.value = value;
-    input.spellcheck = false;
-    input.addEventListener("input", () => onChange(input.value));
-    return input;
-  }
-
-  function renderNumberControl(
-    slot: HTMLElement,
-    value: number,
-    min: number,
-    max: number,
-    step: number,
-    onChange: (value: number) => void,
-  ): void {
+  function renderNumberControl(slot: HTMLElement, value: number, min: number, max: number, step: number, onChange: (value: number) => void): void {
     const components = (ctx as any).components;
     if (components?.mountNumberStepper) {
       const handle = components.mountNumberStepper(slot, {
@@ -407,38 +871,24 @@ export function setup(ctx: SpindleFrontendContext) {
     slot.appendChild(numberInput(value, min, max, step, onChange));
   }
 
-  function numberField(
-    label: string,
-    value: number,
-    min: number,
-    max: number,
-    step: number,
-    onChange: (value: number) => void,
-    hint?: string,
-  ): HTMLElement {
+  function numberField(label: string, value: number, min: number, max: number, step: number, onChange: (value: number) => void, hint?: string): HTMLElement {
     const slot = createElement("div");
     renderNumberControl(slot, value, min, max, step, onChange);
     return field(label, slot, hint);
   }
 
-  function renderTextareaControl(
-    slot: HTMLElement,
-    value: string,
-    onChange: (value: string) => void,
-    ariaLabel: string,
-  ): void {
+  function renderTextareaControl(slot: HTMLElement, value: string, onChange: (value: string) => void, ariaLabel: string): void {
     const components = (ctx as any).components;
     if (components?.mountTextArea) {
-      const handle = components.mountTextArea(slot, {
-        value,
-        rows: 8,
-        ariaLabel,
-        onChange,
-      }) as MountedHandle;
+      const handle = components.mountTextArea(slot, { value, rows: 8, ariaLabel, onChange }) as MountedHandle;
       componentHandles.push(handle);
       return;
     }
-    slot.appendChild(textarea(value, onChange));
+    const input = createElement("textarea", "lw-textarea") as HTMLTextAreaElement;
+    input.value = value;
+    input.spellcheck = false;
+    input.addEventListener("input", () => onChange(input.value));
+    slot.appendChild(input);
   }
 
   function textareaField(label: string, value: string, onChange: (value: string) => void, hint?: string): HTMLElement {
@@ -447,21 +897,10 @@ export function setup(ctx: SpindleFrontendContext) {
     return field(label, slot, hint);
   }
 
-  function renderSwitchControl(
-    slot: HTMLElement,
-    checked: boolean,
-    onChange: (checked: boolean) => void,
-    ariaLabel: string,
-    disabled = false,
-  ): void {
+  function renderSwitchControl(slot: HTMLElement, checked: boolean, onChange: (checked: boolean) => void, ariaLabel: string, disabled = false): void {
     const components = (ctx as any).components;
     if (components?.mountSwitch && !disabled) {
-      const handle = components.mountSwitch(slot, {
-        checked,
-        size: "md",
-        ariaLabel,
-        onChange,
-      }) as MountedHandle;
+      const handle = components.mountSwitch(slot, { checked, size: "md", ariaLabel, onChange }) as MountedHandle;
       componentHandles.push(handle);
       return;
     }
@@ -473,61 +912,35 @@ export function setup(ctx: SpindleFrontendContext) {
     slot.appendChild(input);
   }
 
-  function toggleField(
-    label: string,
-    checked: boolean,
-    onChange: (checked: boolean) => void,
-    hint?: string,
-    disabled = false,
-  ): HTMLElement {
-    const row = createElement("div", `lumi-world-setting-row${disabled ? " is-disabled" : ""}`);
-    const switchSlot = createElement("div", "lumi-world-switch-slot");
+  function toggleField(label: string, checked: boolean, onChange: (checked: boolean) => void, hint?: string, disabled = false): HTMLElement {
+    const row = createElement("div", `lw-setting-row${disabled ? " is-disabled" : ""}`);
+    const switchSlot = createElement("div", "lw-switch-slot");
     renderSwitchControl(switchSlot, checked, onChange, label, disabled);
     const text = createElement("div");
-    text.appendChild(createElement("div", "lumi-world-toggle-label", label));
-    if (hint) text.appendChild(createElement("div", "lumi-world-hint", hint));
+    text.appendChild(createElement("div", "lw-toggle-label", label));
+    if (hint) text.appendChild(createElement("div", "lw-hint", hint));
     row.append(switchSlot, text);
     return row;
   }
 
-  function renderEnabledControl(form: HTMLElement): void {
-    const row = createElement("div", "lumi-world-setting-row");
-    const switchSlot = createElement("div", "lumi-world-switch-slot");
-    renderSwitchControl(switchSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable LumiWorld");
-
-    const enabledText = createElement("div");
-    enabledText.append(
-      createElement("div", "lumi-world-toggle-label", "Enable LumiWorld"),
-      createElement("div", "lumi-world-hint", "When enabled, visible chat generations receive a private director note before the main model replies."),
-    );
-    row.append(switchSlot, enabledText);
-    form.appendChild(row);
-  }
-
-  function renderConnectionControl(slot: HTMLElement): void {
+  function renderConnectionControl(slot: HTMLElement, value: string | null, onChange: (connectionId: string | null) => void, ariaLabel: string): void {
     const connections = state?.connections ?? [];
     const components = (ctx as any).components;
     const options = connections.map((connection) => ({
       value: connection.id,
       label: connection.name || connection.id,
-      sublabel: [
-        connection.provider || null,
-        connection.model || null,
-        connection.hasApiKey ? null : "no API key",
-        connection.isDefault ? "default" : null,
-      ].filter(Boolean).join(" / "),
+      sublabel: [connection.provider || null, connection.model || null, connection.hasApiKey ? null : "no API key", connection.isDefault ? "default" : null]
+        .filter(Boolean)
+        .join(" / "),
       group: connection.provider || "Connections",
-      leading: {
-        type: "initial",
-        text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase(),
-      },
+      leading: { type: "initial", text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase() },
     }));
 
-    if (draft.connectionId && !options.some((option) => option.value === draft.connectionId)) {
+    if (value && !options.some((option) => option.value === value)) {
       options.unshift({
-        value: draft.connectionId,
+        value,
         label: "Saved connection not found",
-        sublabel: draft.connectionId,
+        sublabel: value,
         group: "Unavailable",
         leading: { type: "initial", text: "!" },
       });
@@ -535,19 +948,19 @@ export function setup(ctx: SpindleFrontendContext) {
 
     if (components?.mountSelect) {
       const handle = components.mountSelect(slot, {
-        value: draft.connectionId ?? "",
+        value: value ?? "",
         options,
-        placeholder: "Select controller connection...",
+        placeholder: "Select connection...",
         searchPlaceholder: "Search LLM connections...",
         emptyMessage: state?.connectionError || "No LLM connection profiles found.",
         noResultsMessage: "No matching LLM connection profiles.",
         clearable: true,
-        clearLabel: "No controller connection",
-        ariaLabel: "LumiWorld controller connection",
+        clearLabel: "No connection",
+        ariaLabel,
         portal: true,
         maxHeight: 320,
-        onChange: (value: string) => {
-          updateDraft({ connectionId: value || null, modelOverride: "" });
+        onChange: (next: string) => {
+          onChange(next || null);
           render();
         },
       }) as MountedHandle;
@@ -555,82 +968,117 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
 
-    const connectionSelect = createElement("select", "lumi-world-select") as HTMLSelectElement;
-    connectionSelect.appendChild(new Option("Select controller connection...", ""));
+    const select = createElement("select", "lw-select") as HTMLSelectElement;
+    select.appendChild(new Option("Select connection...", ""));
     for (const connection of connections) {
-      connectionSelect.appendChild(new Option(connectionLabel(connection), connection.id));
+      select.appendChild(new Option(connectionLabel(connection), connection.id));
     }
-    connectionSelect.value = draft.connectionId ?? "";
-    connectionSelect.addEventListener("change", () => {
-      updateDraft({ connectionId: connectionSelect.value || null, modelOverride: "" });
+    select.value = value ?? "";
+    select.addEventListener("change", () => {
+      onChange(select.value || null);
       render();
     });
-    slot.appendChild(connectionSelect);
+    slot.appendChild(select);
   }
 
-  function renderEnabledPanel(shell: HTMLElement): void {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Controller"));
-    panel.appendChild(title);
-
-    const form = createElement("div", "lumi-world-form");
-    renderEnabledControl(form);
-
-    const connectionSlot = createElement("div");
-    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
-    renderConnectionControl(connectionSlot);
-
-    const modelSlot = createElement("div");
-    form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
-    renderModelControl(modelSlot);
-
-    const two = createElement("div", "lumi-world-two");
-    two.append(
-      numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
-      numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
-      numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })),
-      numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })),
-      numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
-    );
-    form.appendChild(two);
-    panel.appendChild(form);
-    shell.appendChild(panel);
-  }
-
-  function renderModelControl(slot: HTMLElement): void {
-    const selected = selectedConnection();
+  function renderModelControl(slot: HTMLElement, connectionId: string | null, value: string, onChange: (model: string) => void): void {
+    const selected = selectedConnection(connectionId);
     const components = (ctx as any).components;
     if (selected && components?.mountModelCombobox) {
       const handle = components.mountModelCombobox(slot, {
-        value: draft.modelOverride,
+        value,
         connection: { kind: "llm", id: selected.id },
         appearance: "standard",
         placeholder: selected.model || "model id",
         browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
-        onChange: (value: string) => updateDraft({ modelOverride: value }),
+        onChange,
       }) as MountedHandle;
       componentHandles.push(handle);
       return;
     }
 
-    const input = createElement("input", "lumi-world-input") as HTMLInputElement;
+    const input = createElement("input", "lw-input") as HTMLInputElement;
     input.type = "text";
     input.placeholder = selected?.model || "model id";
-    input.value = draft.modelOverride;
+    input.value = value;
     input.disabled = !selected;
-    input.addEventListener("input", () => updateDraft({ modelOverride: input.value }));
+    input.addEventListener("input", () => onChange(input.value));
     slot.appendChild(input);
   }
 
-  function renderGenerationTypes(shell: HTMLElement): void {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Runs On"));
-    title.appendChild(createElement("span", "lumi-world-subtle", "Quiet/background jobs are skipped"));
-    panel.appendChild(title);
+  function renderConnectionFields(shell: HTMLElement, channel: LumiWorldChannel): void {
+    const isDirector = channel === "director";
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, isDirector ? "Controller" : "World Agent Model"));
+    panel.appendChild(head);
 
-    const grid = createElement("div", "lumi-world-type-grid");
+    const form = createElement("div", "lw-form");
+    const connectionSlot = createElement("div");
+    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
+    renderConnectionControl(
+      connectionSlot,
+      isDirector ? draft.connectionId : draft.worldAgent.connectionId,
+      (connectionId) => isDirector
+        ? updateDraft({ connectionId, modelOverride: "" })
+        : updateWorldAgent({ connectionId, modelOverride: "" }),
+      isDirector ? "Director Note connection" : "World Agent connection",
+    );
+
+    const modelSlot = createElement("div");
+    form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
+    renderModelControl(
+      modelSlot,
+      isDirector ? draft.connectionId : draft.worldAgent.connectionId,
+      isDirector ? draft.modelOverride : draft.worldAgent.modelOverride,
+      (model) => isDirector ? updateDraft({ modelOverride: model }) : updateWorldAgent({ modelOverride: model }),
+    );
+
+    const two = createElement("div", "lw-two");
+    if (isDirector) {
+      two.append(
+        numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
+        numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
+        numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })),
+        numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })),
+        numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
+      );
+    } else {
+      two.append(
+        numberField("Temperature", draft.worldAgent.temperature, 0, 2, 0.05, (value) => updateWorldAgent({ temperature: value })),
+        numberField("Max tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateWorldAgent({ maxTokens: value })),
+        numberField("Timeout ms", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateWorldAgent({ timeoutMs: value })),
+        numberField("Hour duration ms", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (value) => updateWorldAgent({ hourDurationMs: value }), `Current: ${formatDurationMs(draft.worldAgent.hourDurationMs)}`),
+      );
+    }
+    form.appendChild(two);
+    panel.appendChild(form);
+    shell.appendChild(panel);
+  }
+
+  function renderDirectorChannel(shell: HTMLElement): void {
+    const enabled = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Director Note"));
+    head.appendChild(createElement("span", "lw-muted", BREAKDOWN_NAME));
+    enabled.appendChild(head);
+    enabled.appendChild(toggleField("Enable Director Note", draft.enabled, (checked) => updateDraft({ enabled: checked }), "Visible generations receive a private director note before the main model replies."));
+    shell.appendChild(enabled);
+
+    renderConnectionFields(shell, "director");
+    renderGenerationTypes(shell);
+    renderDirectorAdvanced(shell);
+    renderRuns(shell, "director");
+  }
+
+  function renderGenerationTypes(shell: HTMLElement): void {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Runs On"));
+    head.appendChild(createElement("span", "lw-muted", "Quiet jobs are skipped"));
+    panel.appendChild(head);
+
+    const grid = createElement("div", "lw-type-grid");
     const components = (ctx as any).components;
     for (const type of VISIBLE_GENERATION_TYPES) {
       const updateType = (checked: boolean) => {
@@ -650,7 +1098,7 @@ export function setup(ctx: SpindleFrontendContext) {
         componentHandles.push(handle);
         grid.appendChild(slot);
       } else {
-        const label = createElement("label", "lumi-world-chip") as HTMLLabelElement;
+        const label = createElement("label", "lw-chip") as HTMLLabelElement;
         const input = createElement("input") as HTMLInputElement;
         input.type = "checkbox";
         input.checked = draft.generationTypes.includes(type);
@@ -663,10 +1111,10 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(panel);
   }
 
-  function renderTemplates(shell: HTMLElement): void {
-    const details = createElement("details", "lumi-world-details") as HTMLDetailsElement;
+  function renderDirectorAdvanced(shell: HTMLElement): void {
+    const details = createElement("details", "lw-details") as HTMLDetailsElement;
     const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lumi-world-details-body");
+    const body = createElement("div", "lw-details-body");
     const entriesHint = state?.permissions.worldBooks === false
       ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries."
       : "Fetch activated World Info entry content and send it to the controller.";
@@ -674,7 +1122,7 @@ export function setup(ctx: SpindleFrontendContext) {
       toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
       toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
-      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."),
+      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."),
       textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."),
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
       numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })),
@@ -683,43 +1131,200 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(details);
   }
 
-  function renderRuns(shell: HTMLElement): void {
-    const panel = createElement("section", "lumi-world-panel");
-    const title = createElement("div", "lumi-world-panel-title");
-    title.appendChild(createElement("h3", undefined, "Recent Runs"));
-    const clear = createElement("button", "lumi-world-btn", "Clear");
+  function renderWorldAgentChannel(shell: HTMLElement): void {
+    renderWorldAgentClock(shell);
+
+    const settingsPanel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Channel"));
+    head.appendChild(createElement("span", "lw-muted", WORLD_AGENT_BREAKDOWN_NAME));
+    settingsPanel.appendChild(head);
+    settingsPanel.append(
+      toggleField("Enable World Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Use per-chat simulation state for this channel."),
+      toggleField("Inject state", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add the current World Agent state to visible prompt generations."),
+      toggleField("Visible-only ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Automatic ticks only run while Lumiverse is visible."),
+    );
+    shell.appendChild(settingsPanel);
+
+    renderConnectionFields(shell, "world_agent");
+    renderWorldAgentState(shell);
+    renderWorldAgentSchedule(shell);
+    renderWorldAgentAdvanced(shell);
+    renderRuns(shell, "world_agent");
+  }
+
+  function renderWorldAgentClock(shell: HTMLElement): void {
+    const panel = createElement("section", "lw-clock");
+    const stateNow = state?.worldState ?? null;
+    const top = createElement("div", "lw-clock-row");
+    top.append(
+      createElement("div", "lw-clock-time", formatClock(stateNow)),
+      createElement("span", "lw-muted", stateNow?.running ? "running" : "paused"),
+    );
+    panel.appendChild(top);
+
+    const actions = createElement("div", "lw-clock-row");
+    const startPause = createElement("button", `lw-btn${stateNow?.running ? "" : " lw-btn-primary"}`, stateNow?.running ? "Pause" : "Start");
+    startPause.type = "button";
+    startPause.addEventListener("click", () => {
+      notice = { tone: "info", text: stateNow?.running ? "Pausing World Agent..." : "Starting World Agent..." };
+      render();
+      send(ctx, { type: stateNow?.running ? "world_agent_pause" : "world_agent_start" });
+    });
+    const advance = createElement("button", "lw-btn", "+1 Hour");
+    advance.type = "button";
+    advance.addEventListener("click", () => {
+      notice = { tone: "info", text: "Advancing one simulated hour..." };
+      render();
+      send(ctx, { type: "world_agent_advance_hour" });
+    });
+    const schedule = createElement("button", "lw-btn", "Schedule");
+    schedule.type = "button";
+    schedule.addEventListener("click", () => {
+      notice = { tone: "info", text: "Regenerating the daily schedule..." };
+      render();
+      send(ctx, { type: "world_agent_regenerate_schedule" });
+    });
+    const reset = createElement("button", "lw-btn lw-btn-danger", "Reset");
+    reset.type = "button";
+    reset.addEventListener("click", () => send(ctx, { type: "world_agent_reset" }));
+    actions.append(startPause, advance, schedule, reset);
+    panel.appendChild(actions);
+
+    const timeRow = createElement("div", "lw-three");
+    const dayInput = numberInput(stateNow?.day ?? 1, 1, Number.MAX_SAFE_INTEGER, 1, () => {});
+    const hourInput = numberInput(stateNow?.hour ?? 8, 0, 23, 1, () => {});
+    const setButton = createElement("button", "lw-btn", "Set Time");
+    setButton.type = "button";
+    setButton.addEventListener("click", () => send(ctx, { type: "world_agent_set_time", day: Number(dayInput.value), hour: Number(hourInput.value) }));
+    timeRow.append(field("Day", dayInput), field("Hour", hourInput), setButton);
+    panel.appendChild(timeRow);
+    shell.appendChild(panel);
+  }
+
+  function renderWorldAgentState(shell: HTMLElement): void {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Current State"));
+    if (state?.worldState?.updatedAt) head.appendChild(createElement("span", "lw-muted", `Updated ${formatTime(state.worldState.updatedAt)}`));
+    panel.appendChild(head);
+
+    const grid = createElement("div", "lw-meter-grid");
+    const current = state?.worldState ?? null;
+    const cards = [
+      ["Location", worldStateCardValue(current?.location)],
+      ["Mood", worldStateCardValue(current?.mood, "Neutral")],
+      ["Activity", worldStateCardValue(current?.activity, "Idle")],
+      ["Goal", worldStateCardValue(current?.goal)],
+      ["Thought", worldStateCardValue(current?.thought)],
+      ["Schedule", current?.schedule?.length ? `${current.schedule.length} entries` : "No schedule"],
+    ];
+    for (const [label, value] of cards) {
+      const card = createElement("div", "lw-state-card");
+      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
+      grid.appendChild(card);
+    }
+    panel.appendChild(grid);
+
+    const history = current?.history ?? [];
+    const box = createElement("div", "lw-scrollbox");
+    box.style.marginTop = "10px";
+    if (!history.length) {
+      box.appendChild(createElement("div", "lw-empty", "No World Agent activity yet."));
+    } else {
+      const list = createElement("div", "lw-runs");
+      for (const entry of history) {
+        const item = createElement("article", "lw-run");
+        const row = createElement("div", "lw-run-head");
+        row.append(createElement("strong", undefined, entry.action.replace(/_/g, " ")), createElement("span", "lw-muted", `Day ${entry.day}, ${String(entry.hour).padStart(2, "0")}:00`));
+        item.appendChild(row);
+        if (entry.preview) item.appendChild(createElement("div", undefined, entry.preview));
+        if (entry.error) item.appendChild(createElement("div", "lw-muted", entry.error));
+        item.appendChild(createElement("div", "lw-muted", formatTime(entry.timestamp)));
+        list.appendChild(item);
+      }
+      box.appendChild(list);
+    }
+    panel.appendChild(box);
+    shell.appendChild(panel);
+  }
+
+  function renderWorldAgentSchedule(shell: HTMLElement): void {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Daily Schedule"));
+    head.appendChild(createElement("span", "lw-muted", state?.worldState?.scheduleDay ? `Day ${state.worldState.scheduleDay}` : "No day"));
+    panel.appendChild(head);
+
+    const schedule = state?.worldState?.schedule ?? [];
+    if (!schedule.length) {
+      panel.appendChild(createElement("div", "lw-empty", "No schedule generated."));
+      shell.appendChild(panel);
+      return;
+    }
+
+    const strip = createElement("div", "lw-schedule-strip");
+    for (const item of schedule) {
+      const slot = createElement("article", `lw-slot${item.hour === state?.worldState?.hour ? " is-now" : ""}`);
+      slot.append(createElement("strong", undefined, `${String(item.hour).padStart(2, "0")}:00`));
+      if (item.location) slot.appendChild(createElement("div", "lw-muted", item.location));
+      slot.appendChild(createElement("div", undefined, item.activity || "Unspecified activity"));
+      if (item.mood) slot.appendChild(createElement("div", "lw-muted", `Mood: ${item.mood}`));
+      if (item.goal) slot.appendChild(createElement("div", "lw-muted", `Goal: ${item.goal}`));
+      strip.appendChild(slot);
+    }
+    panel.appendChild(strip);
+    shell.appendChild(panel);
+  }
+
+  function renderWorldAgentAdvanced(shell: HTMLElement): void {
+    const details = createElement("details", "lw-details") as HTMLDetailsElement;
+    const summary = createElement("summary", undefined, "Advanced Settings");
+    const body = createElement("div", "lw-details-body");
+    body.append(
+      textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
+      textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
+    );
+    details.append(summary, body);
+    shell.appendChild(details);
+  }
+
+  function renderRuns(shell: HTMLElement, channel: LumiWorldChannel): void {
+    const panel = createElement("section", "lw-panel");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
+    const clear = createElement("button", "lw-btn", "Clear");
     clear.type = "button";
     clear.addEventListener("click", () => send(ctx, { type: "clear_runs" }));
-    title.appendChild(clear);
-    panel.appendChild(title);
+    head.appendChild(clear);
+    panel.appendChild(head);
 
-    const scroll = createElement("div", "lumi-world-runs-scroll");
-    const runs = state?.runs ?? [];
+    const runs = (state?.runs ?? []).filter((run) => (run.channel ?? "director") === channel);
+    const scroll = createElement("div", "lw-scrollbox");
     if (!runs.length) {
-      scroll.appendChild(createElement("div", "lumi-world-empty", "No controller runs yet."));
+      scroll.appendChild(createElement("div", "lw-empty", channel === "director" ? "No controller runs yet." : "No World Agent runs yet."));
       panel.appendChild(scroll);
       shell.appendChild(panel);
       return;
     }
 
-    const list = createElement("div", "lumi-world-runs");
+    const list = createElement("div", "lw-runs");
     for (const run of runs) {
-      const item = createElement("article", "lumi-world-run");
-      const head = createElement("div", "lumi-world-run-head");
-      head.append(
-        createElement("span", `lumi-world-status ${run.status}`, formatStatus(run.status)),
-        createElement("span", "lumi-world-subtle", formatTime(run.timestamp)),
-      );
-      item.appendChild(head);
-      const meta = [run.connectionName, run.model, run.durationMs != null ? `${Math.round(run.durationMs)} ms` : null]
-        .filter(Boolean)
-        .join(" / ");
-      if (meta) item.appendChild(createElement("div", "lumi-world-subtle", meta));
-      const worldInfoDiagnostics = formatWorldInfoRunDiagnostics(run);
-      if (worldInfoDiagnostics) item.appendChild(createElement("div", "lumi-world-subtle", worldInfoDiagnostics));
+      const item = createElement("article", "lw-run");
+      const runHead = createElement("div", "lw-run-head");
+      runHead.append(createElement("span", `lw-status ${run.status}`, formatStatus(run.status)), createElement("span", "lw-muted", formatTime(run.timestamp)));
+      item.appendChild(runHead);
+      const title = [run.action ? run.action.replace(/_/g, " ") : null, run.generationType ?? null].filter(Boolean).join(" / ");
+      if (title) item.appendChild(createElement("div", "lw-muted", title));
+      const meta = [run.connectionName, run.model, run.durationMs != null ? `${Math.round(run.durationMs)} ms` : null].filter(Boolean).join(" / ");
+      if (meta) item.appendChild(createElement("div", "lw-muted", meta));
+      const worldTime = run.worldAgentDay ? `Day ${run.worldAgentDay}, ${String(run.worldAgentHour ?? 0).padStart(2, "0")}:00` : null;
+      if (worldTime) item.appendChild(createElement("div", "lw-muted", worldTime));
+      const wi = formatWorldInfoRunDiagnostics(run);
+      if (wi) item.appendChild(createElement("div", "lw-muted", wi));
       if (run.directivePreview) item.appendChild(createElement("div", undefined, run.directivePreview));
-      if (run.error) item.appendChild(createElement("div", "lumi-world-subtle", run.error));
-      if (run.worldInfoFetchError) item.appendChild(createElement("div", "lumi-world-subtle", `World Info fetch: ${run.worldInfoFetchError}`));
+      if (run.error) item.appendChild(createElement("div", "lw-muted", run.error));
+      if (run.worldInfoFetchError) item.appendChild(createElement("div", "lw-muted", `World Info fetch: ${run.worldInfoFetchError}`));
       list.appendChild(item);
     }
     scroll.appendChild(list);
@@ -729,8 +1334,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderNotice(shell: HTMLElement): void {
     if (!notice) return;
-    const banner = createElement("div", `lumi-world-banner ${notice.tone === "warn" || notice.tone === "error" ? "warn" : ""}`, notice.text);
-    shell.appendChild(banner);
+    shell.appendChild(createElement("div", `lw-banner ${notice.tone === "warn" || notice.tone === "error" ? notice.tone : ""}`, notice.text));
   }
 
   function renderBanners(shell: HTMLElement): void {
@@ -738,42 +1342,33 @@ export function setup(ctx: SpindleFrontendContext) {
     const missingPermissions = [
       !state.permissions.interceptor ? "Interceptor" : null,
       !state.permissions.generation ? "Generation" : null,
-      draft.includeCharacter && !state.permissions.chats ? "Chats" : null,
-      draft.includeCharacter && !state.permissions.characters ? "Characters" : null,
-      draft.includeUserPersona && !state.permissions.personas ? "Personas" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.chats ? "Chats" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.characters ? "Characters" : null,
+      (draft.includeUserPersona || draft.worldAgent.enabled) && !state.permissions.personas ? "Personas" : null,
       draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null,
     ].filter(Boolean);
     if (missingPermissions.length) {
-      shell.appendChild(
-        createElement(
-          "div",
-          "lumi-world-banner warn",
-          `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel to activate the selected LumiWorld context sources.`,
-        ),
-      );
+      shell.appendChild(createElement("div", "lw-banner warn", `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel.`));
     }
-    if (state.connectionError) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", state.connectionError));
-    }
-    if (draft.enabled && !draft.connectionId) {
-      shell.appendChild(createElement("div", "lumi-world-banner warn", "LumiWorld is enabled but no controller connection is selected."));
-    }
+    if (state.connectionError) shell.appendChild(createElement("div", "lw-banner warn", state.connectionError));
+    if (draft.enabled && !draft.connectionId) shell.appendChild(createElement("div", "lw-banner warn", "Director Note is enabled but no controller connection is selected."));
+    if (draft.worldAgent.enabled && !draft.worldAgent.connectionId) shell.appendChild(createElement("div", "lw-banner warn", "World Agent is enabled but no model connection is selected."));
   }
 
   function renderToolbar(shell: HTMLElement): void {
-    const toolbar = createElement("div", "lumi-world-toolbar");
-    const title = createElement("div", "lumi-world-title");
-    const mark = createElement("span", "lumi-world-mark");
+    const toolbar = createElement("div", "lw-toolbar");
+    const title = createElement("div", "lw-title");
+    const mark = createElement("span", "lw-mark");
     mark.innerHTML = LUMIWORLD_ICON;
     const text = createElement("div");
-    text.append(createElement("h2", "lumi-world-heading", EXTENSION_NAME), createElement("div", "lumi-world-subtle", "Private world-director prompt interceptor"));
+    text.append(createElement("h2", "lw-heading", EXTENSION_NAME), createElement("div", "lw-muted", "Lofi world simulation deck"));
     title.append(mark, text);
 
-    const actions = createElement("div", "lumi-world-actions");
-    const refresh = createElement("button", "lumi-world-btn", "Refresh");
+    const actions = createElement("div", "lw-actions");
+    const refresh = createElement("button", "lw-btn", "Refresh");
     refresh.type = "button";
     refresh.addEventListener("click", () => send(ctx, { type: "refresh_state" }));
-    const test = createElement("button", "lumi-world-btn", "Test");
+    const test = createElement("button", "lw-btn", "Test");
     test.type = "button";
     test.addEventListener("click", () => {
       notice = { tone: "info", text: "Running controller test..." };
@@ -785,12 +1380,30 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(toolbar);
   }
 
+  function renderChannelTabs(shell: HTMLElement): void {
+    const tabs = createElement("div", "lw-tabs");
+    const channels: Array<[LumiWorldChannel, string]> = [
+      ["director", "Director Note"],
+      ["world_agent", "World Agent"],
+    ];
+    for (const [channel, label] of channels) {
+      const button = createElement("button", `lw-tab${activeChannel === channel ? " is-active" : ""}`, label);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        activeChannel = channel;
+        render();
+      });
+      tabs.appendChild(button);
+    }
+    shell.appendChild(tabs);
+  }
+
   function render(): void {
     destroyComponents();
     tab.root.replaceChildren();
 
-    const root = createElement("div", "lumi-world-root");
-    const shell = createElement("div", "lumi-world-shell");
+    const root = createElement("div", "lw-root");
+    const shell = createElement("div", "lw-shell");
     root.appendChild(shell);
     tab.root.appendChild(root);
 
@@ -798,15 +1411,14 @@ export function setup(ctx: SpindleFrontendContext) {
     renderNotice(shell);
 
     if (!state) {
-      shell.appendChild(createElement("div", "lumi-world-empty", "Loading LumiWorld settings..."));
+      shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
       return;
     }
 
     renderBanners(shell);
-    renderEnabledPanel(shell);
-    renderGenerationTypes(shell);
-    renderTemplates(shell);
-    renderRuns(shell);
+    renderChannelTabs(shell);
+    if (activeChannel === "director") renderDirectorChannel(shell);
+    else renderWorldAgentChannel(shell);
   }
 
   const onBackendMessage = ctx.onBackendMessage((raw) => {
@@ -837,6 +1449,19 @@ export function setup(ctx: SpindleFrontendContext) {
           scheduleAutoSave();
         }
         break;
+      case "world_state":
+        if (state) {
+          state = { ...state, worldState: message.state };
+          render();
+        }
+        break;
+      case "world_agent_result":
+        notice = message.ok
+          ? { tone: "success", text: message.message || "World Agent updated." }
+          : { tone: "error", text: message.error };
+        if (message.state && state) state = { ...state, worldState: message.state };
+        render();
+        break;
       case "run_logged":
         if (state) {
           state = { ...state, runs: [message.run, ...state.runs].slice(0, draft.runLogLimit) };
@@ -859,14 +1484,18 @@ export function setup(ctx: SpindleFrontendContext) {
   });
   cleanups.push(onBackendMessage);
 
-  const events = (ctx as any).events;
-  if (events?.on) {
-    cleanups.push(
-      events.on("CHAT_CHANGED", (payload: unknown) => send(ctx, { type: "refresh_state", chatId: readChatId(payload) })),
-    );
-  }
+  const events = ctx.events;
+  cleanups.push(
+    events.on("CHAT_CHANGED", (payload: unknown) => {
+      const chatId = readChatId(payload);
+      const characterId = readCharacterId(payload);
+      send(ctx, { type: "refresh_state", chatId, characterId });
+      send(ctx, { type: "refresh_world_state", chatId, characterId });
+    }),
+  );
 
-  send(ctx, { type: "ready" });
+  const initial = activeChat(ctx);
+  send(ctx, { type: "ready", chatId: initial.chatId, characterId: initial.characterId });
   render();
 
   return () => {
@@ -879,7 +1508,7 @@ export function setup(ctx: SpindleFrontendContext) {
       try {
         cleanup();
       } catch {
-        // ignore cleanup errors during extension unload
+        // Ignore cleanup errors during extension unload.
       }
     }
   };

@@ -1,11 +1,11 @@
 {
   "identifier": "agent_world",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "LumiWorld",
   "author": "Archkr",
   "github": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "homepage": "https://github.com/Archkr/Lumiverse-AgentWorld",
-  "description": "A prompt interceptor that asks a controller model how the world should react before the main model replies.",
+  "description": "Lofi world-simulation channels for private director notes and per-chat World Agent state.",
   "permissions": ["interceptor", "generation", "chats", "characters", "personas", "world_books"],
   "interceptorTimeoutMs": 2147483647,
   "entry_backend": "dist/backend.js",

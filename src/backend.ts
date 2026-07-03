@@ -4,23 +4,43 @@ import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessa
 import {
   BREAKDOWN_NAME,
   DEFAULT_SETTINGS,
+  VISIBLE_GENERATION_TYPES,
+  WORLD_AGENT_BREAKDOWN_NAME,
+  advanceWorldAgentHour,
   appendRunLog,
+  applyWorldAgentUpdate,
   buildControllerMessages,
   buildInjectedDirective,
+  buildWorldAgentStateInjection,
   describeEmptyControllerResponse,
+  extractControllerResponseText,
   formatPromptForController,
+  formatWorldAgentSchedule,
+  formatWorldAgentStateForPrompt,
+  isWorldAgentHourDue,
+  makeDefaultWorldAgentState,
   makeDirectivePreview,
+  makeWorldAgentPreview,
   makeControllerContextMessage,
   normalizeRunLog,
   normalizeSettings,
+  normalizeWorldAgentSettings,
+  normalizeWorldAgentState,
+  appendWorldAgentHistory,
   parseControllerDirectiveFromResponse,
+  parseWorldAgentSchedule,
+  parseWorldAgentUpdate,
+  renderTemplate,
   resolveControllerTarget,
   resolveIdentityMacros,
+  resolveWorldAgentTarget,
   resolveWorldInfoContextMessages,
   selectControllerMessagesForController,
   shouldInterceptGeneration,
   type IdentityMacroValues,
   type LumiWorldSettings,
+  type WorldAgentSettings,
+  type WorldAgentState,
   type ConnectionLike,
   type ConnectionOption,
   type ControllerTarget,
@@ -32,12 +52,16 @@ import type { BackendToFrontend, FrontendState, FrontendToBackend, PermissionSta
 
 const SETTINGS_PATH = "global/settings.json";
 const RUNS_PATH = "global/runs.json";
+const WORLD_AGENT_DIR = "world-agent/chats";
 const INTERCEPTOR_PRIORITY = 150;
+const WORLD_AGENT_TICK_INTERVAL_MS = 15000;
 
 let lastFrontendUserId: string | null = null;
 // Routing metadata from free frontend events plus read-only interceptor context.
 // Chat reads are used only when the character context source is enabled.
 const chatUserIds = new Map<string, string>();
+const activeChats = new Map<string, { chatId: string; characterId: string | null; lastSeenAt: number }>();
+const worldAgentBusy = new Set<string>();
 let interceptorRegistered = false;
 let controllerBusy = false;
 
@@ -45,6 +69,13 @@ class ControllerTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`LumiWorld controller timed out after ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "ControllerTimeoutError";
+  }
+}
+
+class WorldAgentTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`LumiWorld World Agent timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    this.name = "WorldAgentTimeoutError";
   }
 }
 
@@ -77,6 +108,10 @@ function personasApi(): any {
 
 function worldBooksApi(): any {
   return (spindle as any).world_books;
+}
+
+function usersApi(): any {
+  return (spindle as any).users;
 }
 
 function permissionsApi(): any {
@@ -120,6 +155,16 @@ function currentPermissions(): PermissionState {
 function rememberChatUser(chatId: string | null | undefined, userId: string | null | undefined): void {
   if (!chatId || !userId) return;
   chatUserIds.set(chatId, userId);
+}
+
+function rememberActiveChat(chatId: string | null | undefined, userId: string | null | undefined, characterId?: string | null): void {
+  if (!chatId || !userId) return;
+  rememberChatUser(chatId, userId);
+  activeChats.set(userId, {
+    chatId,
+    characterId: characterId && characterId.trim() ? characterId.trim() : activeChats.get(userId)?.characterId ?? null,
+    lastSeenAt: Date.now(),
+  });
 }
 
 function resolveUserId(chatId?: string | null): string | null {
@@ -172,6 +217,22 @@ function readChatIdFromMessage(message: FrontendToBackend): string | null {
   return "chatId" in message && typeof message.chatId === "string" && message.chatId.trim() ? message.chatId : null;
 }
 
+function readCharacterIdFromMessage(message: FrontendToBackend): string | null {
+  return "characterId" in message && typeof message.characterId === "string" && message.characterId.trim() ? message.characterId : null;
+}
+
+function sanitizeStorageSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
+}
+
+function worldAgentStatePath(chatId: string): string {
+  return `${WORLD_AGENT_DIR}/${sanitizeStorageSegment(chatId)}.json`;
+}
+
+function worldAgentBusyKey(userId: string | null | undefined, chatId: string): string {
+  return `${userId || "user"}:${chatId}`;
+}
+
 function toConnectionOption(connection: ConnectionProfileDTO | any): ConnectionOption {
   return {
     id: String(connection.id || ""),
@@ -192,6 +253,8 @@ function toConnectionLike(connection: ConnectionProfileDTO | any): ConnectionLik
 
 async function ensureFolders(userId?: string | null): Promise<void> {
   await storageApi().mkdir("global", userId ?? undefined).catch(() => {});
+  await storageApi().mkdir("world-agent", userId ?? undefined).catch(() => {});
+  await storageApi().mkdir(WORLD_AGENT_DIR, userId ?? undefined).catch(() => {});
 }
 
 async function loadSettings(userId?: string | null): Promise<LumiWorldSettings> {
@@ -209,7 +272,14 @@ async function loadSettings(userId?: string | null): Promise<LumiWorldSettings> 
 async function saveSettings(patch: Partial<LumiWorldSettings>, userId?: string | null): Promise<LumiWorldSettings> {
   await ensureFolders(userId);
   const current = await loadSettings(userId);
-  const next = normalizeSettings({ ...current, ...patch });
+  const next = normalizeSettings({
+    ...current,
+    ...patch,
+    worldAgent: normalizeWorldAgentSettings({
+      ...current.worldAgent,
+      ...(patch.worldAgent ?? {}),
+    }),
+  });
   await storageApi().setJson(SETTINGS_PATH, next, { indent: 2, userId: userId ?? undefined });
   return next;
 }
@@ -229,6 +299,67 @@ async function loadRuns(userId?: string | null, limit = DEFAULT_SETTINGS.runLogL
 async function saveRuns(runs: RunLogEntry[], userId?: string | null): Promise<void> {
   await ensureFolders(userId);
   await storageApi().setJson(RUNS_PATH, runs, { indent: 2, userId: userId ?? undefined });
+}
+
+async function resolveActiveChatId(userId?: string | null, explicitChatId?: string | null): Promise<string | null> {
+  if (explicitChatId && explicitChatId.trim()) return explicitChatId.trim();
+  const remembered = userId ? activeChats.get(userId)?.chatId : null;
+  if (remembered) return remembered;
+  if (!permissionHas("chats")) return null;
+  try {
+    const chat = await chatsApi().getActive(userId ?? undefined);
+    return typeof chat?.id === "string" && chat.id.trim() ? chat.id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadWorldAgentState(
+  chatId: string | null | undefined,
+  userId?: string | null,
+  identity?: { characterId?: string | null; personaId?: string | null },
+): Promise<WorldAgentState | null> {
+  if (!chatId) return null;
+  try {
+    const stored = await storageApi().getJson(worldAgentStatePath(chatId), {
+      fallback: makeDefaultWorldAgentState(chatId, identity),
+      userId: userId ?? undefined,
+    });
+    return normalizeWorldAgentState(stored, chatId, {
+      activeCharacterId: identity?.characterId ?? normalizeWorldAgentState(stored, chatId).activeCharacterId,
+      activePersonaId: identity?.personaId ?? normalizeWorldAgentState(stored, chatId).activePersonaId,
+    });
+  } catch {
+    return makeDefaultWorldAgentState(chatId, identity);
+  }
+}
+
+async function loadExistingWorldAgentState(
+  chatId: string | null | undefined,
+  userId?: string | null,
+  identity?: { characterId?: string | null; personaId?: string | null },
+): Promise<WorldAgentState | null> {
+  if (!chatId) return null;
+  try {
+    const stored = await storageApi().getJson(worldAgentStatePath(chatId), {
+      fallback: null,
+      userId: userId ?? undefined,
+    });
+    return stored ? normalizeWorldAgentState(stored, chatId, {
+      activeCharacterId: identity?.characterId ?? normalizeWorldAgentState(stored, chatId).activeCharacterId,
+      activePersonaId: identity?.personaId ?? normalizeWorldAgentState(stored, chatId).activePersonaId,
+    }) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveWorldAgentState(state: WorldAgentState, userId?: string | null): Promise<WorldAgentState> {
+  await ensureFolders(userId);
+  const normalized = normalizeWorldAgentState(state, state.chatId);
+  await storageApi().setJson(worldAgentStatePath(normalized.chatId), normalized, { indent: 2, userId: userId ?? undefined });
+  send({ type: "world_state", state: normalized }, userId ?? undefined);
+  return normalized;
 }
 
 async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: LumiWorldSettings): Promise<void> {
@@ -364,7 +495,7 @@ async function resolveControllerContextMessages(
   context: unknown,
   chatId?: string | null,
   userId?: string | null,
-): Promise<{ messages: LlmMessageLike[]; identity: IdentityMacroValues }> {
+): Promise<{ messages: LlmMessageLike[]; identity: IdentityMacroValues; characterId: string | null; personaId: string | null }> {
   const [persona, character] = await Promise.all([
     resolvePersona(context, userId),
     resolveCharacter(context, chatId, userId),
@@ -374,14 +505,16 @@ async function resolveControllerContextMessages(
     settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
     settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
   ].filter((message): message is LlmMessageLike => !!message);
-  return { messages, identity };
+  return { messages, identity, characterId: character?.id ?? null, personaId: persona?.id ?? null };
 }
 
-async function buildState(userId?: string | null): Promise<FrontendState> {
+async function buildState(userId?: string | null, chatId?: string | null, characterId?: string | null): Promise<FrontendState> {
   const settings = await loadSettings(userId);
-  const [connectionState, runs] = await Promise.all([
+  const resolvedChatId = await resolveActiveChatId(userId, chatId);
+  const [connectionState, runs, worldState] = await Promise.all([
     listConnections(userId),
     loadRuns(userId, settings.runLogLimit),
+    loadWorldAgentState(resolvedChatId, userId, { characterId }),
   ]);
   return {
     settings,
@@ -389,11 +522,12 @@ async function buildState(userId?: string | null): Promise<FrontendState> {
     connectionError: connectionState.error,
     runs,
     permissions: currentPermissions(),
+    worldState,
   };
 }
 
-async function pushState(userId?: string | null): Promise<void> {
-  send({ type: "state", state: await buildState(userId) }, userId ?? undefined);
+async function pushState(userId?: string | null, chatId?: string | null, characterId?: string | null): Promise<void> {
+  send({ type: "state", state: await buildState(userId, chatId, characterId) }, userId ?? undefined);
 }
 
 function makeRunBase(status: RunLogEntry["status"], startedAt: number, patch: Partial<RunLogEntry> = {}): RunLogEntry {
@@ -462,34 +596,476 @@ async function callController(
   }
 }
 
+function buildWorldAgentTemplateVars(
+  state: WorldAgentState,
+  identity: IdentityMacroValues,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  return {
+    chatId: state.chatId,
+    user: identity.userName || "User",
+    char: identity.characterName || "Character",
+    day: String(state.day),
+    hour: String(state.hour),
+    time: `${String(state.hour).padStart(2, "0")}:00`,
+    timestamp: new Date().toISOString(),
+    state: formatWorldAgentStateForPrompt(state),
+    schedule: formatWorldAgentSchedule(state.schedule),
+    ...extra,
+  };
+}
+
+function buildWorldAgentMessages(options: {
+  settings: WorldAgentSettings;
+  state: WorldAgentState;
+  identity: IdentityMacroValues;
+  contextMessages: LlmMessageLike[];
+  mode: "schedule" | "update";
+}): LlmMessageLike[] {
+  const vars = buildWorldAgentTemplateVars(options.state, options.identity);
+  const systemTemplate = options.mode === "schedule" ? options.settings.scheduleTemplate : options.settings.updateTemplate;
+  const system = renderTemplate(systemTemplate, vars);
+  const action = options.mode === "schedule" ? "Generate today's private schedule." : "Advance the private state by one simulated hour.";
+  return [
+    { role: "system", content: system },
+    ...options.contextMessages,
+    {
+      role: "user",
+      content: [
+        action,
+        "",
+        `Chat ID: ${vars.chatId}`,
+        `Current time: Day ${vars.day}, ${vars.time}`,
+        "",
+        "Current World Agent state:",
+        "<world_state>",
+        vars.state,
+        "</world_state>",
+      ].join("\n"),
+    },
+  ];
+}
+
+async function callWorldAgentModel(
+  userId: string | null,
+  settings: WorldAgentSettings,
+  target: ControllerTarget,
+  messages: LlmMessageLike[],
+): Promise<{ text: string; durationMs: number }> {
+  if (!userId) {
+    throw new Error("LumiWorld could not resolve the active Lumiverse user for the World Agent call.");
+  }
+
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, settings.timeoutMs);
+
+  try {
+    const response = await (spindle.generate.raw as unknown as (input: unknown) => Promise<any>)({
+      provider: target.provider,
+      model: target.model,
+      connection_id: target.connectionId,
+      userId,
+      messages,
+      parameters: {
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+      },
+      reasoning: { source: "off" },
+      signal: controller.signal,
+    });
+    const text = extractControllerResponseText(response);
+    if (!text) {
+      throw new Error("LumiWorld World Agent returned no usable final content.");
+    }
+    return { text, durationMs: Date.now() - startedAt };
+  } catch (error) {
+    if (timedOut || (error instanceof Error && error.name === "AbortError")) {
+      throw new WorldAgentTimeoutError(settings.timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveWorldAgentContext(
+  settings: LumiWorldSettings,
+  chatId: string,
+  userId: string | null,
+  characterId?: string | null,
+): Promise<{ contextMessages: LlmMessageLike[]; identity: IdentityMacroValues; stateIdentity: { characterId: string | null; personaId: string | null } }> {
+  const context = { chatId, characterId: characterId || undefined };
+  const resolved = await resolveControllerContextMessages(settings, context, chatId, userId);
+  return {
+    contextMessages: resolved.messages,
+    identity: resolved.identity,
+    stateIdentity: { characterId: resolved.characterId, personaId: resolved.personaId },
+  };
+}
+
+async function ensureWorldAgentSchedule(options: {
+  userId: string | null;
+  settings: LumiWorldSettings;
+  state: WorldAgentState;
+  contextMessages: LlmMessageLike[];
+  identity: IdentityMacroValues;
+  force?: boolean;
+}): Promise<WorldAgentState> {
+  const worldSettings = options.settings.worldAgent;
+  if (!worldSettings.enabled) return options.state;
+  if (!options.force && options.state.scheduleDay === options.state.day && options.state.schedule.length > 0) return options.state;
+  if (!permissionHas("generation")) {
+    return appendWorldAgentHistory(options.state, "schedule_error", null, "Generation permission is not granted.");
+  }
+  const startedAt = Date.now();
+  const connection = await getConnection(worldSettings.connectionId, options.userId);
+  const target = resolveWorldAgentTarget(worldSettings, connection);
+  if (!target.ok) {
+    const next = appendWorldAgentHistory(options.state, "schedule_error", null, target.reason);
+    await recordRun(
+      makeRunBase("skipped", startedAt, {
+        channel: "world_agent",
+        action: "schedule",
+        connectionId: worldSettings.connectionId,
+        error: target.reason,
+        worldAgentDay: next.day,
+        worldAgentHour: next.hour,
+      }),
+      options.userId,
+      options.settings,
+    );
+    return next;
+  }
+
+  try {
+    const messages = buildWorldAgentMessages({
+      settings: worldSettings,
+      state: options.state,
+      identity: options.identity,
+      contextMessages: options.contextMessages,
+      mode: "schedule",
+    });
+    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const schedule = parseWorldAgentSchedule(text);
+    const next = appendWorldAgentHistory(
+      {
+        ...options.state,
+        schedule,
+        scheduleDay: options.state.day,
+        updatedAt: Date.now(),
+      },
+      "schedule",
+      schedule.length ? `${schedule.length} schedule entries generated.` : "No schedule entries generated.",
+    );
+    await recordRun(
+      makeRunBase(schedule.length ? "success" : "skipped", startedAt, {
+        channel: "world_agent",
+        action: "schedule",
+        durationMs,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        directivePreview: `${schedule.length} schedule entries generated.`,
+        worldAgentDay: next.day,
+        worldAgentHour: next.hour,
+        worldAgentScheduleCount: schedule.length,
+      }),
+      options.userId,
+      options.settings,
+    );
+    return next;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const next = appendWorldAgentHistory(options.state, "schedule_error", null, message);
+    await recordRun(
+      makeRunBase(error instanceof WorldAgentTimeoutError ? "timeout" : "error", startedAt, {
+        channel: "world_agent",
+        action: "schedule",
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        error: message,
+        worldAgentDay: next.day,
+        worldAgentHour: next.hour,
+      }),
+      options.userId,
+      options.settings,
+    );
+    spindle.log.warn(`LumiWorld World Agent schedule skipped: ${message}`);
+    return next;
+  }
+}
+
+async function runWorldAgentHourUpdate(options: {
+  userId: string | null;
+  settings: LumiWorldSettings;
+  state: WorldAgentState;
+  contextMessages: LlmMessageLike[];
+  identity: IdentityMacroValues;
+  action: string;
+}): Promise<WorldAgentState> {
+  const worldSettings = options.settings.worldAgent;
+  let nextState = advanceWorldAgentHour(options.state);
+  nextState = await ensureWorldAgentSchedule({
+    userId: options.userId,
+    settings: options.settings,
+    state: nextState,
+    contextMessages: options.contextMessages,
+    identity: options.identity,
+  });
+
+  if (!worldSettings.enabled) return nextState;
+  if (!permissionHas("generation")) {
+    return appendWorldAgentHistory(nextState, `${options.action}_error`, null, "Generation permission is not granted.");
+  }
+  const startedAt = Date.now();
+  const connection = await getConnection(worldSettings.connectionId, options.userId);
+  const target = resolveWorldAgentTarget(worldSettings, connection);
+  if (!target.ok) {
+    const skipped = appendWorldAgentHistory(nextState, `${options.action}_error`, null, target.reason);
+    await recordRun(
+      makeRunBase("skipped", startedAt, {
+        channel: "world_agent",
+        action: options.action,
+        connectionId: worldSettings.connectionId,
+        error: target.reason,
+        worldAgentDay: skipped.day,
+        worldAgentHour: skipped.hour,
+      }),
+      options.userId,
+      options.settings,
+    );
+    return skipped;
+  }
+
+  try {
+    const messages = buildWorldAgentMessages({
+      settings: worldSettings,
+      state: nextState,
+      identity: options.identity,
+      contextMessages: options.contextMessages,
+      mode: "update",
+    });
+    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const parsed = parseWorldAgentUpdate(text);
+    const updatedState = applyWorldAgentUpdate(nextState, parsed);
+    nextState = appendWorldAgentHistory(
+      updatedState,
+      options.action,
+      makeWorldAgentPreview(updatedState),
+    );
+    await recordRun(
+      makeRunBase("success", startedAt, {
+        channel: "world_agent",
+        action: options.action,
+        durationMs,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        directivePreview: makeWorldAgentPreview(nextState),
+        worldAgentDay: nextState.day,
+        worldAgentHour: nextState.hour,
+        worldAgentScheduleCount: nextState.schedule.length,
+      }),
+      options.userId,
+      options.settings,
+    );
+    return nextState;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = appendWorldAgentHistory(nextState, `${options.action}_error`, null, message);
+    await recordRun(
+      makeRunBase(error instanceof WorldAgentTimeoutError ? "timeout" : "error", startedAt, {
+        channel: "world_agent",
+        action: options.action,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        error: message,
+        worldAgentDay: failed.day,
+        worldAgentHour: failed.hour,
+      }),
+      options.userId,
+      options.settings,
+    );
+    spindle.log.warn(`LumiWorld World Agent update skipped: ${message}`);
+    return failed;
+  }
+}
+
+async function injectWorldAgentOnly(
+  messages: LlmMessageDTO[],
+  chatId: string,
+  userId: string | null,
+  characterId?: string | null,
+): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
+  const state = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  if (!state) return messages;
+  return {
+    messages: [
+      {
+        role: "system",
+        content: buildWorldAgentStateInjection(state),
+      },
+      ...messages,
+    ],
+    breakdown: [{ messageIndex: 0, name: WORLD_AGENT_BREAKDOWN_NAME }],
+  };
+}
+
+async function isUserVisible(userId?: string | null): Promise<boolean> {
+  try {
+    return usersApi()?.isVisible ? !!(await usersApi().isVisible(userId ?? undefined)) : true;
+  } catch {
+    return true;
+  }
+}
+
+async function loadWorldAgentBundle(
+  userId: string | null,
+  chatId: string,
+  characterId?: string | null,
+): Promise<{ settings: LumiWorldSettings; state: WorldAgentState; contextMessages: LlmMessageLike[]; identity: IdentityMacroValues }> {
+  const settings = await loadSettings(userId);
+  const context = await resolveWorldAgentContext(settings, chatId, userId, characterId);
+  const state = await loadWorldAgentState(chatId, userId, context.stateIdentity) ?? makeDefaultWorldAgentState(chatId, context.stateIdentity);
+  return { settings, state, contextMessages: context.contextMessages, identity: context.identity };
+}
+
+async function tickWorldAgentChat(
+  userId: string | null,
+  chatId: string,
+  characterId?: string | null,
+  manualAction: "hourly_update" | "manual_advance" = "hourly_update",
+): Promise<WorldAgentState | null> {
+  const busyKey = worldAgentBusyKey(userId, chatId);
+  if (worldAgentBusy.has(busyKey)) return null;
+  worldAgentBusy.add(busyKey);
+  try {
+    const { settings, state, contextMessages, identity } = await loadWorldAgentBundle(userId, chatId, characterId);
+    const next = await runWorldAgentHourUpdate({
+      userId,
+      settings,
+      state,
+      contextMessages,
+      identity,
+      action: manualAction,
+    });
+    return await saveWorldAgentState(next, userId);
+  } finally {
+    worldAgentBusy.delete(busyKey);
+  }
+}
+
+async function checkWorldAgentTimers(): Promise<void> {
+  for (const [userId, active] of activeChats.entries()) {
+    const busyKey = worldAgentBusyKey(userId, active.chatId);
+    if (worldAgentBusy.has(busyKey)) continue;
+    try {
+      const settings = await loadSettings(userId);
+      if (!settings.worldAgent.enabled) continue;
+      const state = await loadExistingWorldAgentState(active.chatId, userId, { characterId: active.characterId });
+      if (!state?.running) continue;
+      const visible = await isUserVisible(userId);
+      const due = isWorldAgentHourDue(state, settings.worldAgent, Date.now(), visible);
+      if (due.shouldResetLastTick) {
+        await saveWorldAgentState({ ...state, lastTickAt: Date.now(), updatedAt: Date.now() }, userId);
+        continue;
+      }
+      if (!due.due) continue;
+      await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+    } catch (error) {
+      spindle.log.warn(`LumiWorld World Agent timer skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+async function refreshWorldStateForMessage(message: FrontendToBackend, userId: string): Promise<WorldAgentState | null> {
+  const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+  if (!chatId) return null;
+  const characterId = readCharacterIdFromMessage(message);
+  rememberActiveChat(chatId, userId, characterId);
+  const existing = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  const state = existing?.running
+    ? await saveWorldAgentState({ ...existing, lastTickAt: Date.now(), updatedAt: Date.now() }, userId)
+    : await loadWorldAgentState(chatId, userId, { characterId });
+  send({ type: "world_state", state }, userId);
+  return state;
+}
+
+async function resumeWorldAgentClockWithoutCatchup(chatId: string | null, userId: string, characterId?: string | null): Promise<void> {
+  if (!chatId) return;
+  const existing = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  if (!existing?.running) return;
+  await saveWorldAgentState({ ...existing, lastTickAt: Date.now(), updatedAt: Date.now() }, userId);
+}
+
 async function handleInterceptor(
   messages: LlmMessageDTO[],
   context: unknown,
 ): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
   const chatId = extractChatId(context);
+  const contextCharacterId = extractCharacterId(context);
   const userId = resolveUserId(chatId);
   const generationType = extractGenerationType(context);
   const startedAt = Date.now();
+  rememberActiveChat(chatId, userId, contextCharacterId);
 
   const settings = await loadSettings(userId);
-  const decision = shouldInterceptGeneration(settings, generationType);
-  if (!decision.intercept) return messages;
+  const directorDecision = shouldInterceptGeneration(settings, generationType);
+  const visibleGeneration = VISIBLE_GENERATION_TYPES.includes(generationType as any);
+  const shouldInjectWorldAgent = visibleGeneration && settings.worldAgent.enabled && settings.worldAgent.injectState && !!chatId;
+  if (!directorDecision.intercept && !shouldInjectWorldAgent) return messages;
 
   if (!permissionHas("generation")) {
-    await recordRun(
-      makeRunBase("skipped", startedAt, {
-        generationType,
-        error: "Generation permission is not granted.",
-      }),
-      userId,
-      settings,
-    );
-    return messages;
+    if (directorDecision.intercept) {
+      await recordRun(
+        makeRunBase("skipped", startedAt, {
+          channel: "director",
+          generationType,
+          error: "Generation permission is not granted.",
+        }),
+        userId,
+        settings,
+      );
+    }
+    return shouldInjectWorldAgent ? await injectWorldAgentOnly(messages, chatId, userId, contextCharacterId) : messages;
+  }
+
+  const injectedMessages: LlmMessageDTO[] = [];
+  const breakdown: InterceptorResultDTO["breakdown"] = [];
+  const promptMessages = messages as LlmMessageLike[];
+  const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
+  const worldAgentState = shouldInjectWorldAgent
+    ? await loadExistingWorldAgentState(chatId, userId, {
+      characterId: controllerContext.characterId ?? contextCharacterId,
+      personaId: controllerContext.personaId,
+    })
+    : null;
+
+  if (worldAgentState) {
+    injectedMessages.push({
+      role: "system",
+      content: buildWorldAgentStateInjection(worldAgentState),
+    });
+    breakdown.push({ messageIndex: injectedMessages.length - 1, name: WORLD_AGENT_BREAKDOWN_NAME });
+  }
+
+  if (!directorDecision.intercept) {
+    return injectedMessages.length
+      ? { messages: [...injectedMessages, ...messages], breakdown }
+      : messages;
   }
 
   if (controllerBusy) {
     await recordRun(
       makeRunBase("skipped", startedAt, {
+        channel: "director",
         generationType,
         error: "Another LumiWorld controller call is already running.",
       }),
@@ -504,6 +1080,7 @@ async function handleInterceptor(
   if (!target.ok) {
     await recordRun(
       makeRunBase("skipped", startedAt, {
+        channel: "director",
         generationType,
         connectionId: settings.connectionId,
         error: target.reason,
@@ -523,8 +1100,6 @@ async function handleInterceptor(
   };
   try {
     const worldBooks = worldBooksApi();
-    const promptMessages = messages as LlmMessageLike[];
-    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
     const worldInfoContext = await resolveWorldInfoContextMessages({
       messages: promptMessages,
       settings,
@@ -539,10 +1114,17 @@ async function handleInterceptor(
       identity: controllerContext.identity,
     });
     worldInfoDiagnostics = worldInfoContext.diagnostics;
+    const worldAgentContextMessage = worldAgentState
+      ? makeControllerContextMessage("World Agent State", formatWorldAgentStateForPrompt(worldAgentState))
+      : null;
     const controllerContextMessages = selectControllerMessagesForController(
       promptMessages,
       settings,
-      [...controllerContext.messages, ...worldInfoContext.messages],
+      [
+        ...controllerContext.messages,
+        ...worldInfoContext.messages,
+        ...(worldAgentContextMessage ? [worldAgentContextMessage] : []),
+      ],
     );
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
@@ -557,9 +1139,12 @@ async function handleInterceptor(
       role: "system",
       content: buildInjectedDirective(directive),
     };
+    injectedMessages.push(injected);
+    breakdown.push({ messageIndex: injectedMessages.length - 1, name: BREAKDOWN_NAME });
 
     await recordRun(
       makeRunBase("success", startedAt, {
+        channel: "director",
         generationType,
         durationMs,
         connectionId: target.connectionId,
@@ -573,8 +1158,8 @@ async function handleInterceptor(
     );
 
     return {
-      messages: [injected, ...messages],
-      breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }],
+      messages: [...injectedMessages, ...messages],
+      breakdown,
     };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
@@ -582,6 +1167,7 @@ async function handleInterceptor(
     const message = error instanceof Error ? error.message : String(error);
     await recordRun(
       makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
+        channel: "director",
         generationType,
         connectionId: target.connectionId,
         connectionName: target.connectionName,
@@ -593,7 +1179,9 @@ async function handleInterceptor(
       settings,
     );
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
-    return messages;
+    return injectedMessages.length
+      ? { messages: [...injectedMessages, ...messages], breakdown }
+      : messages;
   } finally {
     controllerBusy = false;
   }
@@ -678,6 +1266,10 @@ async function runControllerTest(userId: string | null, patch?: Partial<LumiWorl
 
 tryRegisterInterceptor();
 
+setInterval(() => {
+  void checkWorldAgentTimers();
+}, WORLD_AGENT_TICK_INTERVAL_MS);
+
 permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; granted: boolean }) => {
   if (permission === "interceptor" && granted) tryRegisterInterceptor();
   void pushState();
@@ -690,29 +1282,173 @@ permissionsApi()?.onDenied?.(({ permission, operation }: { permission: string; o
 spindle.onFrontendMessage(async (raw, userId) => {
   lastFrontendUserId = userId;
   const message = raw as FrontendToBackend;
-  rememberChatUser(readChatIdFromMessage(message), userId);
+  rememberActiveChat(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
 
   try {
     await ensureFolders(userId);
     switch (message.type) {
       case "ready":
+        await resumeWorldAgentClockWithoutCatchup(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
       case "refresh_state":
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
+      case "refresh_world_state":
+        await refreshWorldStateForMessage(message, userId);
         break;
       case "save_settings": {
         const settings = await saveSettings(message.settings, userId);
         send({ type: "settings_saved", settings }, userId);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
+      }
+      case "save_world_settings": {
+        const settings = await saveSettings({ worldAgent: message.settings as WorldAgentSettings }, userId);
+        send({ type: "settings_saved", settings }, userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
       }
       case "test_controller":
         await runControllerTest(userId, message.settings);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
       case "clear_runs":
         await saveRuns([], userId);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
+      case "world_agent_start": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        rememberActiveChat(chatId, userId, readCharacterIdFromMessage(message));
+        const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        let state: WorldAgentState = {
+          ...bundle.state,
+          running: true,
+          lastTickAt: Date.now(),
+          activeCharacterId: bundle.state.activeCharacterId ?? readCharacterIdFromMessage(message),
+          updatedAt: Date.now(),
+        };
+        state = await ensureWorldAgentSchedule({
+          userId,
+          settings: bundle.settings,
+          state,
+          contextMessages: bundle.contextMessages,
+          identity: bundle.identity,
+        });
+        state = appendWorldAgentHistory(state, "start", "Clock started.");
+        const saved = await saveWorldAgentState(state, userId);
+        send({ type: "world_agent_result", ok: true, message: "World Agent clock started.", state: saved }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_pause": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        const state = await loadWorldAgentState(chatId, userId, { characterId: readCharacterIdFromMessage(message) });
+        if (!state) {
+          send({ type: "world_agent_result", ok: false, error: "No World Agent state exists for this chat." }, userId);
+          break;
+        }
+        const saved = await saveWorldAgentState(appendWorldAgentHistory({ ...state, running: false, updatedAt: Date.now() }, "pause", "Clock paused."), userId);
+        send({ type: "world_agent_result", ok: true, message: "World Agent clock paused.", state: saved }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_advance_hour": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        const state = await tickWorldAgentChat(userId, chatId, readCharacterIdFromMessage(message), "manual_advance");
+        if (!state) {
+          send({ type: "world_agent_result", ok: false, error: "World Agent is already running an update for this chat." }, userId);
+          break;
+        }
+        send({ type: "world_agent_result", ok: true, message: "Advanced one simulated hour.", state }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_regenerate_schedule": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        const state = await ensureWorldAgentSchedule({
+          userId,
+          settings: bundle.settings,
+          state: { ...bundle.state, schedule: [], scheduleDay: null, updatedAt: Date.now() },
+          contextMessages: bundle.contextMessages,
+          identity: bundle.identity,
+          force: true,
+        });
+        const saved = await saveWorldAgentState(state, userId);
+        send({ type: "world_agent_result", ok: true, message: "Regenerated the daily schedule.", state: saved }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_reset": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        const state = appendWorldAgentHistory(
+          makeDefaultWorldAgentState(chatId, bundle.state.activeCharacterId || readCharacterIdFromMessage(message) ? {
+            characterId: bundle.state.activeCharacterId || readCharacterIdFromMessage(message),
+            personaId: bundle.state.activePersonaId,
+          } : undefined),
+          "reset",
+          "State reset.",
+        );
+        const saved = await saveWorldAgentState(state, userId);
+        send({ type: "world_agent_result", ok: true, message: "World Agent state reset.", state: saved }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_set_time": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          send({ type: "world_agent_result", ok: false, error: "No active chat is available for the World Agent." }, userId);
+          break;
+        }
+        const state = await loadWorldAgentState(chatId, userId, { characterId: readCharacterIdFromMessage(message) });
+        if (!state) {
+          send({ type: "world_agent_result", ok: false, error: "No World Agent state exists for this chat." }, userId);
+          break;
+        }
+        const nextDay = typeof message.day === "number" && Number.isFinite(message.day) ? Math.max(1, Math.round(message.day)) : state.day;
+        const nextHour = Math.max(0, Math.min(23, Math.round(Number(message.hour))));
+        const saved = await saveWorldAgentState(
+          appendWorldAgentHistory(
+            {
+              ...state,
+              day: nextDay,
+              hour: nextHour,
+              lastTickAt: Date.now(),
+              schedule: nextDay === state.day ? state.schedule : [],
+              scheduleDay: nextDay === state.day ? state.scheduleDay : null,
+              updatedAt: Date.now(),
+            },
+            "set_time",
+            `Set to Day ${nextDay}, ${String(nextHour).padStart(2, "0")}:00.`,
+          ),
+          userId,
+        );
+        send({ type: "world_agent_result", ok: true, message: "World Agent time updated.", state: saved }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";
