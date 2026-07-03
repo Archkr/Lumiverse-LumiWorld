@@ -655,7 +655,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lumi-world-details-body");
     body.append(
-      toggleField("Entries", draft.includeWorldInfoEntries, () => {}, "Coming soon", true),
+      toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), "Send activated standalone World Info entries to the controller."),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
       toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
       textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."),

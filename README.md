@@ -24,8 +24,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 - Controller connection selector powered by Lumiverse connection profiles.
 - Optional model override, or use the selected connection's configured model.
 - Configurable context sources, chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Sends recent chat history, the active user persona, and the active character card to the controller when enabled.
-- World Info entry context is prepared for host support but the UI toggle is disabled until `__isWorldInfoEntry` is available.
+- Sends recent chat history, activated standalone World Info entries, the active user persona, and the active character card to the controller when enabled.
 - Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
 - Prompt Breakdown attribution through `LumiWorld Director`.
 - Recent run log with status, timing, connection/model, error, and directive preview only.
@@ -36,17 +35,18 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 1. Lumiverse assembles the normal prompt for a visible chat generation.
 2. LumiWorld receives the in-flight message array through the Spindle interceptor API.
 3. LumiWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
-4. LumiWorld optionally fetches the active persona and active character card through Lumiverse APIs and adds them to the controller-only context.
-5. The selected controller connection is called through `spindle.generate.raw()`.
-6. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
-7. A private system block is injected above the original prompt:
+4. LumiWorld can include activated standalone World Info entries marked with `__isWorldInfoEntry`.
+5. LumiWorld optionally fetches the active persona and active character card through Lumiverse APIs and adds them to the controller-only context.
+6. The selected controller connection is called through `spindle.generate.raw()`.
+7. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
+8. A private system block is injected above the original prompt:
 
 ```text
 [LumiWorld Director]
 ...
 ```
 
-8. The main model receives the original prompt plus the private directive.
+9. The main model receives the original prompt plus the private directive.
 
 The controller should not write the visible assistant reply. Its job is to describe world state, NPC intent, environmental pressure, consequences, and constraints the main model should respect.
 
@@ -112,7 +112,7 @@ If the controller returns malformed JSON, LumiWorld trims the raw text and uses 
 | `maxInputChars` | `60000` | Character cap for the serialized controller context snapshot. |
 | `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
 | `generationTypes` | All visible types | Controls which visible generation modes LumiWorld intercepts. |
-| `includeWorldInfoEntries` | Off | Entry context toggle. Disabled in the UI until `__isWorldInfoEntry` support is available. |
+| `includeWorldInfoEntries` | Off | Sends standalone World Info entries marked with `__isWorldInfoEntry` to the controller. |
 | `includeUserPersona` | On | Sends the active user persona to the controller only. |
 | `includeCharacter` | On | Sends the active character card to the controller only. |
 | `additionalNotes` | Empty | Controller-only context notes. Always sent to the LumiWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
@@ -168,7 +168,7 @@ LumiWorld does not persist:
 - API keys;
 - full controller outputs beyond the short preview in recent runs.
 
-The controller call sends the capped controller-context snapshot, including enabled chat-history, persona, character, and additional notes, to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
+The controller call sends the capped controller-context snapshot, including enabled chat-history, standalone World Info entries, persona, character, and additional notes, to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
 
 ## Troubleshooting
 
