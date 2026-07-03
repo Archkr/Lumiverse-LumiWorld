@@ -129,7 +129,11 @@ Available template variables:
 {{connectionId}}
 {{timestamp}}
 {{maxDirectiveChars}}
+{{user}}
+{{char}}
 ```
+
+`{{user}}` resolves to the active persona name, matching Lumiverse's standard macro fallback of `User`. `{{char}}` resolves to the active character name when available.
 
 ## Permissions
 

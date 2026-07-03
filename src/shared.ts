@@ -125,6 +125,18 @@ export interface ControllerTemplateContext {
   timestamp: string;
   maxDirectiveChars: string;
   additionalNotes: string;
+  user: string;
+  char: string;
+}
+
+export interface IdentityMacroValues {
+  userName?: string | null;
+  characterName?: string | null;
+}
+
+export interface NormalizedIdentityMacroValues {
+  userName: string;
+  characterName: string;
 }
 
 export interface ControllerTarget {
@@ -481,6 +493,28 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function identityValue(value: string | null | undefined, fallback: string): string {
+  const cleaned = typeof value === "string" ? value.trim() : "";
+  return cleaned || fallback;
+}
+
+export function normalizeIdentityMacros(identity?: IdentityMacroValues | null): NormalizedIdentityMacroValues {
+  return {
+    userName: identityValue(identity?.userName, "User"),
+    characterName: identityValue(identity?.characterName, "Character"),
+  };
+}
+
+export function resolveIdentityMacros(text: string, identity?: IdentityMacroValues | null): string {
+  if (!text) return text;
+  const normalized = normalizeIdentityMacros(identity);
+  const replacements: Record<string, string> = {
+    user: normalized.userName,
+    char: normalized.characterName,
+  };
+  return text.replace(/\{\{\s*(user|char)\s*\}\}/gi, (_match, key: string) => replacements[key.toLowerCase()] ?? _match);
+}
+
 export function normalizeActivatedWorldInfoEntries(value: unknown): ActivatedWorldInfoLike[] {
   const raw = Array.isArray(value) ? value : asRecord(value).activatedWorldInfo;
   if (!Array.isArray(raw)) return [];
@@ -527,15 +561,20 @@ function messageContentKey(message: LlmMessageLike): string {
   return serializeMessageContent(message.content).trim();
 }
 
-function fallbackWorldInfoMessages(messages: LlmMessageLike[], seenContent = new Set<string>()): LlmMessageLike[] {
+function fallbackWorldInfoMessages(
+  messages: LlmMessageLike[],
+  seenContent = new Set<string>(),
+  identity?: IdentityMacroValues | null,
+): LlmMessageLike[] {
   const selected: LlmMessageLike[] = [];
   for (const message of messages.filter(isWorldInfoEntryMessage)) {
-    const contentKey = messageContentKey(message);
+    const content = typeof message.content === "string" ? resolveIdentityMacros(message.content, identity) : message.content;
+    const contentKey = typeof content === "string" ? content.trim() : messageContentKey({ ...message, content });
     if (!contentKey || seenContent.has(contentKey)) continue;
     seenContent.add(contentKey);
     selected.push({
       role: normalizeRole(message.role),
-      content: message.content,
+      content,
       name: message.name,
       [CONTROLLER_CONTEXT_LABEL_KEY]: `World Info Entry ${selected.length + 1}`,
     });
@@ -550,6 +589,7 @@ export async function resolveWorldInfoContextMessages(options: {
   canFetchWorldBooks: boolean;
   fetchActivated?: () => Promise<unknown>;
   fetchEntry?: (entryId: string) => Promise<WorldInfoEntryLike | null | undefined>;
+  identity?: IdentityMacroValues | null;
 }): Promise<WorldInfoContextResult> {
   const diagnostics: WorldInfoContextDiagnostics = {
     activatedEntryCount: 0,
@@ -581,7 +621,7 @@ export async function resolveWorldInfoContextMessages(options: {
     for (const entrySummary of activated) {
       try {
         const entry = await options.fetchEntry(entrySummary.id);
-        const content = typeof entry?.content === "string" ? entry.content.trim() : "";
+        const content = typeof entry?.content === "string" ? resolveIdentityMacros(entry.content, options.identity).trim() : "";
         if (!entry || !content || seenContent.has(content)) continue;
         seenContent.add(content);
         const message = makeControllerContextMessage(
@@ -605,7 +645,7 @@ export async function resolveWorldInfoContextMessages(options: {
     return { messages: fetchedMessages, diagnostics };
   }
 
-  const fallback = fallbackWorldInfoMessages(options.messages, seenContent);
+  const fallback = fallbackWorldInfoMessages(options.messages, seenContent, options.identity);
   diagnostics.fallbackTaggedEntryCount = fallback.length;
   return { messages: fallback, diagnostics };
 }
@@ -701,9 +741,14 @@ export function renderTemplate(template: string, vars: ControllerTemplateContext
 export function buildControllerMessages(
   settings: LumiWorldSettings,
   snapshot: PromptSnapshot,
-  context: Omit<ControllerTemplateContext, "prompt" | "maxDirectiveChars" | "timestamp" | "additionalNotes"> & Partial<Pick<ControllerTemplateContext, "timestamp">>,
+  context: Omit<ControllerTemplateContext, "prompt" | "maxDirectiveChars" | "timestamp" | "additionalNotes" | "user" | "char"> &
+    Partial<Pick<ControllerTemplateContext, "timestamp" | "user" | "char">>,
 ): LlmMessageLike[] {
-  const additionalNotes = settings.additionalNotes.trim();
+  const identity = normalizeIdentityMacros({
+    userName: context.user,
+    characterName: context.char,
+  });
+  const additionalNotes = resolveIdentityMacros(settings.additionalNotes, identity).trim();
   const vars: ControllerTemplateContext = {
     prompt: snapshot.prompt,
     generationType: context.generationType,
@@ -713,6 +758,8 @@ export function buildControllerMessages(
     maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
     // Notes are sent as their own controller-only message; keep the legacy token empty to avoid duplication.
     additionalNotes: "",
+    user: identity.userName,
+    char: identity.characterName,
   };
   const renderedSystem = renderTemplate(settings.systemTemplate, vars);
   const renderedUser = renderTemplate(settings.userTemplate, vars);

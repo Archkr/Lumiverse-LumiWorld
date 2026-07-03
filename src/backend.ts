@@ -15,9 +15,11 @@ import {
   normalizeSettings,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
+  resolveIdentityMacros,
   resolveWorldInfoContextMessages,
   selectControllerMessagesForController,
   shouldInterceptGeneration,
+  type IdentityMacroValues,
   type LumiWorldSettings,
   type ConnectionLike,
   type ConnectionOption,
@@ -281,51 +283,68 @@ function section(label: string, value: unknown): string | null {
   return text ? `${label}:\n${text}` : null;
 }
 
-function formatPersonaContext(persona: PersonaDTO): string {
+function personaName(persona: PersonaDTO | null | undefined): string {
+  return typeof persona?.name === "string" && persona.name.trim() ? persona.name.trim() : "User";
+}
+
+function characterName(character: CharacterDTO | null | undefined): string {
+  return typeof character?.name === "string" && character.name.trim() ? character.name.trim() : "Character";
+}
+
+function makeIdentity(persona: PersonaDTO | null, character: CharacterDTO | null): IdentityMacroValues {
+  return {
+    userName: personaName(persona),
+    characterName: characterName(character),
+  };
+}
+
+function identityText(value: unknown, identity: IdentityMacroValues): string | null {
+  return typeof value === "string" ? resolveIdentityMacros(value, identity) : null;
+}
+
+function formatPersonaContext(persona: PersonaDTO, identity: IdentityMacroValues): string {
   return [
     `Name: ${persona.name}`,
-    section("Title", persona.title),
-    section("Description", persona.description),
+    section("Title", identityText(persona.title, identity)),
+    section("Description", identityText(persona.description, identity)),
     persona.is_default ? "Default persona: yes" : null,
     (persona as any).is_narrator === true ? "Narrator persona: yes" : null,
   ].filter(Boolean).join("\n\n");
 }
 
-function formatCharacterContext(character: CharacterDTO): string {
+function formatCharacterContext(character: CharacterDTO, identity: IdentityMacroValues): string {
   return [
     `Name: ${character.name}`,
-    section("Description", character.description),
-    section("Personality", character.personality),
-    section("Scenario", character.scenario),
-    section("Creator notes", character.creator_notes),
-    section("System prompt", character.system_prompt),
-    section("Post-history instructions", character.post_history_instructions),
-    section("Example messages", character.mes_example),
-    section("Opening message", character.first_mes),
+    section("Description", identityText(character.description, identity)),
+    section("Personality", identityText(character.personality, identity)),
+    section("Scenario", identityText(character.scenario, identity)),
+    section("Creator notes", identityText(character.creator_notes, identity)),
+    section("System prompt", identityText(character.system_prompt, identity)),
+    section("Post-history instructions", identityText(character.post_history_instructions, identity)),
+    section("Example messages", identityText(character.mes_example, identity)),
+    section("Opening message", identityText(character.first_mes, identity)),
   ].filter(Boolean).join("\n\n");
 }
 
-async function resolvePersonaContextMessage(settings: LumiWorldSettings, context: unknown, userId?: string | null): Promise<LlmMessageLike | null> {
-  if (!settings.includeUserPersona || !permissionHas("personas")) return null;
+async function resolvePersona(context: unknown, userId?: string | null): Promise<PersonaDTO | null> {
+  if (!permissionHas("personas")) return null;
   try {
     const personaId = extractPersonaId(context);
-    const persona = personaId
+    return personaId
       ? await personasApi().get(personaId, userId ?? undefined)
       : await personasApi().getActive(userId ?? undefined);
-    return persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona)) : null;
   } catch (error) {
-    spindle.log.warn(`LumiWorld could not resolve user persona context: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not resolve active user persona: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
 
-async function resolveCharacterContextMessage(
-  settings: LumiWorldSettings,
+async function resolveCharacter(
   context: unknown,
   chatId?: string | null,
   userId?: string | null,
-): Promise<LlmMessageLike | null> {
-  if (!settings.includeCharacter || !permissionHas("characters")) return null;
+): Promise<CharacterDTO | null> {
+  if (!permissionHas("characters")) return null;
   try {
     let characterId = extractCharacterId(context);
     if (!characterId && chatId && permissionHas("chats")) {
@@ -333,10 +352,9 @@ async function resolveCharacterContextMessage(
       characterId = typeof chat?.character_id === "string" && chat.character_id.trim() ? chat.character_id.trim() : null;
     }
     if (!characterId) return null;
-    const character = await charactersApi().get(characterId, userId ?? undefined);
-    return character ? makeControllerContextMessage("Character", formatCharacterContext(character)) : null;
+    return await charactersApi().get(characterId, userId ?? undefined);
   } catch (error) {
-    spindle.log.warn(`LumiWorld could not resolve character context: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not resolve active character: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -346,12 +364,17 @@ async function resolveControllerContextMessages(
   context: unknown,
   chatId?: string | null,
   userId?: string | null,
-): Promise<LlmMessageLike[]> {
+): Promise<{ messages: LlmMessageLike[]; identity: IdentityMacroValues }> {
   const [persona, character] = await Promise.all([
-    resolvePersonaContextMessage(settings, context, userId),
-    resolveCharacterContextMessage(settings, context, chatId, userId),
+    resolvePersona(context, userId),
+    resolveCharacter(context, chatId, userId),
   ]);
-  return [persona, character].filter((message): message is LlmMessageLike => !!message);
+  const identity = makeIdentity(persona, character);
+  const messages = [
+    settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
+  ].filter((message): message is LlmMessageLike => !!message);
+  return { messages, identity };
 }
 
 async function buildState(userId?: string | null): Promise<FrontendState> {
@@ -501,32 +524,33 @@ async function handleInterceptor(
   try {
     const worldBooks = worldBooksApi();
     const promptMessages = messages as LlmMessageLike[];
-    const [extraContextMessages, worldInfoContext] = await Promise.all([
-      resolveControllerContextMessages(settings, context, chatId, userId),
-      resolveWorldInfoContextMessages({
-        messages: promptMessages,
-        settings,
-        context,
-        canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
-        fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
-          ? () => worldBooks.getActivated(chatId, userId ?? undefined)
-          : undefined,
-        fetchEntry: typeof worldBooks?.entries?.get === "function"
-          ? (entryId: string) => worldBooks.entries.get(entryId, userId ?? undefined)
-          : undefined,
-      }),
-    ]);
+    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
+    const worldInfoContext = await resolveWorldInfoContextMessages({
+      messages: promptMessages,
+      settings,
+      context,
+      canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+      fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
+        ? () => worldBooks.getActivated(chatId, userId ?? undefined)
+        : undefined,
+      fetchEntry: typeof worldBooks?.entries?.get === "function"
+        ? (entryId: string) => worldBooks.entries.get(entryId, userId ?? undefined)
+        : undefined,
+      identity: controllerContext.identity,
+    });
     worldInfoDiagnostics = worldInfoContext.diagnostics;
     const controllerContextMessages = selectControllerMessagesForController(
       promptMessages,
       settings,
-      [...extraContextMessages, ...worldInfoContext.messages],
+      [...controllerContext.messages, ...worldInfoContext.messages],
     );
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
       chatId: chatId || "",
       connectionId: extractConnectionId(context),
+      user: controllerContext.identity.userName || "User",
+      char: controllerContext.identity.characterName || "Character",
     });
     const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     const injected: LlmMessageDTO = {

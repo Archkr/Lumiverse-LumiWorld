@@ -310,6 +310,26 @@ function normalizeRole(value) {
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
+function identityValue(value, fallback) {
+  const cleaned = typeof value === "string" ? value.trim() : "";
+  return cleaned || fallback;
+}
+function normalizeIdentityMacros(identity) {
+  return {
+    userName: identityValue(identity?.userName, "User"),
+    characterName: identityValue(identity?.characterName, "Character")
+  };
+}
+function resolveIdentityMacros(text, identity) {
+  if (!text)
+    return text;
+  const normalized = normalizeIdentityMacros(identity);
+  const replacements = {
+    user: normalized.userName,
+    char: normalized.characterName
+  };
+  return text.replace(/\{\{\s*(user|char)\s*\}\}/gi, (_match, key) => replacements[key.toLowerCase()] ?? _match);
+}
 function normalizeActivatedWorldInfoEntries(value) {
   const raw = Array.isArray(value) ? value : asRecord(value).activatedWorldInfo;
   if (!Array.isArray(raw))
@@ -354,16 +374,17 @@ function makeWorldInfoLabel(entry, activated, index) {
 function messageContentKey(message) {
   return serializeMessageContent(message.content).trim();
 }
-function fallbackWorldInfoMessages(messages, seenContent = new Set) {
+function fallbackWorldInfoMessages(messages, seenContent = new Set, identity) {
   const selected = [];
   for (const message of messages.filter(isWorldInfoEntryMessage)) {
-    const contentKey = messageContentKey(message);
+    const content = typeof message.content === "string" ? resolveIdentityMacros(message.content, identity) : message.content;
+    const contentKey = typeof content === "string" ? content.trim() : messageContentKey({ ...message, content });
     if (!contentKey || seenContent.has(contentKey))
       continue;
     seenContent.add(contentKey);
     selected.push({
       role: normalizeRole(message.role),
-      content: message.content,
+      content,
       name: message.name,
       [CONTROLLER_CONTEXT_LABEL_KEY]: `World Info Entry ${selected.length + 1}`
     });
@@ -396,7 +417,7 @@ async function resolveWorldInfoContextMessages(options) {
     for (const entrySummary of activated) {
       try {
         const entry = await options.fetchEntry(entrySummary.id);
-        const content = typeof entry?.content === "string" ? entry.content.trim() : "";
+        const content = typeof entry?.content === "string" ? resolveIdentityMacros(entry.content, options.identity).trim() : "";
         if (!entry || !content || seenContent.has(content))
           continue;
         seenContent.add(content);
@@ -415,7 +436,7 @@ async function resolveWorldInfoContextMessages(options) {
   if (fetchedMessages.length > 0) {
     return { messages: fetchedMessages, diagnostics };
   }
-  const fallback = fallbackWorldInfoMessages(options.messages, seenContent);
+  const fallback = fallbackWorldInfoMessages(options.messages, seenContent, options.identity);
   diagnostics.fallbackTaggedEntryCount = fallback.length;
   return { messages: fallback, diagnostics };
 }
@@ -509,7 +530,11 @@ function renderTemplate(template, vars) {
   return rendered;
 }
 function buildControllerMessages(settings, snapshot, context) {
-  const additionalNotes = settings.additionalNotes.trim();
+  const identity = normalizeIdentityMacros({
+    userName: context.user,
+    characterName: context.char
+  });
+  const additionalNotes = resolveIdentityMacros(settings.additionalNotes, identity).trim();
   const vars = {
     prompt: snapshot.prompt,
     generationType: context.generationType,
@@ -517,7 +542,9 @@ function buildControllerMessages(settings, snapshot, context) {
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
     maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
-    additionalNotes: ""
+    additionalNotes: "",
+    user: identity.userName,
+    char: identity.characterName
   };
   const renderedSystem = renderTemplate(settings.systemTemplate, vars);
   const renderedUser = renderTemplate(settings.userTemplate, vars);
@@ -960,46 +987,60 @@ function section(label, value) {
   return text ? `${label}:
 ${text}` : null;
 }
-function formatPersonaContext(persona) {
+function personaName(persona) {
+  return typeof persona?.name === "string" && persona.name.trim() ? persona.name.trim() : "User";
+}
+function characterName(character) {
+  return typeof character?.name === "string" && character.name.trim() ? character.name.trim() : "Character";
+}
+function makeIdentity(persona, character) {
+  return {
+    userName: personaName(persona),
+    characterName: characterName(character)
+  };
+}
+function identityText(value, identity) {
+  return typeof value === "string" ? resolveIdentityMacros(value, identity) : null;
+}
+function formatPersonaContext(persona, identity) {
   return [
     `Name: ${persona.name}`,
-    section("Title", persona.title),
-    section("Description", persona.description),
+    section("Title", identityText(persona.title, identity)),
+    section("Description", identityText(persona.description, identity)),
     persona.is_default ? "Default persona: yes" : null,
     persona.is_narrator === true ? "Narrator persona: yes" : null
   ].filter(Boolean).join(`
 
 `);
 }
-function formatCharacterContext(character) {
+function formatCharacterContext(character, identity) {
   return [
     `Name: ${character.name}`,
-    section("Description", character.description),
-    section("Personality", character.personality),
-    section("Scenario", character.scenario),
-    section("Creator notes", character.creator_notes),
-    section("System prompt", character.system_prompt),
-    section("Post-history instructions", character.post_history_instructions),
-    section("Example messages", character.mes_example),
-    section("Opening message", character.first_mes)
+    section("Description", identityText(character.description, identity)),
+    section("Personality", identityText(character.personality, identity)),
+    section("Scenario", identityText(character.scenario, identity)),
+    section("Creator notes", identityText(character.creator_notes, identity)),
+    section("System prompt", identityText(character.system_prompt, identity)),
+    section("Post-history instructions", identityText(character.post_history_instructions, identity)),
+    section("Example messages", identityText(character.mes_example, identity)),
+    section("Opening message", identityText(character.first_mes, identity))
   ].filter(Boolean).join(`
 
 `);
 }
-async function resolvePersonaContextMessage(settings, context, userId) {
-  if (!settings.includeUserPersona || !permissionHas("personas"))
+async function resolvePersona(context, userId) {
+  if (!permissionHas("personas"))
     return null;
   try {
     const personaId = extractPersonaId(context);
-    const persona = personaId ? await personasApi().get(personaId, userId ?? undefined) : await personasApi().getActive(userId ?? undefined);
-    return persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona)) : null;
+    return personaId ? await personasApi().get(personaId, userId ?? undefined) : await personasApi().getActive(userId ?? undefined);
   } catch (error) {
-    spindle.log.warn(`LumiWorld could not resolve user persona context: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not resolve active user persona: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
-async function resolveCharacterContextMessage(settings, context, chatId, userId) {
-  if (!settings.includeCharacter || !permissionHas("characters"))
+async function resolveCharacter(context, chatId, userId) {
+  if (!permissionHas("characters"))
     return null;
   try {
     let characterId = extractCharacterId(context);
@@ -1009,19 +1050,23 @@ async function resolveCharacterContextMessage(settings, context, chatId, userId)
     }
     if (!characterId)
       return null;
-    const character = await charactersApi().get(characterId, userId ?? undefined);
-    return character ? makeControllerContextMessage("Character", formatCharacterContext(character)) : null;
+    return await charactersApi().get(characterId, userId ?? undefined);
   } catch (error) {
-    spindle.log.warn(`LumiWorld could not resolve character context: ${error instanceof Error ? error.message : String(error)}`);
+    spindle.log.warn(`LumiWorld could not resolve active character: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
 async function resolveControllerContextMessages(settings, context, chatId, userId) {
   const [persona, character] = await Promise.all([
-    resolvePersonaContextMessage(settings, context, userId),
-    resolveCharacterContextMessage(settings, context, chatId, userId)
+    resolvePersona(context, userId),
+    resolveCharacter(context, chatId, userId)
   ]);
-  return [persona, character].filter((message) => !!message);
+  const identity = makeIdentity(persona, character);
+  const messages = [
+    settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
+  ].filter((message) => !!message);
+  return { messages, identity };
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
@@ -1139,24 +1184,25 @@ async function handleInterceptor(messages, context) {
   try {
     const worldBooks = worldBooksApi();
     const promptMessages = messages;
-    const [extraContextMessages, worldInfoContext] = await Promise.all([
-      resolveControllerContextMessages(settings, context, chatId, userId),
-      resolveWorldInfoContextMessages({
-        messages: promptMessages,
-        settings,
-        context,
-        canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
-        fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
-        fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined
-      })
-    ]);
+    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
+    const worldInfoContext = await resolveWorldInfoContextMessages({
+      messages: promptMessages,
+      settings,
+      context,
+      canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+      fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
+      fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
+      identity: controllerContext.identity
+    });
     worldInfoDiagnostics = worldInfoContext.diagnostics;
-    const controllerContextMessages = selectControllerMessagesForController(promptMessages, settings, [...extraContextMessages, ...worldInfoContext.messages]);
+    const controllerContextMessages = selectControllerMessagesForController(promptMessages, settings, [...controllerContext.messages, ...worldInfoContext.messages]);
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
       chatId: chatId || "",
-      connectionId: extractConnectionId(context)
+      connectionId: extractConnectionId(context),
+      user: controllerContext.identity.userName || "User",
+      char: controllerContext.identity.characterName || "Character"
     });
     const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     const injected = {

@@ -18,6 +18,7 @@ import {
   resolveControllerTarget,
   resolveWorldInfoContextMessages,
   extractActivatedWorldInfoEntries,
+  resolveIdentityMacros,
   selectChatHistoryMessagesForController,
   selectControllerMessagesForController,
   serializeMessageContent,
@@ -216,6 +217,12 @@ describe("message serialization and prompt trimming", () => {
 });
 
 describe("activated World Info context", () => {
+  test("resolves identity macros using Lumiverse-style fallbacks", () => {
+    expect(resolveIdentityMacros("{{user}} and {{char}}", { userName: "Alice", characterName: "Bob" })).toBe("Alice and Bob");
+    expect(resolveIdentityMacros("{{ USER }} watches {{ CHAR }}", { userName: "Alice", characterName: "Bob" })).toBe("Alice watches Bob");
+    expect(resolveIdentityMacros("{{user}} / {{char}}", {})).toBe("User / Character");
+  });
+
   test("extracts unique activated entry ids from interceptor context", () => {
     const entries = extractActivatedWorldInfoEntries({
       activatedWorldInfo: [
@@ -238,14 +245,15 @@ describe("activated World Info context", () => {
       canFetchWorldBooks: true,
       fetchEntry: async (entryId) => ({
         id: entryId,
-        content: "The storm is listening through the glass.",
+        content: "The storm is listening through {{user}}'s glass.",
         comment: "Storm front",
         role: "system",
       }),
+      identity: { userName: "Alice", characterName: "Bob" },
     });
 
     expect(result.messages).toHaveLength(1);
-    expect(result.messages[0].content).toBe("The storm is listening through the glass.");
+    expect(result.messages[0].content).toBe("The storm is listening through Alice's glass.");
     expect(result.messages[0].__lumiWorldContextLabel).toBe("World Info: Storm front");
     expect(result.diagnostics).toEqual({
       activatedEntryCount: 1,
@@ -258,15 +266,16 @@ describe("activated World Info context", () => {
   test("falls back to tagged prompt entries when World Books fetching is unavailable", async () => {
     const result = await resolveWorldInfoContextMessages({
       messages: [
-        { role: "system", content: "Tagged lore", __isWorldInfoEntry: true },
+        { role: "system", content: "Tagged lore for {{user}}", __isWorldInfoEntry: true },
         { role: "user", content: "Chat turn", __isChatHistory: true },
       ],
       settings: normalizeSettings({ includeWorldInfoEntries: true }),
       context: { activatedWorldInfo: [{ id: "wi-1", comment: "Tagged" }] },
       canFetchWorldBooks: false,
+      identity: { userName: "Alice" },
     });
 
-    expect(result.messages.map((message) => message.content)).toEqual(["Tagged lore"]);
+    expect(result.messages.map((message) => message.content)).toEqual(["Tagged lore for Alice"]);
     expect(result.diagnostics).toEqual({
       activatedEntryCount: 1,
       fetchedEntryCount: 0,
@@ -301,28 +310,29 @@ describe("controller prompt and directive parsing", () => {
   test("renders controller templates", () => {
     const messages = buildControllerMessages(
       normalizeSettings({
-        systemTemplate: "System sees {{generationType}}",
-        userTemplate: "Prompt={{prompt}} Chat={{chatId}} Max={{maxDirectiveChars}}",
+        systemTemplate: "System sees {{generationType}} for {{user}}",
+        userTemplate: "Prompt={{prompt}} Chat={{chatId}} Max={{maxDirectiveChars}} Char={{char}}",
       }),
       { prompt: "hello", truncated: false, originalChars: 5, includedChars: 5, messageCount: 1 },
-      { generationType: "swipe", chatId: "chat-1", connectionId: "conn-1", timestamp: "now" },
+      { generationType: "swipe", chatId: "chat-1", connectionId: "conn-1", timestamp: "now", user: "Alice", char: "Bob" },
     );
 
-    expect(messages[0].content).toBe("System sees swipe");
+    expect(messages[0].content).toBe("System sees swipe for Alice");
     expect(messages[1].content).toContain("Prompt=hello");
     expect(messages[1].content).toContain("Chat=chat-1");
+    expect(messages[1].content).toContain("Char=Bob");
   });
 
   test("adds controller-only additional notes when templates do not place them", () => {
     const messages = buildControllerMessages(
-      normalizeSettings({ additionalNotes: "The tower bell is already cracked." }),
+      normalizeSettings({ additionalNotes: "{{user}} knows the tower bell is already cracked." }),
       { prompt: "hello", truncated: false, originalChars: 5, includedChars: 5, messageCount: 1 },
-      { generationType: "normal", chatId: "chat-1", connectionId: "conn-1", timestamp: "now" },
+      { generationType: "normal", chatId: "chat-1", connectionId: "conn-1", timestamp: "now", user: "Alice" },
     );
 
     expect(messages).toHaveLength(3);
     expect(messages[1].role).toBe("system");
-    expect(messages[1].content).toContain("The tower bell is already cracked.");
+    expect(messages[1].content).toContain("Alice knows the tower bell is already cracked.");
   });
 
   test("always sends additional notes as a controller-only system message", () => {
