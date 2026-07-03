@@ -6,6 +6,7 @@ export interface PermissionState {
   chats: boolean;
   characters: boolean;
   personas: boolean;
+  worldBooks: boolean;
 }
 
 export interface FrontendState {

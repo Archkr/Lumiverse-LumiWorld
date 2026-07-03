@@ -2,7 +2,7 @@
 
 LumiWorld is a Lumiverse Spindle extension that adds a controller-model pass before the main chat model replies.
 
-When enabled, LumiWorld runs as a late prompt interceptor. It receives Lumiverse's in-flight message array, sends only the recent messages marked as chat history plus optional controller notes to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
+When enabled, LumiWorld runs as a late prompt interceptor. It sends recent messages marked as chat history plus enabled controller-only context sources to a user-selected LLM connection, asks the controller model for a private world-director note, then injects that note as a top-level system message for the main generation.
 
 LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can be used as the controller, and API keys remain inside Lumiverse.
 
@@ -16,7 +16,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 | Prompt Breakdown label | `LumiWorld Director` |
 | Runs on | `normal`, `continue`, `regenerate`, `swipe`, `impersonate` |
 | Skips | `quiet` and any disabled generation type |
-| Default permissions | `interceptor`, `generation`, `chats`, `characters`, `personas` |
+| Default permissions | `interceptor`, `generation`, `chats`, `characters`, `personas`, `world_books` |
 
 ## Features
 
@@ -24,7 +24,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 - Controller connection selector powered by Lumiverse connection profiles.
 - Optional model override, or use the selected connection's configured model.
 - Configurable context sources, chat-history message count, temperature, max tokens, controller timeout, prompt character cap, and generation-type toggles.
-- Sends recent chat history, activated standalone World Info entries, the active user persona, and the active character card to the controller when enabled.
+- Sends recent chat history, activated World Info entries, the active user persona, and the active character card to the controller when enabled.
 - Editable controller-only additional notes plus advanced system/user templates for the controller prompt.
 - Prompt Breakdown attribution through `LumiWorld Director`.
 - Recent run log with status, timing, connection/model, error, and directive preview only.
@@ -35,7 +35,7 @@ LumiWorld is controller-model agnostic. Any Lumiverse LLM connection profile can
 1. Lumiverse assembles the normal prompt for a visible chat generation.
 2. LumiWorld receives the in-flight message array through the Spindle interceptor API.
 3. LumiWorld filters that array to only Lumiverse-marked chat-history messages (`__isChatHistory`/source metadata), then keeps the configured recent message count.
-4. LumiWorld can include activated standalone World Info entries marked with `__isWorldInfoEntry`.
+4. LumiWorld can include activated World Info entries by reading activation metadata, fetching each entry's content by ID, and falling back to tagged standalone prompt entries if fetching is unavailable.
 5. LumiWorld optionally fetches the active persona and active character card through Lumiverse APIs and adds them to the controller-only context.
 6. The selected controller connection is called through `spindle.generate.raw()`.
 7. Controller output is parsed as JSON when possible. Plain text is accepted as a fallback.
@@ -112,7 +112,7 @@ If the controller returns malformed JSON, LumiWorld trims the raw text and uses 
 | `maxInputChars` | `60000` | Character cap for the serialized controller context snapshot. |
 | `historyMessageLimit` | `12` | Number of recent Lumiverse-marked chat-history messages sent to the controller. |
 | `generationTypes` | All visible types | Controls which visible generation modes LumiWorld intercepts. |
-| `includeWorldInfoEntries` | Off | Sends standalone World Info entries marked with `__isWorldInfoEntry` to the controller. |
+| `includeWorldInfoEntries` | Off | Sends activated World Info entry content to the controller. Falls back to standalone prompt entries marked with `__isWorldInfoEntry` if World Books access is unavailable. |
 | `includeUserPersona` | On | Sends the active user persona to the controller only. |
 | `includeCharacter` | On | Sends the active character card to the controller only. |
 | `additionalNotes` | Empty | Controller-only context notes. Always sent to the LumiWorld/controller model as a separate private system message; never injected directly into the main model prompt. |
@@ -140,8 +140,11 @@ LumiWorld requests:
 - `personas` to read the active user persona for controller-only context.
 - `chats` to read the active chat's `character_id`.
 - `characters` to read the active character card for controller-only context.
+- `world_books` to read activated World Info metadata and fetch activated entry content for controller-only context.
 
 LumiWorld does **not** request `chat_mutation`.
+
+Although Lumiverse exposes World Books through a broad `world_books` permission, LumiWorld only calls read methods: activated-entry lookup and entry fetch by ID.
 
 The extension does not append messages, edit messages, delete messages, hide messages, or mutate swipes. It only uses:
 
@@ -149,6 +152,7 @@ The extension does not append messages, edit messages, delete messages, hide mes
 - read-only generation context metadata such as `chatId` and `generationType`;
 - a read-only chat lookup to resolve the active character ID;
 - read-only persona and character lookups for controller-only context;
+- read-only World Books lookups for activated entry metadata and content;
 - frontend `CHAT_CHANGED` routing metadata so per-user settings can be resolved correctly.
 
 If a future feature needs message edits or other mutation APIs, that should be treated as a permission expansion and documented explicitly.
@@ -166,9 +170,10 @@ LumiWorld does not persist:
 - full stored chat history beyond the configured recent message count;
 - raw controller inputs;
 - API keys;
-- full controller outputs beyond the short preview in recent runs.
+- full controller outputs beyond the short preview in recent runs;
+- World Info entry content in recent runs. Recent runs only keep activated/fetched/fallback counts and fetch error text.
 
-The controller call sends the capped controller-context snapshot, including enabled chat-history, standalone World Info entries, persona, character, and additional notes, to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
+The controller call sends the capped controller-context snapshot, including enabled chat-history, activated World Info entries, persona, character, and additional notes, to the selected LLM connection. Choose the controller connection with the same privacy expectations you would use for any other model call.
 
 ## Troubleshooting
 

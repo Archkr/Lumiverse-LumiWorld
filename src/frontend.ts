@@ -267,6 +267,19 @@ function formatTime(timestamp: number): string {
   }
 }
 
+function formatWorldInfoRunDiagnostics(run: RunLogEntry): string | null {
+  const hasDiagnostics =
+    run.worldInfoActivatedCount != null ||
+    run.worldInfoFetchedCount != null ||
+    run.worldInfoFallbackTaggedCount != null;
+  if (!hasDiagnostics) return null;
+  return [
+    `WI active ${run.worldInfoActivatedCount ?? 0}`,
+    `fetched ${run.worldInfoFetchedCount ?? 0}`,
+    `tagged fallback ${run.worldInfoFallbackTaggedCount ?? 0}`,
+  ].join(" / ");
+}
+
 function connectionLabel(connection: ConnectionOption): string {
   const bits = [connection.name, connection.provider, connection.model].filter(Boolean);
   return `${bits.join(" / ")}${connection.hasApiKey ? "" : " (no key)"}`;
@@ -654,8 +667,11 @@ export function setup(ctx: SpindleFrontendContext) {
     const details = createElement("details", "lumi-world-details") as HTMLDetailsElement;
     const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lumi-world-details-body");
+    const entriesHint = state?.permissions.worldBooks === false
+      ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries."
+      : "Fetch activated World Info entry content and send it to the controller.";
     body.append(
-      toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), "Send activated standalone World Info entries to the controller."),
+      toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
       toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
       textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a separate private system message. Never injected directly into the main model prompt."),
@@ -699,8 +715,11 @@ export function setup(ctx: SpindleFrontendContext) {
         .filter(Boolean)
         .join(" / ");
       if (meta) item.appendChild(createElement("div", "lumi-world-subtle", meta));
+      const worldInfoDiagnostics = formatWorldInfoRunDiagnostics(run);
+      if (worldInfoDiagnostics) item.appendChild(createElement("div", "lumi-world-subtle", worldInfoDiagnostics));
       if (run.directivePreview) item.appendChild(createElement("div", undefined, run.directivePreview));
       if (run.error) item.appendChild(createElement("div", "lumi-world-subtle", run.error));
+      if (run.worldInfoFetchError) item.appendChild(createElement("div", "lumi-world-subtle", `World Info fetch: ${run.worldInfoFetchError}`));
       list.appendChild(item);
     }
     scroll.appendChild(list);
@@ -722,6 +741,7 @@ export function setup(ctx: SpindleFrontendContext) {
       draft.includeCharacter && !state.permissions.chats ? "Chats" : null,
       draft.includeCharacter && !state.permissions.characters ? "Characters" : null,
       draft.includeUserPersona && !state.permissions.personas ? "Personas" : null,
+      draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null,
     ].filter(Boolean);
     if (missingPermissions.length) {
       shell.appendChild(

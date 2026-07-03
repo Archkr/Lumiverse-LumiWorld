@@ -15,6 +15,7 @@ import {
   normalizeSettings,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
+  resolveWorldInfoContextMessages,
   selectControllerMessagesForController,
   shouldInterceptGeneration,
   type LumiWorldSettings,
@@ -23,6 +24,7 @@ import {
   type ControllerTarget,
   type LlmMessageLike,
   type RunLogEntry,
+  type WorldInfoContextDiagnostics,
 } from "./shared";
 import type { BackendToFrontend, FrontendState, FrontendToBackend, PermissionState } from "./types";
 
@@ -71,9 +73,22 @@ function personasApi(): any {
   return (spindle as any).personas;
 }
 
+function worldBooksApi(): any {
+  return (spindle as any).world_books;
+}
+
 function permissionsApi(): any {
   return (spindle as any).permissions;
 }
+
+const PERMISSION_IDS: Record<keyof PermissionState, string> = {
+  interceptor: "interceptor",
+  generation: "generation",
+  chats: "chats",
+  characters: "characters",
+  personas: "personas",
+  worldBooks: "world_books",
+};
 
 function send(message: BackendToFrontend, userId = lastFrontendUserId ?? undefined): void {
   (spindle.sendToFrontend as unknown as (payload: unknown, targetUserId?: string) => void)(message, userId);
@@ -83,7 +98,7 @@ function permissionHas(permission: keyof PermissionState): boolean {
   const permissions = permissionsApi();
   if (!permissions || typeof permissions.has !== "function") return true;
   try {
-    return !!permissions.has(permission);
+    return !!permissions.has(PERMISSION_IDS[permission]);
   } catch {
     return false;
   }
@@ -96,6 +111,7 @@ function currentPermissions(): PermissionState {
     chats: permissionHas("chats"),
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
+    worldBooks: permissionHas("worldBooks"),
   };
 }
 
@@ -367,6 +383,15 @@ function makeRunBase(status: RunLogEntry["status"], startedAt: number, patch: Pa
   };
 }
 
+function runLogWorldInfoPatch(diagnostics: WorldInfoContextDiagnostics): Partial<RunLogEntry> {
+  return {
+    worldInfoActivatedCount: diagnostics.activatedEntryCount,
+    worldInfoFetchedCount: diagnostics.fetchedEntryCount,
+    worldInfoFallbackTaggedCount: diagnostics.fallbackTaggedEntryCount,
+    worldInfoFetchError: diagnostics.fetchError,
+  };
+}
+
 async function callController(
   userId: string | null,
   settings: LumiWorldSettings,
@@ -467,9 +492,36 @@ async function handleInterceptor(
   }
 
   controllerBusy = true;
+  let worldInfoDiagnostics: WorldInfoContextDiagnostics = {
+    activatedEntryCount: 0,
+    fetchedEntryCount: 0,
+    fallbackTaggedEntryCount: 0,
+    fetchError: null,
+  };
   try {
-    const extraContextMessages = await resolveControllerContextMessages(settings, context, chatId, userId);
-    const controllerContextMessages = selectControllerMessagesForController(messages as LlmMessageLike[], settings, extraContextMessages);
+    const worldBooks = worldBooksApi();
+    const promptMessages = messages as LlmMessageLike[];
+    const [extraContextMessages, worldInfoContext] = await Promise.all([
+      resolveControllerContextMessages(settings, context, chatId, userId),
+      resolveWorldInfoContextMessages({
+        messages: promptMessages,
+        settings,
+        context,
+        canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+        fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
+          ? () => worldBooks.getActivated(chatId, userId ?? undefined)
+          : undefined,
+        fetchEntry: typeof worldBooks?.entries?.get === "function"
+          ? (entryId: string) => worldBooks.entries.get(entryId, userId ?? undefined)
+          : undefined,
+      }),
+    ]);
+    worldInfoDiagnostics = worldInfoContext.diagnostics;
+    const controllerContextMessages = selectControllerMessagesForController(
+      promptMessages,
+      settings,
+      [...extraContextMessages, ...worldInfoContext.messages],
+    );
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
@@ -490,6 +542,7 @@ async function handleInterceptor(
         connectionName: target.connectionName,
         model: target.model,
         directivePreview: makeDirectivePreview(directive),
+        ...runLogWorldInfoPatch(worldInfoDiagnostics),
       }),
       userId,
       settings,
@@ -510,6 +563,7 @@ async function handleInterceptor(
         connectionName: target.connectionName,
         model: target.model,
         error: message,
+        ...runLogWorldInfoPatch(worldInfoDiagnostics),
       }),
       userId,
       settings,

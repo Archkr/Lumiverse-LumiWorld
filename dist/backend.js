@@ -221,7 +221,11 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
       connectionName: cleanNullableString(obj.connectionName),
       model: cleanNullableString(obj.model),
       directivePreview: cleanNullableString(obj.directivePreview),
-      error: cleanNullableString(obj.error)
+      error: cleanNullableString(obj.error),
+      worldInfoActivatedCount: obj.worldInfoActivatedCount == null ? null : integerInRange(obj.worldInfoActivatedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+      worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+      worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+      worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError)
     };
   }).filter((item) => !!item).sort((left, right) => right.timestamp - left.timestamp);
   return normalized.slice(0, Math.max(0, limit));
@@ -295,6 +299,44 @@ function isChatHistoryMessage(message) {
 function isWorldInfoEntryMessage(message) {
   return message.__isWorldInfoEntry === true;
 }
+function cleanStringArray(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.map((item) => cleanString(item)).filter(Boolean);
+}
+function normalizeRole(value) {
+  return value === "user" || value === "assistant" || value === "system" ? value : "system";
+}
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function normalizeActivatedWorldInfoEntries(value) {
+  const raw = Array.isArray(value) ? value : asRecord(value).activatedWorldInfo;
+  if (!Array.isArray(raw))
+    return [];
+  const seen = new Set;
+  const normalized = [];
+  for (const item of raw) {
+    const obj = asRecord(item);
+    const id = cleanString(obj.id);
+    if (!id || seen.has(id))
+      continue;
+    seen.add(id);
+    normalized.push({
+      id,
+      comment: cleanString(obj.comment),
+      keys: cleanStringArray(obj.keys),
+      source: cleanString(obj.source),
+      score: typeof obj.score === "number" && Number.isFinite(obj.score) ? obj.score : undefined,
+      bookId: cleanString(obj.bookId),
+      bookSource: cleanString(obj.bookSource)
+    });
+  }
+  return normalized;
+}
+function extractActivatedWorldInfoEntries(context) {
+  return normalizeActivatedWorldInfoEntries(asRecord(context).activatedWorldInfo);
+}
 function makeControllerContextMessage(label, content, role = "system") {
   const text = content.trim();
   if (!label.trim() || !text)
@@ -305,6 +347,78 @@ function makeControllerContextMessage(label, content, role = "system") {
     [CONTROLLER_CONTEXT_LABEL_KEY]: label.trim()
   };
 }
+function makeWorldInfoLabel(entry, activated, index) {
+  const comment = cleanString(entry.comment) || cleanString(activated?.comment);
+  return comment ? `World Info: ${comment}` : `World Info Entry ${index + 1}`;
+}
+function messageContentKey(message) {
+  return serializeMessageContent(message.content).trim();
+}
+function fallbackWorldInfoMessages(messages, seenContent = new Set) {
+  const selected = [];
+  for (const message of messages.filter(isWorldInfoEntryMessage)) {
+    const contentKey = messageContentKey(message);
+    if (!contentKey || seenContent.has(contentKey))
+      continue;
+    seenContent.add(contentKey);
+    selected.push({
+      role: normalizeRole(message.role),
+      content: message.content,
+      name: message.name,
+      [CONTROLLER_CONTEXT_LABEL_KEY]: `World Info Entry ${selected.length + 1}`
+    });
+  }
+  return selected;
+}
+async function resolveWorldInfoContextMessages(options) {
+  const diagnostics = {
+    activatedEntryCount: 0,
+    fetchedEntryCount: 0,
+    fallbackTaggedEntryCount: 0,
+    fetchError: null
+  };
+  if (!options.settings.includeWorldInfoEntries) {
+    return { messages: [], diagnostics };
+  }
+  let activated = extractActivatedWorldInfoEntries(options.context);
+  const fetchErrors = [];
+  if (options.canFetchWorldBooks && activated.length === 0 && options.fetchActivated) {
+    try {
+      activated = normalizeActivatedWorldInfoEntries(await options.fetchActivated());
+    } catch (error) {
+      fetchErrors.push(errorMessage(error));
+    }
+  }
+  diagnostics.activatedEntryCount = activated.length;
+  const fetchedMessages = [];
+  const seenContent = new Set;
+  if (options.canFetchWorldBooks && options.fetchEntry && activated.length > 0) {
+    for (const entrySummary of activated) {
+      try {
+        const entry = await options.fetchEntry(entrySummary.id);
+        const content = typeof entry?.content === "string" ? entry.content.trim() : "";
+        if (!entry || !content || seenContent.has(content))
+          continue;
+        seenContent.add(content);
+        const message = makeControllerContextMessage(makeWorldInfoLabel(entry, entrySummary, fetchedMessages.length), content, normalizeRole(entry.role));
+        if (message)
+          fetchedMessages.push(message);
+      } catch (error) {
+        fetchErrors.push(errorMessage(error));
+      }
+    }
+  }
+  diagnostics.fetchedEntryCount = fetchedMessages.length;
+  if (fetchErrors.length > 0) {
+    diagnostics.fetchError = [...new Set(fetchErrors)].join("; ");
+  }
+  if (fetchedMessages.length > 0) {
+    return { messages: fetchedMessages, diagnostics };
+  }
+  const fallback = fallbackWorldInfoMessages(options.messages, seenContent);
+  diagnostics.fallbackTaggedEntryCount = fallback.length;
+  return { messages: fallback, diagnostics };
+}
 function selectChatHistoryMessagesForController(messages, limit) {
   const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
   if (cappedLimit <= 0)
@@ -313,9 +427,6 @@ function selectChatHistoryMessagesForController(messages, limit) {
 }
 function selectControllerMessagesForController(messages, settings, contextMessages = []) {
   const selected = [...contextMessages];
-  if (settings.includeWorldInfoEntries) {
-    selected.push(...messages.filter(isWorldInfoEntryMessage));
-  }
   selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
   return selected;
 }
@@ -663,9 +774,20 @@ function charactersApi() {
 function personasApi() {
   return spindle.personas;
 }
+function worldBooksApi() {
+  return spindle.world_books;
+}
 function permissionsApi() {
   return spindle.permissions;
 }
+var PERMISSION_IDS = {
+  interceptor: "interceptor",
+  generation: "generation",
+  chats: "chats",
+  characters: "characters",
+  personas: "personas",
+  worldBooks: "world_books"
+};
 function send(message, userId = lastFrontendUserId ?? undefined) {
   spindle.sendToFrontend(message, userId);
 }
@@ -674,7 +796,7 @@ function permissionHas(permission) {
   if (!permissions || typeof permissions.has !== "function")
     return true;
   try {
-    return !!permissions.has(permission);
+    return !!permissions.has(PERMISSION_IDS[permission]);
   } catch {
     return false;
   }
@@ -685,7 +807,8 @@ function currentPermissions() {
     generation: permissionHas("generation"),
     chats: permissionHas("chats"),
     characters: permissionHas("characters"),
-    personas: permissionHas("personas")
+    personas: permissionHas("personas"),
+    worldBooks: permissionHas("worldBooks")
   };
 }
 function rememberChatUser(chatId, userId) {
@@ -926,6 +1049,14 @@ function makeRunBase(status, startedAt, patch = {}) {
     ...patch
   };
 }
+function runLogWorldInfoPatch(diagnostics) {
+  return {
+    worldInfoActivatedCount: diagnostics.activatedEntryCount,
+    worldInfoFetchedCount: diagnostics.fetchedEntryCount,
+    worldInfoFallbackTaggedCount: diagnostics.fallbackTaggedEntryCount,
+    worldInfoFetchError: diagnostics.fetchError
+  };
+}
 async function callController(userId, settings, target, messages) {
   if (!userId) {
     throw new Error("LumiWorld could not resolve the active Lumiverse user for the controller call.");
@@ -999,9 +1130,28 @@ async function handleInterceptor(messages, context) {
     return messages;
   }
   controllerBusy = true;
+  let worldInfoDiagnostics = {
+    activatedEntryCount: 0,
+    fetchedEntryCount: 0,
+    fallbackTaggedEntryCount: 0,
+    fetchError: null
+  };
   try {
-    const extraContextMessages = await resolveControllerContextMessages(settings, context, chatId, userId);
-    const controllerContextMessages = selectControllerMessagesForController(messages, settings, extraContextMessages);
+    const worldBooks = worldBooksApi();
+    const promptMessages = messages;
+    const [extraContextMessages, worldInfoContext] = await Promise.all([
+      resolveControllerContextMessages(settings, context, chatId, userId),
+      resolveWorldInfoContextMessages({
+        messages: promptMessages,
+        settings,
+        context,
+        canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+        fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
+        fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined
+      })
+    ]);
+    worldInfoDiagnostics = worldInfoContext.diagnostics;
+    const controllerContextMessages = selectControllerMessagesForController(promptMessages, settings, [...extraContextMessages, ...worldInfoContext.messages]);
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
@@ -1019,7 +1169,8 @@ async function handleInterceptor(messages, context) {
       connectionId: target.connectionId,
       connectionName: target.connectionName,
       model: target.model,
-      directivePreview: makeDirectivePreview(directive)
+      directivePreview: makeDirectivePreview(directive),
+      ...runLogWorldInfoPatch(worldInfoDiagnostics)
     }), userId, settings);
     return {
       messages: [injected, ...messages],
@@ -1034,7 +1185,8 @@ async function handleInterceptor(messages, context) {
       connectionId: target.connectionId,
       connectionName: target.connectionName,
       model: target.model,
-      error: message
+      error: message,
+      ...runLogWorldInfoPatch(worldInfoDiagnostics)
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;

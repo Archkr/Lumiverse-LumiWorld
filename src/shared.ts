@@ -72,6 +72,10 @@ export interface RunLogEntry {
   model?: string | null;
   directivePreview?: string | null;
   error?: string | null;
+  worldInfoActivatedCount?: number | null;
+  worldInfoFetchedCount?: number | null;
+  worldInfoFallbackTaggedCount?: number | null;
+  worldInfoFetchError?: string | null;
 }
 
 export interface PromptSnapshot {
@@ -80,6 +84,37 @@ export interface PromptSnapshot {
   originalChars: number;
   includedChars: number;
   messageCount: number;
+}
+
+export interface ActivatedWorldInfoLike {
+  id: string;
+  comment?: string;
+  keys?: string[];
+  source?: string;
+  score?: number;
+  bookId?: string;
+  bookSource?: string;
+}
+
+export interface WorldInfoEntryLike {
+  id: string;
+  content: string;
+  comment?: string;
+  role?: string | null;
+  key?: string[];
+  world_book_id?: string;
+}
+
+export interface WorldInfoContextDiagnostics {
+  activatedEntryCount: number;
+  fetchedEntryCount: number;
+  fallbackTaggedEntryCount: number;
+  fetchError: string | null;
+}
+
+export interface WorldInfoContextResult {
+  messages: LlmMessageLike[];
+  diagnostics: WorldInfoContextDiagnostics;
 }
 
 export interface ControllerTemplateContext {
@@ -341,6 +376,10 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         model: cleanNullableString(obj.model),
         directivePreview: cleanNullableString(obj.directivePreview),
         error: cleanNullableString(obj.error),
+        worldInfoActivatedCount: obj.worldInfoActivatedCount == null ? null : integerInRange(obj.worldInfoActivatedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+        worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+        worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
+        worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
       };
     })
     .filter((item): item is RunLogEntry => !!item)
@@ -427,6 +466,48 @@ export function isWorldInfoEntryMessage(message: LlmMessageLike): boolean {
   return message.__isWorldInfoEntry === true;
 }
 
+function cleanStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => cleanString(item))
+    .filter(Boolean);
+}
+
+function normalizeRole(value: unknown): MessageRole {
+  return value === "user" || value === "assistant" || value === "system" ? value : "system";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function normalizeActivatedWorldInfoEntries(value: unknown): ActivatedWorldInfoLike[] {
+  const raw = Array.isArray(value) ? value : asRecord(value).activatedWorldInfo;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const normalized: ActivatedWorldInfoLike[] = [];
+  for (const item of raw) {
+    const obj = asRecord(item);
+    const id = cleanString(obj.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({
+      id,
+      comment: cleanString(obj.comment),
+      keys: cleanStringArray(obj.keys),
+      source: cleanString(obj.source),
+      score: typeof obj.score === "number" && Number.isFinite(obj.score) ? obj.score : undefined,
+      bookId: cleanString(obj.bookId),
+      bookSource: cleanString(obj.bookSource),
+    });
+  }
+  return normalized;
+}
+
+export function extractActivatedWorldInfoEntries(context: unknown): ActivatedWorldInfoLike[] {
+  return normalizeActivatedWorldInfoEntries(asRecord(context).activatedWorldInfo);
+}
+
 export function makeControllerContextMessage(label: string, content: string, role: MessageRole = "system"): LlmMessageLike | null {
   const text = content.trim();
   if (!label.trim() || !text) return null;
@@ -435,6 +516,98 @@ export function makeControllerContextMessage(label: string, content: string, rol
     content: text,
     [CONTROLLER_CONTEXT_LABEL_KEY]: label.trim(),
   };
+}
+
+function makeWorldInfoLabel(entry: WorldInfoEntryLike, activated: ActivatedWorldInfoLike | undefined, index: number): string {
+  const comment = cleanString(entry.comment) || cleanString(activated?.comment);
+  return comment ? `World Info: ${comment}` : `World Info Entry ${index + 1}`;
+}
+
+function messageContentKey(message: LlmMessageLike): string {
+  return serializeMessageContent(message.content).trim();
+}
+
+function fallbackWorldInfoMessages(messages: LlmMessageLike[], seenContent = new Set<string>()): LlmMessageLike[] {
+  const selected: LlmMessageLike[] = [];
+  for (const message of messages.filter(isWorldInfoEntryMessage)) {
+    const contentKey = messageContentKey(message);
+    if (!contentKey || seenContent.has(contentKey)) continue;
+    seenContent.add(contentKey);
+    selected.push({
+      role: normalizeRole(message.role),
+      content: message.content,
+      name: message.name,
+      [CONTROLLER_CONTEXT_LABEL_KEY]: `World Info Entry ${selected.length + 1}`,
+    });
+  }
+  return selected;
+}
+
+export async function resolveWorldInfoContextMessages(options: {
+  messages: LlmMessageLike[];
+  settings: Pick<LumiWorldSettings, "includeWorldInfoEntries">;
+  context?: unknown;
+  canFetchWorldBooks: boolean;
+  fetchActivated?: () => Promise<unknown>;
+  fetchEntry?: (entryId: string) => Promise<WorldInfoEntryLike | null | undefined>;
+}): Promise<WorldInfoContextResult> {
+  const diagnostics: WorldInfoContextDiagnostics = {
+    activatedEntryCount: 0,
+    fetchedEntryCount: 0,
+    fallbackTaggedEntryCount: 0,
+    fetchError: null,
+  };
+
+  if (!options.settings.includeWorldInfoEntries) {
+    return { messages: [], diagnostics };
+  }
+
+  let activated = extractActivatedWorldInfoEntries(options.context);
+  const fetchErrors: string[] = [];
+
+  if (options.canFetchWorldBooks && activated.length === 0 && options.fetchActivated) {
+    try {
+      activated = normalizeActivatedWorldInfoEntries(await options.fetchActivated());
+    } catch (error) {
+      fetchErrors.push(errorMessage(error));
+    }
+  }
+
+  diagnostics.activatedEntryCount = activated.length;
+
+  const fetchedMessages: LlmMessageLike[] = [];
+  const seenContent = new Set<string>();
+  if (options.canFetchWorldBooks && options.fetchEntry && activated.length > 0) {
+    for (const entrySummary of activated) {
+      try {
+        const entry = await options.fetchEntry(entrySummary.id);
+        const content = typeof entry?.content === "string" ? entry.content.trim() : "";
+        if (!entry || !content || seenContent.has(content)) continue;
+        seenContent.add(content);
+        const message = makeControllerContextMessage(
+          makeWorldInfoLabel(entry, entrySummary, fetchedMessages.length),
+          content,
+          normalizeRole(entry.role),
+        );
+        if (message) fetchedMessages.push(message);
+      } catch (error) {
+        fetchErrors.push(errorMessage(error));
+      }
+    }
+  }
+
+  diagnostics.fetchedEntryCount = fetchedMessages.length;
+  if (fetchErrors.length > 0) {
+    diagnostics.fetchError = [...new Set(fetchErrors)].join("; ");
+  }
+
+  if (fetchedMessages.length > 0) {
+    return { messages: fetchedMessages, diagnostics };
+  }
+
+  const fallback = fallbackWorldInfoMessages(options.messages, seenContent);
+  diagnostics.fallbackTaggedEntryCount = fallback.length;
+  return { messages: fallback, diagnostics };
 }
 
 export function selectChatHistoryMessagesForController(messages: LlmMessageLike[], limit: number): LlmMessageLike[] {
@@ -449,9 +622,6 @@ export function selectControllerMessagesForController(
   contextMessages: LlmMessageLike[] = [],
 ): LlmMessageLike[] {
   const selected = [...contextMessages];
-  if (settings.includeWorldInfoEntries) {
-    selected.push(...messages.filter(isWorldInfoEntryMessage));
-  }
   selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
   return selected;
 }

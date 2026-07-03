@@ -11,10 +11,13 @@ import {
   describeEmptyControllerResponse,
   extractControllerResponseText,
   formatPromptForController,
+  normalizeRunLog,
   normalizeSettings,
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
   resolveControllerTarget,
+  resolveWorldInfoContextMessages,
+  extractActivatedWorldInfoEntries,
   selectChatHistoryMessagesForController,
   selectControllerMessagesForController,
   serializeMessageContent,
@@ -185,7 +188,7 @@ describe("message serialization and prompt trimming", () => {
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
   });
 
-  test("builds controller input from context blocks, entries, and recent chat history", () => {
+  test("builds controller input from resolved context blocks and recent chat history", () => {
     const messages: LlmMessageLike[] = [
       { role: "system", content: "old lore", __isWorldInfoEntry: true },
       { role: "user", content: "old user", __isChatHistory: true },
@@ -193,7 +196,10 @@ describe("message serialization and prompt trimming", () => {
       { role: "system", content: "new lore", __isWorldInfoEntry: true },
       { role: "user", content: "recent user", __isChatHistory: true },
     ];
-    const contextMessages: LlmMessageLike[] = [{ role: "system", content: "Persona text" }];
+    const contextMessages: LlmMessageLike[] = [
+      { role: "system", content: "Persona text" },
+      { role: "system", content: "new lore" },
+    ];
     const selected = selectControllerMessagesForController(
       messages,
       normalizeSettings({ historyMessageLimit: 2, includeWorldInfoEntries: true }),
@@ -202,11 +208,92 @@ describe("message serialization and prompt trimming", () => {
 
     expect(selected.map((message) => message.content)).toEqual([
       "Persona text",
-      "old lore",
       "new lore",
       "recent assistant",
       "recent user",
     ]);
+  });
+});
+
+describe("activated World Info context", () => {
+  test("extracts unique activated entry ids from interceptor context", () => {
+    const entries = extractActivatedWorldInfoEntries({
+      activatedWorldInfo: [
+        { id: "wi-1", comment: "Storm", keys: ["rain"] },
+        { id: "wi-1", comment: "Duplicate" },
+        { id: "  " },
+        { id: "wi-2", source: "vector", score: 0.12 },
+      ],
+    });
+
+    expect(entries.map((entry) => entry.id)).toEqual(["wi-1", "wi-2"]);
+    expect(entries[0].comment).toBe("Storm");
+  });
+
+  test("fetches activated entry content for controller-only context", async () => {
+    const result = await resolveWorldInfoContextMessages({
+      messages: [],
+      settings: normalizeSettings({ includeWorldInfoEntries: true }),
+      context: { activatedWorldInfo: [{ id: "wi-1", comment: "Storm front" }] },
+      canFetchWorldBooks: true,
+      fetchEntry: async (entryId) => ({
+        id: entryId,
+        content: "The storm is listening through the glass.",
+        comment: "Storm front",
+        role: "system",
+      }),
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe("The storm is listening through the glass.");
+    expect(result.messages[0].__lumiWorldContextLabel).toBe("World Info: Storm front");
+    expect(result.diagnostics).toEqual({
+      activatedEntryCount: 1,
+      fetchedEntryCount: 1,
+      fallbackTaggedEntryCount: 0,
+      fetchError: null,
+    });
+  });
+
+  test("falls back to tagged prompt entries when World Books fetching is unavailable", async () => {
+    const result = await resolveWorldInfoContextMessages({
+      messages: [
+        { role: "system", content: "Tagged lore", __isWorldInfoEntry: true },
+        { role: "user", content: "Chat turn", __isChatHistory: true },
+      ],
+      settings: normalizeSettings({ includeWorldInfoEntries: true }),
+      context: { activatedWorldInfo: [{ id: "wi-1", comment: "Tagged" }] },
+      canFetchWorldBooks: false,
+    });
+
+    expect(result.messages.map((message) => message.content)).toEqual(["Tagged lore"]);
+    expect(result.diagnostics).toEqual({
+      activatedEntryCount: 1,
+      fetchedEntryCount: 0,
+      fallbackTaggedEntryCount: 1,
+      fetchError: null,
+    });
+  });
+
+  test("dedupes activated entries, skips empty content, and records fetch errors", async () => {
+    const result = await resolveWorldInfoContextMessages({
+      messages: [{ role: "system", content: "Fallback lore", __isWorldInfoEntry: true }],
+      settings: normalizeSettings({ includeWorldInfoEntries: true }),
+      context: {},
+      canFetchWorldBooks: true,
+      fetchActivated: async () => [{ id: "wi-1" }, { id: "wi-1" }, { id: "wi-2" }, { id: "wi-3" }],
+      fetchEntry: async (entryId) => {
+        if (entryId === "wi-1") return { id: entryId, content: "Same lore", comment: "One" };
+        if (entryId === "wi-2") return { id: entryId, content: "   ", comment: "Empty" };
+        throw new Error("entry lookup failed");
+      },
+    });
+
+    expect(result.messages.map((message) => message.content)).toEqual(["Same lore"]);
+    expect(result.diagnostics.activatedEntryCount).toBe(3);
+    expect(result.diagnostics.fetchedEntryCount).toBe(1);
+    expect(result.diagnostics.fallbackTaggedEntryCount).toBe(0);
+    expect(result.diagnostics.fetchError).toBe("entry lookup failed");
   });
 });
 
@@ -309,5 +396,29 @@ describe("run log retention", () => {
 
     expect(appendRunLog([oldRun], nextRun, 1)).toEqual([nextRun]);
     expect(appendRunLog([oldRun], nextRun, 0)).toEqual([]);
+  });
+
+  test("retains only privacy-safe World Info diagnostics", () => {
+    const runs = normalizeRunLog([
+      {
+        id: "run-1",
+        timestamp: 10,
+        status: "success",
+        directivePreview: "A private directive preview.",
+        worldInfoActivatedCount: 4,
+        worldInfoFetchedCount: 3,
+        worldInfoFallbackTaggedCount: 1,
+        worldInfoFetchError: "one entry was missing",
+        worldInfoContent: "must not survive normalization",
+      },
+    ]);
+
+    expect(runs[0]).toMatchObject({
+      worldInfoActivatedCount: 4,
+      worldInfoFetchedCount: 3,
+      worldInfoFallbackTaggedCount: 1,
+      worldInfoFetchError: "one entry was missing",
+    });
+    expect("worldInfoContent" in (runs[0] as unknown as Record<string, unknown>)).toBe(false);
   });
 });
