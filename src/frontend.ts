@@ -536,9 +536,11 @@ const CSS = `
   position: relative;
   width: min(100%, 360px);
   max-width: 360px;
+  aspect-ratio: 4 / 3;
   min-width: 0;
   margin: 28px auto 0;
   box-sizing: border-box;
+  display: flex;
 }
 /* TV Antennas */
 .lw-tv::before, .lw-tv::after {
@@ -561,10 +563,15 @@ const CSS = `
   position: relative;
   overflow-y: hidden;
   overflow-x: hidden;
+  width: 100%;
+  min-height: 100%;
   min-width: 0;
   box-shadow: inset 0 0 38px rgba(0,0,0,0.9);
   background-image: linear-gradient(rgba(255, 255, 255, 0.03) 50%, transparent 50%);
   background-size: 100% 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .lw-tv-screen::-webkit-scrollbar { width: 8px; }
 .lw-tv-screen::-webkit-scrollbar-track { background: #111; }
@@ -575,7 +582,8 @@ const CSS = `
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  margin-bottom: 12px;
+  width: min(100%, 280px);
+  margin: 0 auto;
   padding: 8px;
   background: #b0a090;
   border-radius: 6px;
