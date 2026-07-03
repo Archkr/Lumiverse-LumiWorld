@@ -379,9 +379,10 @@ var CSS = `
     inset 0 0 20px rgba(0,0,0,0.1),
     inset 0 0 0 2px #6b4f3c;
   position: relative;
-  width: 100%;
-  max-width: 100%;
+  width: min(100%, 360px);
+  max-width: 360px;
   min-width: 0;
+  margin: 28px auto 0;
   box-sizing: border-box;
 }
 /* TV Antennas */
@@ -403,9 +404,8 @@ var CSS = `
   border-radius: 8px;
   padding: 10px;
   position: relative;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
-  max-height: 75vh;
   min-width: 0;
   box-shadow: inset 0 0 38px rgba(0,0,0,0.9);
   background-image: linear-gradient(rgba(255, 255, 255, 0.03) 50%, transparent 50%);
@@ -454,7 +454,6 @@ var CSS = `
   box-shadow: 0 1px 0 #1a1a1a, inset 0 2px 4px rgba(0,0,0,0.4);
   transform: translateY(3px);
 }
-
 /* Panels (Paper Notes) */
 .lw-panel {
   border: none;
@@ -688,7 +687,7 @@ var CSS = `
   .lw-toolbar { flex-direction: column; align-items: stretch; }
   .lw-actions { width: 100%; justify-content: stretch; }
   .lw-actions .lw-btn { flex: 1; }
-  .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; }
+  .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; width: min(100%, 340px); }
   .lw-tv-screen { border-width: 5px; padding: 8px; }
   .lw-window { height: 64px; }
   .lw-two, .lw-meter-grid, .lw-type-grid { grid-template-columns: 1fr; }
@@ -1404,20 +1403,7 @@ function setup(ctx) {
     toolbar.append(title, actions);
     shell.appendChild(toolbar);
   }
-  function render() {
-    destroyComponents();
-    tab.root.replaceChildren();
-    const root = createElement("div", "lw-root");
-    const shell = createElement("div", "lw-shell");
-    root.appendChild(shell);
-    tab.root.appendChild(root);
-    renderToolbar(shell);
-    renderNotice(shell);
-    if (!state) {
-      shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
-      return;
-    }
-    renderBanners(shell);
+  function renderBottomTv(shell) {
     const tv = createElement("div", "lw-tv");
     const tvScreen = createElement("div", "lw-tv-screen");
     const tvControls = createElement("div", "lw-tv-controls");
@@ -1435,12 +1421,28 @@ function setup(ctx) {
       tvControls.appendChild(button);
     }
     tvScreen.appendChild(tvControls);
-    if (activeChannel === "director")
-      renderDirectorChannel(tvScreen);
-    else
-      renderWorldAgentChannel(tvScreen);
     tv.appendChild(tvScreen);
     shell.appendChild(tv);
+  }
+  function render() {
+    destroyComponents();
+    tab.root.replaceChildren();
+    const root = createElement("div", "lw-root");
+    const shell = createElement("div", "lw-shell");
+    root.appendChild(shell);
+    tab.root.appendChild(root);
+    renderToolbar(shell);
+    renderNotice(shell);
+    if (!state) {
+      shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
+      return;
+    }
+    renderBanners(shell);
+    if (activeChannel === "director")
+      renderDirectorChannel(shell);
+    else
+      renderWorldAgentChannel(shell);
+    renderBottomTv(shell);
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
