@@ -1687,15 +1687,13 @@ const CSS = `
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 350px 310px 320px;
+  grid-template-rows: 330px 350px;
   justify-content: center;
-  align-content: start;
+  align-content: center;
   grid-template-areas:
-    "status status status"
     "core model context"
     "system user notes";
 }
-.lw-settings-modal.is-channel-1 .lw-director-status-note { grid-area: status; }
 .lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
 .lw-settings-modal.is-channel-1 .lw-director-model-note { grid-area: model; }
 .lw-settings-modal.is-channel-1 .lw-director-context-note { grid-area: context; }
@@ -1915,20 +1913,6 @@ const CSS = `
   text-shadow: none !important;
 }
 
-.lw-settings-modal.is-channel-1 .lw-director-status-note {
-  justify-self: center;
-  align-self: center;
-  width: 900px !important;
-  max-width: 900px !important;
-  height: 280px !important;
-  max-height: 280px !important;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-status-note .lw-meter-grid {
-  grid-template-rows: repeat(3, minmax(58px, 1fr));
-  height: calc(100% - 42px);
-}
-
 .lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
   min-height: 208px;
 }
@@ -1945,9 +1929,9 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
-  height: 300px;
-  min-height: 300px;
-  max-height: 300px;
+  height: 250px;
+  min-height: 250px;
+  max-height: 250px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -2678,40 +2662,7 @@ export function setup(ctx: SpindleFrontendContext) {
     slot.appendChild(input);
   }
 
-  function renderDirectorStatus(shell: HTMLElement): void {
-    const paper = createElement("div", "lw-paper lw-director-status-note");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Director Status"));
-    paper.appendChild(head);
-
-    const connection = selectedConnection(draft.connectionId);
-    const contextBits = [
-      draft.includeWorldInfoEntries ? "Entries" : null,
-      draft.includeUserPersona ? "Persona" : null,
-      draft.includeCharacter ? "Character" : null,
-    ].filter(Boolean);
-    const cards = [
-      ["State", draft.enabled ? "Enabled" : "Disabled"],
-      ["Connection", connection?.name ?? "No connection"],
-      ["Model", draft.modelOverride || connection?.model || "Connection default"],
-      ["History", `${draft.historyMessageLimit} messages`],
-      ["Context", contextBits.length ? contextBits.join(", ") : "Chat only"],
-      ["Runs on", draft.generationTypes.length ? draft.generationTypes.join(", ") : "None"],
-    ];
-
-    const grid = createElement("div", "lw-meter-grid");
-    for (const [label, value] of cards) {
-      const card = createElement("div", "lw-state-card");
-      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
-      grid.appendChild(card);
-    }
-    paper.appendChild(grid);
-    shell.appendChild(paper);
-  }
-
   function renderDirectorChannel(shell: HTMLElement): void {
-    renderDirectorStatus(shell);
-
     // Panel 1: Core Configuration
     const paper1 = createElement("div", "lw-paper lw-director-core-note");
     const head1 = createElement("div", "lw-panel-head");
