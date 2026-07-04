@@ -1214,9 +1214,10 @@ var CSS = `
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  margin-top: auto;
-  padding-top: 7px;
-  position: relative;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 9px;
   z-index: 1;
 }
 .lw-monitor-action {
