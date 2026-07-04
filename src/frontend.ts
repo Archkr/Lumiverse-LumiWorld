@@ -1381,6 +1381,20 @@ const CSS = `
   color: #2b201d;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
+  min-height: min(820px, calc(100vh - 140px));
+  padding: 18px;
+  border-radius: 8px;
+  background-color: #4a322a;
+  background-image:
+    linear-gradient(335deg, #3a261f 23px, transparent 23px),
+    linear-gradient(155deg, #3a261f 23px, transparent 23px),
+    linear-gradient(335deg, #3a261f 23px, transparent 23px),
+    linear-gradient(155deg, #3a261f 23px, transparent 23px),
+    linear-gradient(90deg, rgba(42,26,21,0.75) 4px, transparent 4px),
+    linear-gradient(90deg, rgba(42,26,21,0.75) 4px, transparent 4px);
+  background-size: 58px 29px, 58px 29px, 58px 29px, 58px 29px, 29px 29px, 29px 29px;
+  background-position: 0 0, 0 0, 29px 14.5px, 29px 14.5px, 0 0, 29px 29px;
+  box-shadow: inset 0 0 80px rgba(0,0,0,0.24);
 }
 .lw-modal-tabs {
   display: grid;
@@ -1389,8 +1403,11 @@ const CSS = `
   position: sticky;
   top: 0;
   z-index: 20;
-  padding-bottom: 4px;
-  background: var(--lumiverse-modal-fill, var(--lumiverse-fill, transparent));
+  padding: 10px;
+  border: 1px dashed rgba(255, 230, 190, 0.42);
+  border-radius: 6px;
+  background: rgba(26, 18, 15, 0.88);
+  box-shadow: 0 8px 18px rgba(0,0,0,0.32);
 }
 .lw-modal-tab {
   appearance: none;
@@ -1413,10 +1430,14 @@ const CSS = `
   gap: 8px;
   justify-content: flex-end;
   flex-wrap: wrap;
+  padding: 10px;
+  border: 1px dashed rgba(255, 230, 190, 0.32);
+  border-radius: 6px;
+  background: rgba(26, 18, 15, 0.72);
 }
 .lw-modal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
   align-items: start;
 }
@@ -1428,6 +1449,12 @@ const CSS = `
 }
 .lw-settings-modal .lw-paper:hover {
   transform: rotate(0deg);
+}
+.lw-compact-note .lw-textarea {
+  min-height: 150px;
+}
+.lw-template-note .lw-textarea {
+  min-height: 260px;
 }
 `;
 
@@ -1972,22 +1999,40 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderDirectorAdvanced(shell: HTMLElement): void {
-    const details = createElement("details", "lw-paper lw-details") as HTMLDetailsElement;
-    const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lw-details-body");
+    const appendNote = (title: string, className: string, ...children: HTMLElement[]) => {
+      const paper = createElement("div", `lw-paper lw-compact-note ${className}`);
+      const head = createElement("div", "lw-panel-head");
+      head.appendChild(createElement("h3", undefined, title));
+      const form = createElement("div", "lw-form");
+      form.append(...children);
+      paper.append(head, form);
+      shell.appendChild(paper);
+    };
     const entriesHint = state?.permissions.worldBooks === false
       ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries."
       : "Fetch activated World Info entry content and send it to the controller.";
-    body.append(
+    appendNote(
+      "Controller Context",
+      "",
       toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
-      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
-      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."),
-      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."),
+      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller.")
+    );
+    appendNote(
+      "Additional Notes",
+      "",
+      textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message.")
+    );
+    appendNote(
+      "System Template",
+      "lw-template-note",
+      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}.")
+    );
+    appendNote(
+      "User Template",
+      "lw-template-note",
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value }))
     );
-    details.append(summary, body);
-    shell.appendChild(details);
   }
 
   function renderWorldAgentChannel(shell: HTMLElement, includeExtras = true): void {
@@ -2167,15 +2212,23 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderWorldAgentAdvanced(shell: HTMLElement): void {
-    const details = createElement("details", "lw-paper lw-details") as HTMLDetailsElement;
-    const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lw-details-body");
-    body.append(
-      textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
+    const appendNote = (title: string, child: HTMLElement) => {
+      const paper = createElement("div", "lw-paper lw-compact-note lw-template-note");
+      const head = createElement("div", "lw-panel-head");
+      head.appendChild(createElement("h3", undefined, title));
+      const form = createElement("div", "lw-form");
+      form.appendChild(child);
+      paper.append(head, form);
+      shell.appendChild(paper);
+    };
+    appendNote(
+      "Schedule Template",
+      textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}.")
+    );
+    appendNote(
+      "Update Template",
       textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}.")
     );
-    details.append(summary, body);
-    shell.appendChild(details);
   }
 
   function renderRuns(shell: HTMLElement, channel: LumiWorldChannel): void {
@@ -2395,7 +2448,7 @@ export function setup(ctx: SpindleFrontendContext) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1120, maxHeight: 860 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1320, maxHeight: 940 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
