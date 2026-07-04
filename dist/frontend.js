@@ -1210,6 +1210,34 @@ var CSS = `
 }
 .lw-monitor-channel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lw-monitor-status { font-size: 8px; text-transform: uppercase; }
+.lw-monitor-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(255, 126, 0, 0.75);
+  position: relative;
+  z-index: 1;
+}
+.lw-monitor-action {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #ff9e3d;
+  padding: 0;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 0 0 5px #ff5500;
+  cursor: pointer;
+}
+.lw-monitor-action:hover {
+  color: #ffd08a;
+  text-decoration: underline;
+}
 .lw-monitor-knob {
   position: absolute;
   right: -10px;
@@ -1265,31 +1293,6 @@ var CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lw-note-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px;
-  margin-top: 10px;
-}
-.lw-mini-btn {
-  appearance: none;
-  border: 1px solid #211712;
-  border-radius: 3px;
-  background: linear-gradient(to bottom, #f7e8bd, #c9b88a);
-  color: #211712;
-  font: inherit;
-  font-weight: 800;
-  min-height: 28px;
-  cursor: pointer;
-  box-shadow: 0 3px 0 #6f5d45, 0 5px 8px rgba(0,0,0,0.22);
-  text-transform: uppercase;
-}
-.lw-mini-btn.primary {
-  background: linear-gradient(to bottom, #ffad4f, #d17a00);
-  border-color: #5a3000;
-  box-shadow: 0 3px 0 #5a3000, 0 5px 8px rgba(0,0,0,0.25);
-}
-.lw-mini-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #6f5d45; }
 .lw-save-dot {
   color: #6b5d4f;
   font-size: 9px;
@@ -2193,8 +2196,8 @@ function formatTime(timestamp) {
 }
 function formatClock(state) {
   if (!state)
-    return "Day 1, 08:00";
-  return `Day ${state.day}, ${String(state.hour).padStart(2, "0")}:00`;
+    return "Day 1, 8:00am";
+  return `Day ${state.day}, ${formatHourLabel(state.hour)}`;
 }
 function formatHourLabel(hour) {
   const normalized = Math.max(0, Math.min(23, Math.round(hour)));
@@ -2774,6 +2777,18 @@ function setup(ctx) {
     screen.appendChild(head);
     renderWidgetChannel(screen, "director", "DIRECTOR", "CH1");
     renderWidgetChannel(screen, "world_agent", "WORLD", "CH2");
+    const screenActions = createElement("div", "lw-monitor-actions");
+    const refresh = createElement("button", "lw-monitor-action", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => {
+      send(ctx, { type: "refresh_state" });
+      send(ctx, { type: "refresh_world_state" });
+    });
+    const open = createElement("button", "lw-monitor-action", "Settings");
+    open.type = "button";
+    open.addEventListener("click", () => openSettingsModal());
+    screenActions.append(refresh, open);
+    screen.appendChild(screenActions);
     monitor.append(createElement("div", "lw-monitor-antenna left"), createElement("div", "lw-monitor-antenna right"), screen, createElement("div", "lw-monitor-knob one"), createElement("div", "lw-monitor-knob two"));
     const note = createElement("div", "lw-widget-note");
     const noteHead = createElement("div", "lw-note-head");
@@ -2781,18 +2796,7 @@ function setup(ctx) {
     const lines = createElement("div", "lw-note-lines");
     for (const line of widgetNoteLines())
       lines.appendChild(createElement("div", "lw-note-line", line));
-    const actions = createElement("div", "lw-note-actions");
-    const refresh = createElement("button", "lw-mini-btn", "Refresh");
-    refresh.type = "button";
-    refresh.addEventListener("click", () => {
-      send(ctx, { type: "refresh_state" });
-      send(ctx, { type: "refresh_world_state" });
-    });
-    const open = createElement("button", "lw-mini-btn primary", "Settings");
-    open.type = "button";
-    open.addEventListener("click", () => openSettingsModal());
-    actions.append(refresh, open);
-    note.append(noteHead, lines, actions);
+    note.append(noteHead, lines);
     root.append(monitor, note);
     widget.root.appendChild(root);
   }
