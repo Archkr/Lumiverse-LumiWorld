@@ -647,6 +647,22 @@ var CSS = `
 .lw-field { display: grid; gap: 3px; min-width: 0; }
 .lw-field label, .lw-toggle-label { font-size: 11px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
 .lw-hint { color: #6b5d4f; font-size: 10.5px; font-style: italic; overflow-wrap: anywhere; }
+.lw-control-slot {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.lw-control-slot,
+.lw-control-slot * {
+  box-sizing: border-box;
+}
+.lw-control-slot > *,
+.lw-control-slot input,
+.lw-control-slot button,
+.lw-control-slot [role="combobox"] {
+  max-width: 100%;
+  min-width: 0;
+}
 
 .lw-input, .lw-select, .lw-textarea {
   width: 100%;
@@ -1417,7 +1433,6 @@ var CSS = `
 
 .lw-settings-modal .lw-modal-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-column: 1 / -1;
   grid-row: 2;
   gap: 10px;
@@ -1444,14 +1459,13 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 300px 250px 300px;
+  grid-template-columns: 360px 220px 300px;
   grid-template-rows: 250px 165px 173px;
   justify-content: center;
   grid-template-areas:
     "core model context"
     "core notes system"
     "runs user user";
-  align-items: stretch;
 }
 .lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
 .lw-settings-modal.is-channel-1 .lw-director-model-note { grid-area: model; }
@@ -1462,14 +1476,13 @@ var CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 210px 210px 225px 225px;
-  grid-template-rows: 210px 230px 148px;
+  grid-template-columns: 360px 250px 290px;
+  grid-template-rows: 230px 175px 183px;
   justify-content: center;
   grid-template-areas:
-    "clock . state state"
-    "config templates state state"
-    "params templates schedule runs";
-  align-items: stretch;
+    "clock state state"
+    "config params runs"
+    "templates schedule runs";
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
@@ -1478,6 +1491,16 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
 .lw-settings-modal.is-channel-2 .lw-world-runs-note { grid-area: runs; }
+
+.lw-settings-modal .lw-modal-grid > .lw-paper,
+.lw-settings-modal .lw-modal-grid > .lw-clock {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+}
 
 /* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
 
@@ -2197,6 +2220,7 @@ function setup(ctx) {
     return row;
   }
   function renderConnectionControl(slot, value, onChange, ariaLabel) {
+    slot.classList.add("lw-control-slot", "lw-connection-slot");
     const connections = state?.connections ?? [];
     const components = ctx.components;
     const options = connections.map((connection) => ({
@@ -2249,6 +2273,7 @@ function setup(ctx) {
     slot.appendChild(select);
   }
   function renderModelControl(slot, connectionId, value, onChange) {
+    slot.classList.add("lw-control-slot", "lw-model-slot");
     const selected = selectedConnection(connectionId);
     const components = ctx.components;
     if (selected && components?.mountModelCombobox) {
