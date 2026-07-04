@@ -942,6 +942,13 @@ const CSS = `
   margin: 4px 0;
   width: 100%;
 }
+.lw-form-subhead {
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
 
 /* Retro Digital Clock */
 .lw-clock {
@@ -1674,17 +1681,16 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 340px 300px 390px;
+  grid-template-rows: 220px 350px 480px;
   justify-content: center;
   grid-template-areas:
-    "clock state state"
-    "config params schedule"
-    "templates params schedule";
+    ". state state"
+    "clock params schedule"
+    "config params schedule";
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
 .lw-settings-modal.is-channel-2 .lw-world-params-note { grid-area: params; }
-.lw-settings-modal.is-channel-2 .lw-world-templates-note { grid-area: templates; }
 .lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
 
@@ -2096,9 +2102,10 @@ const CSS = `
   border-color: #c9302c !important;
 }
 
-.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
-  min-height: 224px;
-  max-height: 240px;
+.lw-settings-modal.is-channel-2 .lw-world-params-note .lw-textarea {
+  min-height: 220px;
+  height: 220px;
+  max-height: 220px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
@@ -2113,13 +2120,8 @@ const CSS = `
   flex: 1 1 118px;
 }
 
-.lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
-  max-height: 224px;
-}
-
 .lw-settings-modal.is-channel-2 .lw-world-config-note,
 .lw-settings-modal.is-channel-2 .lw-world-params-note,
-.lw-settings-modal.is-channel-2 .lw-world-templates-note,
 .lw-settings-modal.is-channel-2 .lw-world-state-note,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note {
   overflow-x: hidden !important;
@@ -2130,7 +2132,6 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar,
-.lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar {
   width: 8px;
@@ -2138,7 +2139,6 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar-thumb,
-.lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar-thumb {
   background: rgba(139, 69, 19, 0.55);
@@ -2146,8 +2146,17 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note {
+  align-self: start;
+  height: 330px !important;
+  max-height: 330px !important;
   gap: 5px;
   padding: 10px !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note {
+  align-self: start;
+  height: 320px !important;
+  max-height: 320px !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time {
@@ -2168,8 +2177,7 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note .lw-form,
-.lw-settings-modal.is-channel-2 .lw-world-params-note .lw-form,
-.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-form {
+.lw-settings-modal.is-channel-2 .lw-world-params-note .lw-form {
   gap: 5px;
 }
 
@@ -2763,23 +2771,16 @@ export function setup(ctx: SpindleFrontendContext) {
       numberField("Timeout", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, v => updateWorldAgent({ timeoutMs: v })),
       numberField("Hour Dur", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, v => updateWorldAgent({ hourDurationMs: v }))
     );
-    form2.append(paramsGrid1, paramsGrid2);
-    paper2.appendChild(form2);
-    shell.appendChild(paper2);
-
-    // Panel 3: Prompt Templates
-    const paper3 = createElement("div", "lw-paper lw-world-templates-note");
-    const head3 = createElement("div", "lw-panel-head");
-    head3.appendChild(createElement("h3", undefined, "Prompt Templates"));
-    paper3.appendChild(head3);
-
-    const form3 = createElement("div", "lw-form");
-    form3.append(
+    form2.append(
+      paramsGrid1,
+      paramsGrid2,
+      createElement("hr", "lw-divider"),
+      createElement("div", "lw-form-subhead", "Prompt Templates"),
       textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
       textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}.")
     );
-    paper3.appendChild(form3);
-    shell.appendChild(paper3);
+    paper2.appendChild(form2);
+    shell.appendChild(paper2);
 
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
@@ -2859,27 +2860,6 @@ export function setup(ctx: SpindleFrontendContext) {
       grid.appendChild(card);
     }
     paper.appendChild(grid);
-
-    const history = current?.history ?? [];
-    const box = createElement("div", "lw-scrollbox");
-    box.style.marginTop = "10px";
-    if (!history.length) {
-      box.appendChild(createElement("div", "lw-empty", "No World Agent activity yet."));
-    } else {
-      const list = createElement("div", "lw-runs");
-      for (const entry of history) {
-        const item = createElement("article", "lw-run");
-        const row = createElement("div", "lw-run-head");
-        row.append(createElement("strong", undefined, entry.action.replace(/_/g, " ")), createElement("span", "lw-muted", `Day ${entry.day}, ${String(entry.hour).padStart(2, "0")}:00`));
-        item.appendChild(row);
-        if (entry.preview) item.appendChild(createElement("div", undefined, entry.preview));
-        if (entry.error) item.appendChild(createElement("div", "lw-muted", entry.error));
-        item.appendChild(createElement("div", "lw-muted", formatTime(entry.timestamp)));
-        list.appendChild(item);
-      }
-      box.appendChild(list);
-    }
-    paper.appendChild(box);
     shell.appendChild(paper);
   }
 
