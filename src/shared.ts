@@ -181,8 +181,6 @@ export interface WorldAgentScheduleItem {
   label?: string;
   location?: string;
   activity: string;
-  mood?: string;
-  goal?: string;
 }
 
 export interface WorldAgentUpdate {
@@ -371,6 +369,26 @@ export const DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
   "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
   "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":7,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":12,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":18,\"location\":\"...\",\"activity\":\"...\"}]}",
+].join("\n");
+
+export const PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
   "",
   "Use the active character and persona context, the current chat state, and any provided notes.",
   "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
@@ -384,7 +402,7 @@ export const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Advance {{char}}'s private world state by one simulated hour.",
   "",
-  "Use the schedule, current state, active character/persona context, and recent chat context.",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
   "Track what changes in location, mood, activity, current thought, and immediate goal.",
   "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
   "",
@@ -461,7 +479,9 @@ export function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings 
   const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
   const storedUpdateTemplate = cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE);
   const scheduleTemplate =
-    !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
+    !storedScheduleTemplate ||
+    storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE ||
+    storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE
       ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
       : storedScheduleTemplate;
   return {
@@ -1310,17 +1330,13 @@ function scheduleItemFromRecord(value: unknown, index: number): WorldAgentSchedu
     obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan,
   );
   const location = cleanString(obj.location ?? obj.place ?? obj.where);
-  const mood = cleanString(obj.mood ?? obj.emotion ?? obj.affect);
-  const goal = cleanString(obj.goal ?? obj.intent ?? obj.objective);
   const label = cleanString(obj.label ?? obj.title ?? obj.time);
-  if (!activity && !location && !mood && !goal) return null;
+  if (!activity && !location) return null;
   return {
     hour: normalizeScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour, index % 24),
     label: label || undefined,
     location: location || undefined,
-    activity: activity || [location, mood, goal].filter(Boolean).join("; ") || "Unspecified activity",
-    mood: mood || undefined,
-    goal: goal || undefined,
+    activity: activity || (location ? `At ${location}` : "Unspecified activity"),
   };
 }
 
@@ -1469,8 +1485,6 @@ export function formatWorldAgentSchedule(schedule: WorldAgentScheduleItem[]): st
         `${String(item.hour).padStart(2, "0")}:00`,
         item.location ? `Location: ${item.location}` : null,
         `Activity: ${item.activity}`,
-        item.mood ? `Mood: ${item.mood}` : null,
-        item.goal ? `Goal: ${item.goal}` : null,
       ].filter(Boolean);
       return `- ${pieces.join(" | ")}`;
     })

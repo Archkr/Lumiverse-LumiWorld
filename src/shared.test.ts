@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
@@ -152,6 +153,19 @@ describe("settings normalization", () => {
     expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
     expect(settings.worldAgent.scheduleTemplate).toContain("full 24-hour day");
     expect(settings.worldAgent.scheduleTemplate).toContain("8-14 concise entries");
+    expect(settings.worldAgent.scheduleTemplate).not.toContain("\"mood\"");
+  });
+
+  test("migrates the mood-writing full-day World Agent schedule template", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        scheduleTemplate: PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
+    expect(settings.worldAgent.scheduleTemplate).toContain("Do not decide mood");
+    expect(settings.worldAgent.scheduleTemplate).not.toContain("\"goal\"");
   });
 });
 
@@ -463,9 +477,9 @@ describe("World Agent state and parsing", () => {
       "```",
     ].join("\n");
     expect(parseWorldAgentSchedule(messySchedule)).toEqual([
-      { hour: 0, location: "Residential Quarters", activity: "Sleeping", mood: "Peaceful", goal: "Rest and recover" },
-      { hour: 7, location: "Kitchen", activity: "Breakfast", mood: "Affectionate", goal: "Spend time" },
-      { hour: 9, location: "Training Facility", activity: "Combat training", mood: "Focused", goal: "Improve" },
+      { hour: 0, location: "Residential Quarters", activity: "Sleeping" },
+      { hour: 7, location: "Kitchen", activity: "Breakfast" },
+      { hour: 9, location: "Training Facility", activity: "Combat training" },
     ]);
     expect(normalizeWorldAgentState({ schedule: [{ hour: 0, activity: messySchedule }] }, "chat-1").schedule).toHaveLength(3);
     expect(parseWorldAgentSchedule("A loose private day plan.")[0].activity).toBe("A loose private day plan.");

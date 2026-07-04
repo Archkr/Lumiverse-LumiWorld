@@ -95,8 +95,6 @@ interface WorldAgentScheduleItem {
   label?: string;
   location?: string;
   activity: string;
-  mood?: string;
-  goal?: string;
 }
 
 interface WorldAgentHistoryEntry {
@@ -303,6 +301,26 @@ const DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
   "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
   "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":7,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":12,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":18,\"location\":\"...\",\"activity\":\"...\"}]}",
+].join("\n");
+
+const PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
   "",
   "Use the active character and persona context, the current chat state, and any provided notes.",
   "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
@@ -316,7 +334,7 @@ const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Advance {{char}}'s private world state by one simulated hour.",
   "",
-  "Use the schedule, current state, active character/persona context, and recent chat context.",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
   "Track what changes in location, mood, activity, current thought, and immediate goal.",
   "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
   "",
@@ -2197,7 +2215,9 @@ function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings {
   const obj = asRecord(value);
   const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
   const scheduleTemplate =
-    !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
+    !storedScheduleTemplate ||
+    storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE ||
+    storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE
       ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
       : storedScheduleTemplate;
   return {
@@ -2883,8 +2903,6 @@ export function setup(ctx: SpindleFrontendContext) {
       slot.append(createElement("strong", undefined, `${String(item.hour).padStart(2, "0")}:00`));
       if (item.location) slot.appendChild(createElement("div", "lw-muted", item.location));
       slot.appendChild(createElement("div", undefined, item.activity || "Unspecified activity"));
-      if (item.mood) slot.appendChild(createElement("div", "lw-muted", `Mood: ${item.mood}`));
-      if (item.goal) slot.appendChild(createElement("div", "lw-muted", `Goal: ${item.goal}`));
       strip.appendChild(slot);
     }
     paper.appendChild(strip);
