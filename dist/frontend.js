@@ -196,7 +196,6 @@ var CSS = `
   overflow: hidden;
   position: relative;
   
-  /* Theme overrides for Spindle components to force the lofi aesthetic */
   --lumiverse-fill: #fff9e6;
   --lumiverse-fill-subtle: #f5f5dc;
   --lumiverse-text: #2b201d;
@@ -215,7 +214,6 @@ var CSS = `
 .lw-root * { box-sizing: border-box; }
 .lw-root input, .lw-root textarea, .lw-root select { accent-color: #ff7e00; font-family: 'Courier New', monospace; }
 
-/* Navigation */
 .lw-nav-btn {
   position: absolute;
   top: 50%;
@@ -257,7 +255,6 @@ var CSS = `
 }
 .lw-dot.is-active { background: #ff7e00; transform: scale(1.4); }
 
-/* Viewport and Room */
 .lw-viewport {
   width: 100%;
   height: 100%;
@@ -281,7 +278,7 @@ var CSS = `
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 24px 30px 170px; /* Increased bottom padding for larger floor */
+  padding: 24px 30px 170px;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -294,12 +291,11 @@ var CSS = `
 .lw-panel::-webkit-scrollbar { width: 6px; background: transparent; }
 .lw-panel::-webkit-scrollbar-thumb { background: rgba(255, 158, 61, 0.45); border-radius: 999px; }
 
-/* Continuous Floor & Rug */
 .lw-panel::after {
   content: '';
   position: absolute;
   bottom: 0; left: 0; width: 100%;
-  height: 140px; /* Taller floor */
+  height: 140px;
   background: repeating-linear-gradient(90deg, #4a322a 0px, #4a322a 60px, #3e2a23 60px, #3e2a23 120px);
   border-top: 6px solid #2a1a15;
   box-shadow: 0 -8px 20px rgba(0,0,0,0.4);
@@ -321,7 +317,6 @@ var CSS = `
   box-shadow: 0 -5px 15px rgba(0,0,0,0.2);
 }
 
-/* TV Panel (Panel 0) */
 .lw-window {
   position: absolute;
   top: 30px; left: 30px;
@@ -348,7 +343,7 @@ var CSS = `
 .lw-city {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  height: 50%; /* Perfectly aligns with lights */
+  height: 50%;
   background: #050a14;
   clip-path: polygon(0% 100%, 0% 60%, 10% 60%, 10% 40%, 20% 40%, 20% 70%, 30% 70%, 30% 30%, 40% 30%, 40% 50%, 50% 50%, 50% 20%, 60% 20%, 60% 60%, 70% 60%, 70% 40%, 80% 40%, 80% 80%, 90% 80%, 90% 50%, 100% 50%, 100% 100%);
   z-index: 1;
@@ -356,7 +351,7 @@ var CSS = `
 .lw-city-lights {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  height: 50%; /* Perfectly aligns with buildings */
+  height: 50%;
   background-image: 
     radial-gradient(circle, #ffcc00 1px, transparent 2px),
     radial-gradient(circle, #ff9e3d 1px, transparent 2px);
@@ -410,7 +405,6 @@ var CSS = `
   20%, 24%, 55% { opacity: 0.6; filter: brightness(0.8); }
 }
 
-/* Retro CRT TV */
 .lw-tv-container {
   position: relative;
   width: min(100%, 360px);
@@ -431,7 +425,7 @@ var CSS = `
   width: 100%;
   max-width: none;
 }
-.lw-tv::before { /* Vents */
+.lw-tv::before {
   content: '';
   position: absolute;
   top: 10px; left: 50%;
@@ -440,7 +434,7 @@ var CSS = `
   background: repeating-linear-gradient(90deg, #888 0px, #888 2px, #666 2px, #666 4px);
   border-radius: 2px;
 }
-.lw-tv::after { /* Brand */
+.lw-tv::after {
   content: 'LumiVision';
   position: absolute;
   bottom: 14px; left: 50%;
@@ -581,7 +575,6 @@ var CSS = `
 .lw-leaf:nth-child(2) { left: 22px; transform: rotate(0deg); height: 45px; }
 .lw-leaf:nth-child(3) { left: 34px; transform: rotate(20deg); }
 
-/* Settings Panels (Paper Notes) */
 .lw-poster {
   background: #fff;
   color: #111;
@@ -730,7 +723,6 @@ var CSS = `
   width: 100%;
 }
 
-/* Retro Digital Clock */
 .lw-clock {
   display: grid;
   gap: 7px;
@@ -840,7 +832,6 @@ var CSS = `
   font-size: 11px;
 }
 
-/* Buttons */
 .lw-btn {
   appearance: none;
   border: 1px solid #111;
@@ -867,7 +858,6 @@ var CSS = `
 .lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
 .lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
 
-/* Desk Decorations (Panel 1) */
 .lw-desk-decor {
   position: absolute;
   bottom: 130px; left: 0;
@@ -888,7 +878,7 @@ var CSS = `
   border-radius: 5px 5px 15px 15px;
   box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
 }
-.lw-mug::after { /* Handle */
+.lw-mug::after {
   content: '';
   position: absolute;
   right: -12px; top: 10px;
@@ -897,7 +887,7 @@ var CSS = `
   border-left: none;
   border-radius: 0 10px 10px 0;
 }
-.lw-mug::before { /* Coffee */
+.lw-mug::before {
   content: '';
   position: absolute;
   top: 5px; left: 5px; right: 5px;
@@ -934,7 +924,6 @@ var CSS = `
   pointer-events: none;
 }
 
-/* Bed Decorations (Panel 2) */
 .lw-bed {
   position: absolute;
   bottom: 130px; right: 20px;
@@ -961,7 +950,6 @@ var CSS = `
   border-radius: 20px 20px 0 0;
 }
 
-/* Bookshelf Decorations (Panel 3) */
 .lw-shelf {
   position: absolute;
   bottom: 130px; right: 40px;
@@ -1218,8 +1206,6 @@ var CSS = `
 
 /* =========================================
    SUPER DETAILED ANIMATED SETTINGS MODAL
-   (Transforms into a CRT TV broadcasting 
-   different anime "channels" based on tab)
    ========================================= */
 .lw-settings-modal {
   display: grid;
@@ -1244,95 +1230,31 @@ var CSS = `
   border: 24px solid #1a1a1a;
   border-radius: 40px / 30px;
   box-shadow: 0 0 0 4px #333, 0 20px 50px rgba(0,0,0,0.8), inset 0 0 100px rgba(0,0,0,0.8);
-  
-  /* Hide default scrollbar but allow scroll */
   scrollbar-width: thin;
   scrollbar-color: #ff7e00 transparent;
 }
 .lw-settings-modal::-webkit-scrollbar { width: 6px; background: transparent; }
 .lw-settings-modal::-webkit-scrollbar-thumb { background: #ff7e00; border-radius: 0; }
 
-/* CRT Scanlines and Glare Overlay for the Modal TV */
 .lw-settings-modal::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: 
-    linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.15) 50%);
+  background: linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.15) 50%);
   background-size: 100% 4px;
   pointer-events: none;
   z-index: 9999;
   opacity: 0.8;
 }
 
-/* Channel 1: Director Note (Evangelion / NERV HQ Aesthetic) */
 .lw-settings-modal.is-channel-1 {
   background-color: #1a0a0a;
-  background-image: 
-    linear-gradient(rgba(255, 153, 51, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 153, 51, 0.03) 1px, transparent 1px);
-  background-size: 20px 20px;
-  animation: none;
-  border: 24px solid #1a1a1a !important;
-  border-radius: 40px / 30px !important;
-  box-shadow: 0 0 0 4px #333, 0 20px 50px rgba(0,0,0,0.8), inset 0 0 100px rgba(0,0,0,0.8) !important;
 }
-
-/* Rotating Targeting Reticle in Background */
-.lw-settings-modal.is-channel-1::before {
-  content: '';
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 150vmax; height: 150vmax;
-  background: 
-    conic-gradient(from 0deg, transparent 0%, rgba(255, 153, 51, 0.05) 10%, transparent 20%),
-    repeating-conic-gradient(rgba(255, 204, 0, 0.02) 0deg 10deg, transparent 10deg 20deg);
-  transform: translate(-50%, -50%);
-  animation: lw-eva-rotate 30s linear infinite;
-  z-index: 0;
-  pointer-events: none;
-}
-
-@keyframes lw-eva-rotate {
-  from { transform: translate(-50%, -50%) rotate(0deg); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-@keyframes lw-eva-bg-pulse {
-  0% { box-shadow: inset 0 0 50px rgba(255, 51, 51, 0.1); }
-  100% { box-shadow: inset 0 0 100px rgba(255, 51, 51, 0.3); }
-}
-
-/* Channel 2: World Agent (Spirited Away / Ghibli Aesthetic) */
 .lw-settings-modal.is-channel-2 {
   background-color: #87ceeb;
   background-image: linear-gradient(to bottom, #87ceeb 0%, #e0f7fa 60%, #f0f8ff 100%);
-  animation: none;
-}
-.lw-settings-modal.is-channel-2::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: 
-    radial-gradient(circle at 10% 20%, #222 2px, transparent 3px),
-    radial-gradient(circle at 80% 40%, #222 3px, transparent 4px),
-    radial-gradient(circle at 30% 70%, #222 2px, transparent 3px),
-    radial-gradient(circle at 60% 80%, #222 4px, transparent 5px),
-    radial-gradient(circle at 90% 10%, #222 2px, transparent 3px),
-    radial-gradient(circle at 50% 50%, #222 1px, transparent 2px);
-  background-size: 200px 200px, 300px 300px, 250px 250px, 400px 400px, 150px 150px, 100px 100px;
-  animation: lw-ghibli-spirits 20s linear infinite;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.6;
 }
 
-@keyframes lw-ghibli-spirits {
-  0% { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
-  100% { background-position: 50px -200px, -80px 150px, 100px -100px, -50px -250px, 70px 300px, -30px -150px; }
-}
-
-/* Modal TV Channel Tabs (Remote Control Buttons) */
 .lw-settings-modal .lw-modal-tabs {
   display: flex;
   gap: 12px;
@@ -1402,7 +1324,6 @@ var CSS = `
   box-shadow: 0 0 10px #d4af37;
 }
 
-/* Modal Actions (Refresh/Test) */
 .lw-settings-modal .lw-modal-actions {
   display: flex;
   gap: 8px;
@@ -1417,7 +1338,6 @@ var CSS = `
 
 .lw-settings-modal .lw-modal-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-column: 1 / -1;
   grid-row: 2;
   gap: 10px;
@@ -1451,7 +1371,6 @@ var CSS = `
     "core model context"
     "core notes system"
     "runs user user";
-  align-items: stretch;
 }
 .lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
 .lw-settings-modal.is-channel-1 .lw-director-model-note { grid-area: model; }
@@ -1469,7 +1388,6 @@ var CSS = `
     "clock . state state"
     "config templates state state"
     "params templates schedule runs";
-  align-items: stretch;
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
@@ -1479,7 +1397,168 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
 .lw-settings-modal.is-channel-2 .lw-world-runs-note { grid-area: runs; }
 
-/* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
+/* --- SCENE VIEW OVERRIDES --- */
+.lw-modal-scene {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.lw-is-hidden { display: none !important; }
+
+.lw-back-to-scene {
+  position: relative;
+  z-index: 25;
+}
+
+/* Channel 1: Evangelion Scene */
+.lw-scene-eva {
+  background: radial-gradient(circle at 50% 40%, #3a0a0a 0%, #050000 80%);
+}
+.lw-eva-silhouette {
+  position: absolute;
+  top: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 500px;
+  height: 600px;
+  background: #1a0202;
+  clip-path: polygon(30% 0%, 70% 0%, 100% 25%, 95% 80%, 80% 100%, 20% 100%, 5% 80%, 0% 25%);
+  z-index: 1;
+  box-shadow: 0 0 80px rgba(255, 0, 60, 0.2);
+}
+.lw-eva-silhouette::after {
+  content: '';
+  position: absolute;
+  top: -70px; left: 50%;
+  width: 40px; height: 80px;
+  background: #1a0202;
+  transform: translateX(-50%);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+}
+.lw-eva-terminal {
+  position: relative;
+  z-index: 2;
+  width: 260px; height: 160px;
+  background: rgba(0,0,0,0.85);
+  border: 3px solid #ff003c;
+  box-shadow: 0 0 30px rgba(255, 0, 60, 0.5), inset 0 0 20px rgba(255,0,60,0.2);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.lw-eva-terminal:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 50px rgba(255, 0, 60, 0.8), inset 0 0 20px rgba(255,0,60,0.4);
+}
+.lw-eva-screen {
+  color: #ff003c;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  font-size: 20px;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px #ff003c;
+  text-align: center;
+  animation: lw-flicker 2s infinite alternate;
+}
+
+/* Channel 2: Ghibli Scene */
+.lw-scene-ghibli {
+  background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 40%, #b0e0e6 80%, #f0f8ff 100%);
+  align-items: flex-end;
+  padding-bottom: 60px;
+}
+.lw-ghibli-bg {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(ellipse at 20% 20%, #fff 10%, transparent 12%),
+    radial-gradient(ellipse at 80% 30%, #fff 15%, transparent 17%),
+    radial-gradient(ellipse at 60% 10%, #fff 8%, transparent 10%);
+  background-size: 300px 200px;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.lw-ghibli-tree {
+  position: absolute;
+  bottom: -50px; right: -100px;
+  width: 600px; height: 600px;
+  background: #3e8e41;
+  border-radius: 50%;
+  box-shadow: -80px 50px 0 #4caf50;
+  z-index: 1;
+}
+.lw-ghibli-totoro {
+  position: relative;
+  z-index: 2;
+  width: 180px; height: 200px;
+  background: #666;
+  border-radius: 50% 50% 40% 40%;
+  cursor: pointer;
+  transition: transform 0.2s;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+}
+.lw-ghibli-totoro:hover {
+  transform: translateY(-10px);
+}
+.lw-ghibli-totoro::before {
+  content: '';
+  position: absolute;
+  top: -30px; left: 40px;
+  width: 20px; height: 50px;
+  background: inherit;
+  border-radius: 50% 50% 0 0;
+  transform: rotate(-20deg);
+  box-shadow: 80px 0 0 #666;
+}
+.lw-ghibli-totoro::after {
+  content: '';
+  position: absolute;
+  top: -30px; right: 40px;
+  width: 20px; height: 50px;
+  background: inherit;
+  border-radius: 50% 50% 0 0;
+  transform: rotate(20deg);
+}
+.lw-totoro-eyes {
+  position: absolute;
+  top: 50px; left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 40px;
+}
+.lw-totoro-eyes span {
+  width: 24px; height: 24px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 5px #000;
+}
+.lw-totoro-belly {
+  position: absolute;
+  bottom: 30px; left: 50%;
+  transform: translateX(-50%);
+  width: 130px; height: 90px;
+  background: #d3d3d3;
+  border-radius: 50%;
+}
+.lw-totoro-belly::before {
+  content: '';
+  position: absolute;
+  top: 20px; left: 20px;
+  width: 15px; height: 15px;
+  background: #666;
+  box-shadow: 30px 10px 0 #666, 55px 0 0 #666;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
 
 /* Channel 1: NERV Terminal Panels */
 .lw-settings-modal.is-channel-1 .lw-paper,
@@ -1504,28 +1583,17 @@ var CSS = `
   border-color: #ffcc00 !important;
   box-shadow: 0 0 25px rgba(255, 204, 0, 0.4), inset 0 0 10px rgba(0,0,0,0.8) !important;
 }
-
 .lw-settings-modal.is-channel-1 .lw-paper::before,
 .lw-settings-modal.is-channel-1 .lw-paper::after { display: none; }
-
-.lw-settings-modal.is-channel-1 .lw-panel-head {
-  border-bottom: 1px solid #ff9933 !important;
-}
+.lw-settings-modal.is-channel-1 .lw-panel-head { border-bottom: 1px solid #ff9933 !important; }
 .lw-settings-modal.is-channel-1 .lw-panel-head h3 {
   color: #ffcc00 !important;
   text-shadow: 0 0 5px #ff9933 !important;
   font-family: 'Courier New', monospace !important;
 }
-
 .lw-settings-modal.is-channel-1 .lw-field label,
-.lw-settings-modal.is-channel-1 .lw-toggle-label {
-  color: #ff9933 !important;
-  text-shadow: 0 0 2px #ff9933 !important;
-}
-.lw-settings-modal.is-channel-1 .lw-hint {
-  color: #aa6600 !important;
-}
-
+.lw-settings-modal.is-channel-1 .lw-toggle-label { color: #ff9933 !important; text-shadow: 0 0 2px #ff9933 !important; }
+.lw-settings-modal.is-channel-1 .lw-hint { color: #aa6600 !important; }
 .lw-settings-modal.is-channel-1 .lw-input,
 .lw-settings-modal.is-channel-1 .lw-select,
 .lw-settings-modal.is-channel-1 .lw-textarea {
@@ -1541,11 +1609,7 @@ var CSS = `
   border-color: #ffcc00 !important;
   box-shadow: 0 0 10px rgba(255, 204, 0, 0.5) !important;
 }
-
-.lw-settings-modal.is-channel-1 .lw-setting-row {
-  border-bottom: 1px dashed rgba(255, 153, 51, 0.3) !important;
-}
-
+.lw-settings-modal.is-channel-1 .lw-setting-row { border-bottom: 1px dashed rgba(255, 153, 51, 0.3) !important; }
 .lw-settings-modal.is-channel-1 .lw-chip-compact {
   border: 1px solid #ff9933 !important;
   background: #000 !important;
@@ -1553,7 +1617,6 @@ var CSS = `
   border-radius: 0 !important;
   clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
 }
-
 .lw-settings-modal.is-channel-1 .lw-banner {
   border: 1px solid #ff003c !important;
   background: rgba(255, 0, 60, 0.2) !important;
@@ -1561,22 +1624,12 @@ var CSS = `
   text-shadow: 0 0 5px #ff003c !important;
   clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
 }
-
-.lw-settings-modal.is-channel-1 .lw-details {
-  border: 1px solid #ff9933 !important;
-  background: #000 !important;
-  box-shadow: none !important;
-}
+.lw-settings-modal.is-channel-1 .lw-details { border: 1px solid #ff9933 !important; background: #000 !important; box-shadow: none !important; }
 .lw-settings-modal.is-channel-1 .lw-details summary { color: #ffcc00 !important; }
-
-.lw-settings-modal.is-channel-1 .lw-divider {
-  border-top: 1px dashed #ff9933 !important;
-}
-
+.lw-settings-modal.is-channel-1 .lw-divider { border-top: 1px dashed #ff9933 !important; }
 .lw-settings-modal.is-channel-1 .lw-clock-top { border-bottom: 2px solid #ff003c !important; }
 .lw-settings-modal.is-channel-1 .lw-clock-time { color: #ff003c !important; text-shadow: 0 0 10px #ff003c !important; }
 .lw-settings-modal.is-channel-1 .lw-clock-status { color: #ffcc00 !important; }
-
 .lw-settings-modal.is-channel-1 .lw-state-card {
   border: 1px solid #ff9933 !important;
   background: #000 !important;
@@ -1585,7 +1638,6 @@ var CSS = `
 }
 .lw-settings-modal.is-channel-1 .lw-state-label { color: #ff9933 !important; }
 .lw-settings-modal.is-channel-1 .lw-state-value { color: #ffcc00 !important; }
-
 .lw-settings-modal.is-channel-1 .lw-slot {
   border: 1px solid #ff9933 !important;
   background: #000 !important;
@@ -1596,20 +1648,13 @@ var CSS = `
   border-color: #ff003c !important;
   box-shadow: 0 0 10px #ff003c, inset 0 0 5px rgba(255, 0, 60, 0.2) !important;
 }
-
 .lw-settings-modal.is-channel-1 .lw-run {
   border: 1px solid #ff9933 !important;
   background: #000 !important;
   border-radius: 0 !important;
   box-shadow: inset 0 0 5px rgba(255, 153, 51, 0.2) !important;
 }
-
-.lw-settings-modal.is-channel-1 .lw-empty {
-  color: #ff9933 !important;
-  border: 1px dashed #ff9933 !important;
-  background: rgba(0,0,0,0.5) !important;
-}
-
+.lw-settings-modal.is-channel-1 .lw-empty { color: #ff9933 !important; border: 1px dashed #ff9933 !important; background: rgba(0,0,0,0.5) !important; }
 .lw-settings-modal.is-channel-1 .lw-btn {
   background: #000 !important;
   color: #ffcc00 !important;
@@ -1625,33 +1670,12 @@ var CSS = `
   box-shadow: 0 0 15px #ffcc00 !important;
   text-shadow: none !important;
 }
-.lw-settings-modal.is-channel-1 .lw-btn-primary {
-  border-color: #ff003c !important;
-  color: #ff003c !important;
-  text-shadow: 0 0 5px #ff003c !important;
-}
-.lw-settings-modal.is-channel-1 .lw-btn-primary:hover {
-  background: #ff003c !important;
-  color: #000 !important;
-  box-shadow: 0 0 15px #ff003c !important;
-}
-.lw-settings-modal.is-channel-1 .lw-btn-danger {
-  border-color: #aa0000 !important;
-  color: #aa0000 !important;
-  text-shadow: none !important;
-}
-
-.lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
-  min-height: 128px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
-  min-height: 118px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
-  max-height: 142px;
-}
+.lw-settings-modal.is-channel-1 .lw-btn-primary { border-color: #ff003c !important; color: #ff003c !important; text-shadow: 0 0 5px #ff003c !important; }
+.lw-settings-modal.is-channel-1 .lw-btn-primary:hover { background: #ff003c !important; color: #000 !important; box-shadow: 0 0 15px #ff003c !important; }
+.lw-settings-modal.is-channel-1 .lw-btn-danger { border-color: #aa0000 !important; color: #aa0000 !important; text-shadow: none !important; }
+.lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea { min-height: 128px; }
+.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea { min-height: 118px; }
+.lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox { max-height: 142px; }
 
 /* Channel 2: Ghibli Spirit Scrolls */
 .lw-settings-modal.is-channel-2 .lw-paper,
@@ -1678,29 +1702,17 @@ var CSS = `
   border-color: #d4af37 !important;
   box-shadow: 4px 4px 0px rgba(212, 175, 55, 0.3), 0 5px 20px rgba(0,0,0,0.15) !important;
 }
-
 .lw-settings-modal.is-channel-2 .lw-paper::before,
 .lw-settings-modal.is-channel-2 .lw-paper::after { display: none; }
-
-.lw-settings-modal.is-channel-2 .lw-panel-head {
-  border-bottom: 2px dashed #8b4513 !important;
-}
+.lw-settings-modal.is-channel-2 .lw-panel-head { border-bottom: 2px dashed #8b4513 !important; }
 .lw-settings-modal.is-channel-2 .lw-panel-head h3 {
   color: #5a3a2e !important;
   text-shadow: 1px 1px 0px rgba(255,255,255,0.5) !important;
   font-family: Georgia, serif !important;
 }
-
 .lw-settings-modal.is-channel-2 .lw-field label,
-.lw-settings-modal.is-channel-2 .lw-toggle-label {
-  color: #8b4513 !important;
-  text-shadow: none !important;
-}
-.lw-settings-modal.is-channel-2 .lw-hint {
-  display: none !important;
-  color: #8b8b00 !important;
-}
-
+.lw-settings-modal.is-channel-2 .lw-toggle-label { color: #8b4513 !important; text-shadow: none !important; }
+.lw-settings-modal.is-channel-2 .lw-hint { display: none !important; color: #8b8b00 !important; }
 .lw-settings-modal.is-channel-2 .lw-input,
 .lw-settings-modal.is-channel-2 .lw-select,
 .lw-settings-modal.is-channel-2 .lw-textarea {
@@ -1717,11 +1729,7 @@ var CSS = `
   border-color: #d4af37 !important;
   box-shadow: 0 0 8px rgba(212, 175, 55, 0.4) !important;
 }
-
-.lw-settings-modal.is-channel-2 .lw-setting-row {
-  border-bottom: 1px dashed rgba(139, 69, 19, 0.2) !important;
-}
-
+.lw-settings-modal.is-channel-2 .lw-setting-row { border-bottom: 1px dashed rgba(139, 69, 19, 0.2) !important; }
 .lw-settings-modal.is-channel-2 .lw-chip-compact {
   border: 2px solid #8b4513 !important;
   background: #fffacd !important;
@@ -1730,7 +1738,6 @@ var CSS = `
   clip-path: none !important;
   box-shadow: 1px 1px 2px rgba(0,0,0,0.1) !important;
 }
-
 .lw-settings-modal.is-channel-2 .lw-banner {
   border: 2px solid #d9534f !important;
   background: #f8d7da !important;
@@ -1738,23 +1745,12 @@ var CSS = `
   text-shadow: none !important;
   border-radius: 8px !important;
 }
-
-.lw-settings-modal.is-channel-2 .lw-details {
-  border: 2px solid #8b4513 !important;
-  background: #fffacd !important;
-  border-radius: 8px !important;
-  box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
-}
+.lw-settings-modal.is-channel-2 .lw-details { border: 2px solid #8b4513 !important; background: #fffacd !important; border-radius: 8px !important; box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important; }
 .lw-settings-modal.is-channel-2 .lw-details summary { color: #8b4513 !important; }
-
-.lw-settings-modal.is-channel-2 .lw-divider {
-  border-top: 2px dashed #8b4513 !important;
-}
-
+.lw-settings-modal.is-channel-2 .lw-divider { border-top: 2px dashed #8b4513 !important; }
 .lw-settings-modal.is-channel-2 .lw-clock-top { border-bottom: 2px solid #d4af37 !important; }
 .lw-settings-modal.is-channel-2 .lw-clock-time { color: #d4af37 !important; text-shadow: 0 0 5px #d4af37 !important; }
 .lw-settings-modal.is-channel-2 .lw-clock-status { color: #8b4513 !important; }
-
 .lw-settings-modal.is-channel-2 .lw-state-card {
   border: 2px solid #8b4513 !important;
   background: rgba(255, 255, 255, 0.48) !important;
@@ -1763,32 +1759,15 @@ var CSS = `
 }
 .lw-settings-modal.is-channel-2 .lw-state-label { color: #8b4513 !important; }
 .lw-settings-modal.is-channel-2 .lw-state-value { color: #5a3a2e !important; }
-
 .lw-settings-modal.is-channel-2 .lw-slot {
   border: 2px solid #8b4513 !important;
   background: #fffacd !important;
   border-radius: 8px !important;
   box-shadow: 3px 3px 0px rgba(139, 69, 19, 0.2) !important;
 }
-.lw-settings-modal.is-channel-2 .lw-slot.is-now {
-  border-color: #d4af37 !important;
-  box-shadow: 3px 3px 0px #d4af37 !important;
-  background: #fff8dc !important;
-}
-
-.lw-settings-modal.is-channel-2 .lw-run {
-  border: 2px solid #8b4513 !important;
-  background: rgba(255, 250, 205, 0.72) !important;
-  border-radius: 8px !important;
-  box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
-}
-
-.lw-settings-modal.is-channel-2 .lw-empty {
-  color: #8b4513 !important;
-  border: 2px dashed #8b4513 !important;
-  background: rgba(255, 250, 205, 0.46) !important;
-}
-
+.lw-settings-modal.is-channel-2 .lw-slot.is-now { border-color: #d4af37 !important; box-shadow: 3px 3px 0px #d4af37 !important; background: #fff8dc !important; }
+.lw-settings-modal.is-channel-2 .lw-run { border: 2px solid #8b4513 !important; background: rgba(255, 250, 205, 0.72) !important; border-radius: 8px !important; box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important; }
+.lw-settings-modal.is-channel-2 .lw-empty { color: #8b4513 !important; border: 2px dashed #8b4513 !important; background: rgba(255, 250, 205, 0.46) !important; }
 .lw-settings-modal.is-channel-2 .lw-btn {
   background: linear-gradient(to bottom, #d4af37, #aa8c2c) !important;
   color: #fff !important;
@@ -1799,73 +1778,23 @@ var CSS = `
   clip-path: none !important;
   font-family: Georgia, serif !important;
 }
-.lw-settings-modal.is-channel-2 .lw-btn:hover {
-  background: linear-gradient(to bottom, #e6c557, #ccaa3c) !important;
-  box-shadow: 2px 2px 6px rgba(0,0,0,0.3) !important;
-}
-.lw-settings-modal.is-channel-2 .lw-btn-primary {
-  background: linear-gradient(to bottom, #5cb85c, #4cae4c) !important;
-  border-color: #4cae4c !important;
-}
-.lw-settings-modal.is-channel-2 .lw-btn-primary:hover {
-  background: linear-gradient(to bottom, #6cc56c, #5cb85c) !important;
-}
-.lw-settings-modal.is-channel-2 .lw-btn-danger {
-  background: linear-gradient(to bottom, #d9534f, #c9302c) !important;
-  border-color: #c9302c !important;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
-  min-height: 116px;
-  max-height: 126px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
-  flex-wrap: wrap;
-  max-height: 92px;
-  overflow-y: auto;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-slot {
-  flex: 1 1 118px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
-  max-height: 122px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-clock-note {
-  gap: 5px;
-  padding: 10px !important;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time {
-  font-size: 18px;
-  letter-spacing: 0;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-actions {
-  gap: 5px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-set {
-  gap: 5px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-field label {
-  font-size: 9px;
-}
-
+.lw-settings-modal.is-channel-2 .lw-btn:hover { background: linear-gradient(to bottom, #e6c557, #ccaa3c) !important; box-shadow: 2px 2px 6px rgba(0,0,0,0.3) !important; }
+.lw-settings-modal.is-channel-2 .lw-btn-primary { background: linear-gradient(to bottom, #5cb85c, #4cae4c) !important; border-color: #4cae4c !important; }
+.lw-settings-modal.is-channel-2 .lw-btn-primary:hover { background: linear-gradient(to bottom, #6cc56c, #5cb85c) !important; }
+.lw-settings-modal.is-channel-2 .lw-btn-danger { background: linear-gradient(to bottom, #d9534f, #c9302c) !important; border-color: #c9302c !important; }
+.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea { min-height: 116px; max-height: 126px; }
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip { flex-wrap: wrap; max-height: 92px; overflow-y: auto; }
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-slot { flex: 1 1 118px; }
+.lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox { max-height: 122px; }
+.lw-settings-modal.is-channel-2 .lw-world-clock-note { gap: 5px; padding: 10px !important; }
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time { font-size: 18px; letter-spacing: 0; }
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-actions { gap: 5px; }
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-set { gap: 5px; }
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-field label { font-size: 9px; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note .lw-form,
 .lw-settings-modal.is-channel-2 .lw-world-params-note .lw-form,
-.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-form {
-  gap: 5px;
-}
-
-.lw-settings-modal.is-channel-2 .lw-world-config-note .lw-divider {
-  margin: 1px 0;
-}
-
+.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-form { gap: 5px; }
+.lw-settings-modal.is-channel-2 .lw-world-config-note .lw-divider { margin: 1px 0; }
 `;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -2670,6 +2599,51 @@ function setup(ctx) {
     tabs.append(director, world);
     shell.appendChild(tabs);
   }
+  function toggleSettingsView() {
+    const root = settingsModal?.root;
+    if (!root)
+      return;
+    const grid = root.querySelector(".lw-modal-grid");
+    const scene = root.querySelector(".lw-modal-scene");
+    const backBtn = root.querySelector(".lw-back-to-scene");
+    if (grid && scene) {
+      const isSceneVisible = !scene.classList.contains("lw-is-hidden");
+      if (isSceneVisible) {
+        scene.classList.add("lw-is-hidden");
+        grid.classList.remove("lw-is-hidden");
+        backBtn?.classList.remove("lw-is-hidden");
+      } else {
+        grid.classList.add("lw-is-hidden");
+        scene.classList.remove("lw-is-hidden");
+        backBtn?.classList.add("lw-is-hidden");
+      }
+    }
+  }
+  function renderScene(shell) {
+    const scene = createElement("div", "lw-modal-scene");
+    if (activeChannel === "director") {
+      scene.classList.add("lw-scene-eva");
+      const bg = createElement("div", "lw-eva-bg");
+      const silhouette = createElement("div", "lw-eva-silhouette");
+      const terminal = createElement("div", "lw-eva-terminal");
+      const screen = createElement("div", "lw-eva-screen", "ACCESS<br>NERV");
+      terminal.append(screen);
+      terminal.addEventListener("click", toggleSettingsView);
+      scene.append(bg, silhouette, terminal);
+    } else {
+      scene.classList.add("lw-scene-ghibli");
+      const bg = createElement("div", "lw-ghibli-bg");
+      const tree = createElement("div", "lw-ghibli-tree");
+      const totoro = createElement("div", "lw-ghibli-totoro");
+      const eyes = createElement("div", "lw-totoro-eyes");
+      eyes.innerHTML = "<span></span><span></span>";
+      const belly = createElement("div", "lw-totoro-belly");
+      totoro.append(eyes, belly);
+      totoro.addEventListener("click", toggleSettingsView);
+      scene.append(bg, tree, totoro);
+    }
+    shell.appendChild(scene);
+  }
   function renderSettingsModal() {
     if (!settingsModal)
       return;
@@ -2681,6 +2655,10 @@ function setup(ctx) {
       const shell = createElement("div", `lw-settings-modal is-channel-${activeChannel === "director" ? "1" : "2"}`);
       renderModalTabs(shell);
       const actions = createElement("div", "lw-modal-actions");
+      const backBtn = createElement("button", "lw-btn lw-back-to-scene lw-is-hidden", "◀ Back to Scene");
+      backBtn.type = "button";
+      backBtn.addEventListener("click", toggleSettingsView);
+      actions.prepend(backBtn);
       const refresh = createElement("button", "lw-btn", "Refresh");
       refresh.type = "button";
       refresh.addEventListener("click", () => {
@@ -2702,8 +2680,9 @@ function setup(ctx) {
         settingsModal.root.appendChild(shell);
         return;
       }
+      renderScene(shell);
       renderBanners(shell);
-      const grid = createElement("div", "lw-modal-grid");
+      const grid = createElement("div", "lw-modal-grid lw-is-hidden");
       if (activeChannel === "director")
         renderDirectorChannel(grid, true);
       else
