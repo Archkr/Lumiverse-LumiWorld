@@ -1113,6 +1113,28 @@ export function describeEmptyControllerResponse(response: unknown): string {
   ].join(" ");
 }
 
+export function describeEmptyWorldAgentResponse(response: unknown): string {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null,
+  ].filter(Boolean).join(", ");
+
+  if (reasoning) {
+    return [
+      `LumiWorld World Agent returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No schedule or state update was applied because LumiWorld only uses final response content.",
+    ].join(" ");
+  }
+
+  return [
+    `LumiWorld World Agent returned no final schedule or state update${suffix ? ` (${suffix})` : ""}.`,
+    "No schedule or state update was applied.",
+  ].join(" ");
+}
+
 export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
 }

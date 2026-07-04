@@ -1849,9 +1849,9 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
-  height: 272px;
-  min-height: 272px;
-  max-height: 272px;
+  height: 300px;
+  min-height: 300px;
+  max-height: 300px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -1938,6 +1938,15 @@ const CSS = `
   color: #a94442 !important;
   text-shadow: none !important;
   border-radius: 8px !important;
+}
+
+.lw-settings-modal.is-channel-1 > .lw-banner,
+.lw-settings-modal.is-channel-2 > .lw-banner {
+  box-sizing: border-box !important;
+  left: 28px !important;
+  right: 28px !important;
+  width: auto !important;
+  max-width: none !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-details {
@@ -2433,13 +2442,9 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderTextareaControl(slot: HTMLElement, value: string, onChange: (value: string) => void, ariaLabel: string): void {
-    const components = (ctx as any).components;
-    if (components?.mountTextArea) {
-      const handle = components.mountTextArea(slot, { value, rows: 5, ariaLabel, onChange }) as MountedHandle;
-      activeHandles.push(handle);
-      return;
-    }
+    slot.classList.add("lw-control-slot", "lw-textarea-slot");
     const input = createElement("textarea", "lw-textarea") as HTMLTextAreaElement;
+    input.setAttribute("aria-label", ariaLabel);
     input.value = value;
     input.spellcheck = false;
     input.addEventListener("input", () => onChange(input.value));

@@ -829,6 +829,25 @@ function describeEmptyControllerResponse(response) {
     "No director note was injected."
   ].join(" ");
 }
+function describeEmptyWorldAgentResponse(response) {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null
+  ].filter(Boolean).join(", ");
+  if (reasoning) {
+    return [
+      `LumiWorld World Agent returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No schedule or state update was applied because LumiWorld only uses final response content."
+    ].join(" ");
+  }
+  return [
+    `LumiWorld World Agent returned no final schedule or state update${suffix ? ` (${suffix})` : ""}.`,
+    "No schedule or state update was applied."
+  ].join(" ");
+}
 function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE_CHARS) {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
 }
@@ -1156,6 +1175,13 @@ class EmptyControllerDirectiveError extends Error {
   constructor(response) {
     super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
+  }
+}
+
+class EmptyWorldAgentContentError extends Error {
+  constructor(response) {
+    super(describeEmptyWorldAgentResponse(response));
+    this.name = "EmptyWorldAgentContentError";
   }
 }
 function storageApi() {
@@ -1670,7 +1696,7 @@ async function callWorldAgentModel(userId, settings, target, messages) {
     });
     const text = extractControllerResponseText(response);
     if (!text) {
-      throw new Error("LumiWorld World Agent returned no usable final content.");
+      throw new EmptyWorldAgentContentError(response);
     }
     return { text, durationMs: Date.now() - startedAt };
   } catch (error) {

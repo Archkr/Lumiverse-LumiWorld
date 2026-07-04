@@ -13,6 +13,7 @@ import {
   buildInjectedDirective,
   buildWorldAgentStateInjection,
   describeEmptyControllerResponse,
+  describeEmptyWorldAgentResponse,
   extractControllerResponseText,
   formatPromptForController,
   formatWorldAgentSchedule,
@@ -83,6 +84,13 @@ class EmptyControllerDirectiveError extends Error {
   constructor(response: unknown) {
     super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
+  }
+}
+
+class EmptyWorldAgentContentError extends Error {
+  constructor(response: unknown) {
+    super(describeEmptyWorldAgentResponse(response));
+    this.name = "EmptyWorldAgentContentError";
   }
 }
 
@@ -680,7 +688,7 @@ async function callWorldAgentModel(
     });
     const text = extractControllerResponseText(response);
     if (!text) {
-      throw new Error("LumiWorld World Agent returned no usable final content.");
+      throw new EmptyWorldAgentContentError(response);
     }
     return { text, durationMs: Date.now() - startedAt };
   } catch (error) {

@@ -11,6 +11,7 @@ import {
   buildInjectedDirective,
   buildWorldAgentStateInjection,
   describeEmptyControllerResponse,
+  describeEmptyWorldAgentResponse,
   extractControllerResponseText,
   formatPromptForController,
   formatWorldAgentClock,
@@ -549,6 +550,19 @@ describe("controller prompt and directive parsing", () => {
 
     expect(message).toContain("reasoning-only output");
     expect(message).toContain("820 reasoning tokens");
+    expect(message).not.toContain("/no_think");
+    expect(message).not.toContain("model-specific");
+  });
+
+  test("describes reasoning-only World Agent responses without model-specific advice", () => {
+    const message = describeEmptyWorldAgentResponse({
+      choices: [{ message: { content: "", reasoning_content: "analysis only" }, finish_reason: "stop" }],
+      usage: { completion_tokens_details: { reasoning_tokens: 820 } },
+    });
+
+    expect(message).toContain("World Agent returned reasoning-only output");
+    expect(message).toContain("820 reasoning tokens");
+    expect(message).toContain("final response content");
     expect(message).not.toContain("/no_think");
     expect(message).not.toContain("model-specific");
   });
