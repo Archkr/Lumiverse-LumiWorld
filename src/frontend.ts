@@ -1378,106 +1378,175 @@ const CSS = `
 
 /* =========================================
    SUPER DETAILED ANIMATED SETTINGS MODAL
-   (Scoped entirely to .lw-settings-modal)
+   (Transforms into a CRT TV broadcasting 
+   different anime "channels" based on tab)
    ========================================= */
 .lw-settings-modal {
   display: grid;
   gap: 14px;
-  color: #00ff41;
-  font-family: 'Share Tech Mono', 'Courier New', Courier, monospace;
+  color: #e0d6c8;
+  font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
-  padding: 24px;
-  background: #050a0e;
+  padding: 30px;
+  background: #050505;
   position: relative;
   overflow: hidden;
-  border: 1px solid #008f11;
-  --lumiverse-fill: #050a0e;
-  --lumiverse-fill-subtle: #0a1515;
-  --lumiverse-text: #00ff41;
-  --lumiverse-text-dim: #008f11;
-  --lumiverse-border: #00ff41;
-  --lumiverse-border-hover: #00f0ff;
-  --lumiverse-primary: #00ff41;
-  --lumiverse-primary-contrast: #000;
-  --lumiverse-danger: #ff003c;
-  --lumiverse-warning-050: #ffb000;
-  --lumiverse-success: #00ff41;
+  border: 24px solid #1a1a1a;
+  border-radius: 40px / 30px;
+  box-shadow: 0 0 0 4px #333, 0 20px 50px rgba(0,0,0,0.8), inset 0 0 100px rgba(0,0,0,0.8);
+  
+  /* Hide default scrollbar but allow scroll */
+  scrollbar-width: thin;
+  scrollbar-color: #ff7e00 transparent;
 }
+.lw-settings-modal::-webkit-scrollbar { width: 6px; background: transparent; }
+.lw-settings-modal::-webkit-scrollbar-thumb { background: #ff7e00; border-radius: 0; }
 
-/* Moving Grid Background */
-.lw-settings-modal::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-image: 
-    linear-gradient(rgba(0, 255, 65, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 255, 65, 0.05) 1px, transparent 1px);
-  background-size: 40px 40px;
-  animation: lw-modal-grid-move 4s linear infinite;
-  pointer-events: none;
-  z-index: 0;
-}
-
-@keyframes lw-modal-grid-move {
-  0% { background-position: 0 0; }
-  100% { background-position: 40px 40px; }
-}
-
-/* CRT Scanline Sweep */
+/* CRT Scanlines and Glare Overlay for the Modal TV */
 .lw-settings-modal::after {
   content: '';
   position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 100px;
-  background: linear-gradient(180deg, transparent, rgba(0, 255, 65, 0.05), transparent);
-  animation: lw-modal-scanline 8s linear infinite;
+  inset: 0;
+  background: 
+    linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.15) 50%);
+  background-size: 100% 4px;
   pointer-events: none;
   z-index: 9999;
+  opacity: 0.8;
 }
 
-@keyframes lw-modal-scanline {
-  0% { transform: translateY(-100px); }
-  100% { transform: translateY(100vh); }
+/* Channel 1: Director Note (Evangelion / NERV HQ Aesthetic) */
+.lw-settings-modal.is-channel-1 {
+  background-color: #1a0a0a;
+  background-image: 
+    linear-gradient(rgba(255, 153, 51, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 153, 51, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+  animation: lw-eva-bg-pulse 4s infinite alternate;
 }
 
+/* Rotating Targeting Reticle in Background */
+.lw-settings-modal.is-channel-1::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 150vmax; height: 150vmax;
+  background: 
+    conic-gradient(from 0deg, transparent 0%, rgba(255, 153, 51, 0.05) 10%, transparent 20%),
+    repeating-conic-gradient(rgba(255, 204, 0, 0.02) 0deg 10deg, transparent 10deg 20deg);
+  transform: translate(-50%, -50%);
+  animation: lw-eva-rotate 30s linear infinite;
+  z-index: 0;
+  pointer-events: none;
+}
+
+@keyframes lw-eva-rotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes lw-eva-bg-pulse {
+  0% { box-shadow: inset 0 0 50px rgba(255, 51, 51, 0.1); }
+  100% { box-shadow: inset 0 0 100px rgba(255, 51, 51, 0.3); }
+}
+
+/* Channel 2: World Agent (Spirited Away / Ghibli Aesthetic) */
+.lw-settings-modal.is-channel-2 {
+  background-color: #87ceeb;
+  background-image: linear-gradient(to bottom, #87ceeb 0%, #e0f7fa 60%, #f0f8ff 100%);
+  animation: none;
+}
+.lw-settings-modal.is-channel-2::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(circle at 10% 20%, #222 2px, transparent 3px),
+    radial-gradient(circle at 80% 40%, #222 3px, transparent 4px),
+    radial-gradient(circle at 30% 70%, #222 2px, transparent 3px),
+    radial-gradient(circle at 60% 80%, #222 4px, transparent 5px),
+    radial-gradient(circle at 90% 10%, #222 2px, transparent 3px),
+    radial-gradient(circle at 50% 50%, #222 1px, transparent 2px);
+  background-size: 200px 200px, 300px 300px, 250px 250px, 400px 400px, 150px 150px, 100px 100px;
+  animation: lw-ghibli-spirits 20s linear infinite;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+@keyframes lw-ghibli-spirits {
+  0% { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+  100% { background-position: 50px -200px, -80px 150px, 100px -100px, -50px -250px, 70px 300px, -30px -150px; }
+}
+
+/* Modal TV Channel Tabs (Remote Control Buttons) */
 .lw-settings-modal .lw-modal-tabs {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   position: relative;
   z-index: 20;
-  padding-bottom: 4px;
-  background: transparent;
-  border-bottom: 1px solid #008f11;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #333;
+  margin-bottom: 10px;
 }
-.lw-settings-modal .lw-modal-tab {
+
+.lw-settings-modal.is-channel-1 .lw-modal-tab {
   appearance: none;
-  border: 1px solid #008f11;
-  border-radius: 0;
-  background: transparent;
-  color: #008f11;
-  font: inherit;
+  border: 1px solid #ff9933;
+  background: #000;
+  color: #ff9933;
+  font-family: 'Courier New', monospace;
   font-weight: 800;
+  font-size: 12px;
   min-height: 34px;
   cursor: pointer;
   text-transform: uppercase;
-  padding: 0 20px;
+  padding: 0 24px;
   transition: all 0.2s;
   clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
-  text-shadow: none;
+  box-shadow: 0 0 10px rgba(255, 153, 51, 0.2);
+  letter-spacing: 1px;
 }
-.lw-settings-modal .lw-modal-tab:hover {
-  color: #00ff41;
-  border-color: #00ff41;
-  box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
-}
-.lw-settings-modal .lw-modal-tab.is-active {
-  background: #00ff41;
+.lw-settings-modal.is-channel-1 .lw-modal-tab:hover {
+  background: #ff9933;
   color: #000;
-  border-color: #00ff41;
-  box-shadow: 0 0 15px #00ff41;
-  text-shadow: none;
+  box-shadow: 0 0 15px #ff9933;
+}
+.lw-settings-modal.is-channel-1 .lw-modal-tab.is-active {
+  background: #ffcc00;
+  color: #000;
+  border-color: #ffcc00;
+  box-shadow: 0 0 20px #ffcc00;
 }
 
+.lw-settings-modal.is-channel-2 .lw-modal-tab {
+  appearance: none;
+  border: 2px solid #8b4513;
+  background: #fffacd;
+  color: #8b4513;
+  font-family: Georgia, serif;
+  font-weight: 800;
+  font-size: 12px;
+  min-height: 34px;
+  cursor: pointer;
+  text-transform: uppercase;
+  padding: 0 24px;
+  transition: all 0.2s;
+  border-radius: 8px;
+  box-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+}
+.lw-settings-modal.is-channel-2 .lw-modal-tab:hover {
+  background: #8b4513;
+  color: #fffacd;
+}
+.lw-settings-modal.is-channel-2 .lw-modal-tab.is-active {
+  background: #d4af37;
+  color: #fff;
+  border-color: #d4af37;
+  box-shadow: 0 0 10px #d4af37;
+}
+
+/* Modal Actions (Refresh/Test) */
 .lw-settings-modal .lw-modal-actions {
   display: flex;
   gap: 8px;
@@ -1486,6 +1555,7 @@ const CSS = `
   position: relative;
   z-index: 20;
 }
+
 .lw-settings-modal .lw-modal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -1495,202 +1565,322 @@ const CSS = `
   z-index: 20;
 }
 
-/* Override Lofi elements inside modal to match cyberpunk theme */
-.lw-settings-modal .lw-paper,
-.lw-settings-modal .lw-clock,
-.lw-settings-modal .lw-banner {
+/* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
+
+/* Channel 1: NERV Terminal Panels */
+.lw-settings-modal.is-channel-1 .lw-paper,
+.lw-settings-modal.is-channel-1 .lw-clock,
+.lw-settings-modal.is-channel-1 .lw-banner {
   width: 100%;
   max-width: none;
-  background: rgba(5, 10, 14, 0.9) !important;
-  backdrop-filter: blur(5px);
-  border-radius: 0 !important;
-  border: 1px solid #008f11 !important;
-  box-shadow: 0 0 15px rgba(0, 255, 65, 0.15) !important;
-  color: #00ff41 !important;
-  transform: none !important;
-  clip-path: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
-  text-shadow: 0 0 5px #00ff41;
+  background: #0a0a0a !important;
   background-image: none !important;
-}
-.lw-settings-modal .lw-paper:hover {
-  border-color: #00ff41 !important;
-  box-shadow: 0 0 25px rgba(0, 255, 65, 0.4) !important;
-  animation: lw-holo-pulse 2s infinite;
-}
-@keyframes lw-holo-pulse {
-  0% { box-shadow: 0 0 15px rgba(0, 255, 65, 0.2); }
-  50% { box-shadow: 0 0 30px rgba(0, 255, 65, 0.5); }
-  100% { box-shadow: 0 0 15px rgba(0, 255, 65, 0.2); }
-}
-
-.lw-settings-modal .lw-paper::before,
-.lw-settings-modal .lw-paper::after {
-  display: none;
-}
-
-.lw-settings-modal .lw-panel-head {
-  border-bottom: 1px solid #008f11 !important;
-}
-.lw-settings-modal .lw-panel-head h3 {
-  color: #00ff41 !important;
-  text-shadow: 0 0 5px #00ff41 !important;
-}
-
-.lw-settings-modal .lw-field label,
-.lw-settings-modal .lw-toggle-label {
-  color: #ffb000 !important;
-  text-shadow: 0 0 2px #ffb000 !important;
-}
-.lw-settings-modal .lw-hint {
-  color: #008f11 !important;
-}
-
-.lw-settings-modal .lw-input,
-.lw-settings-modal .lw-select,
-.lw-settings-modal .lw-textarea {
-  background: rgba(0, 0, 0, 0.5) !important;
-  color: #00ff41 !important;
-  border: 1px solid #008f11 !important;
+  color: #ffcc00 !important;
+  border: 2px solid #ff9933 !important;
   border-radius: 0 !important;
-  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
+  box-shadow: 0 0 15px rgba(255, 153, 51, 0.2), inset 0 0 10px rgba(0,0,0,0.8) !important;
+  transform: none !important;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
+  text-shadow: 0 0 5px #ff9933;
+  backdrop-filter: blur(2px);
 }
-.lw-settings-modal .lw-input:focus,
-.lw-settings-modal .lw-select:focus,
-.lw-settings-modal .lw-textarea:focus {
-  outline: none;
-  border-color: #00ff41 !important;
-  box-shadow: 0 0 10px rgba(0, 255, 65, 0.3), inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
-}
-
-.lw-settings-modal .lw-setting-row {
-  border-bottom: 1px dashed rgba(0, 255, 65, 0.2) !important;
+.lw-settings-modal.is-channel-1 .lw-paper:hover {
+  border-color: #ffcc00 !important;
+  box-shadow: 0 0 25px rgba(255, 204, 0, 0.4), inset 0 0 10px rgba(0,0,0,0.8) !important;
 }
 
-.lw-settings-modal .lw-chip-compact {
-  border: 1px solid #008f11 !important;
-  background: rgba(0, 0, 0, 0.5) !important;
-  color: #00ff41 !important;
+.lw-settings-modal.is-channel-1 .lw-paper::before,
+.lw-settings-modal.is-channel-1 .lw-paper::after { display: none; }
+
+.lw-settings-modal.is-channel-1 .lw-panel-head {
+  border-bottom: 1px solid #ff9933 !important;
+}
+.lw-settings-modal.is-channel-1 .lw-panel-head h3 {
+  color: #ffcc00 !important;
+  text-shadow: 0 0 5px #ff9933 !important;
+  font-family: 'Courier New', monospace !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-field label,
+.lw-settings-modal.is-channel-1 .lw-toggle-label {
+  color: #ff9933 !important;
+  text-shadow: 0 0 2px #ff9933 !important;
+}
+.lw-settings-modal.is-channel-1 .lw-hint {
+  color: #aa6600 !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-input,
+.lw-settings-modal.is-channel-1 .lw-select,
+.lw-settings-modal.is-channel-1 .lw-textarea {
+  background: #000 !important;
+  color: #ffcc00 !important;
+  border: 1px solid #ff9933 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 0 0 5px rgba(255, 153, 51, 0.2) !important;
+}
+.lw-settings-modal.is-channel-1 .lw-input:focus,
+.lw-settings-modal.is-channel-1 .lw-select:focus,
+.lw-settings-modal.is-channel-1 .lw-textarea:focus {
+  border-color: #ffcc00 !important;
+  box-shadow: 0 0 10px rgba(255, 204, 0, 0.5) !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-setting-row {
+  border-bottom: 1px dashed rgba(255, 153, 51, 0.3) !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-chip-compact {
+  border: 1px solid #ff9933 !important;
+  background: #000 !important;
+  color: #ffcc00 !important;
   border-radius: 0 !important;
   clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
 }
 
-.lw-settings-modal .lw-banner {
-  border: 1px solid #ffb000 !important;
-  background: rgba(255, 176, 0, 0.1) !important;
-  color: #ffb000 !important;
-  text-shadow: 0 0 5px #ffb000 !important;
+.lw-settings-modal.is-channel-1 .lw-banner {
+  border: 1px solid #ff003c !important;
+  background: rgba(255, 0, 60, 0.2) !important;
+  color: #ff003c !important;
+  text-shadow: 0 0 5px #ff003c !important;
   clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
 }
-.lw-settings-modal .lw-banner.error {
+
+.lw-settings-modal.is-channel-1 .lw-details {
+  border: 1px solid #ff9933 !important;
+  background: #000 !important;
+  box-shadow: none !important;
+}
+.lw-settings-modal.is-channel-1 .lw-details summary { color: #ffcc00 !important; }
+
+.lw-settings-modal.is-channel-1 .lw-divider {
+  border-top: 1px dashed #ff9933 !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-clock-top { border-bottom: 2px solid #ff003c !important; }
+.lw-settings-modal.is-channel-1 .lw-clock-time { color: #ff003c !important; text-shadow: 0 0 10px #ff003c !important; }
+.lw-settings-modal.is-channel-1 .lw-clock-status { color: #ffcc00 !important; }
+
+.lw-settings-modal.is-channel-1 .lw-state-card {
+  border: 1px solid #ff9933 !important;
+  background: #000 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 0 0 5px rgba(255, 153, 51, 0.2) !important;
+}
+.lw-settings-modal.is-channel-1 .lw-state-label { color: #ff9933 !important; }
+.lw-settings-modal.is-channel-1 .lw-state-value { color: #ffcc00 !important; }
+
+.lw-settings-modal.is-channel-1 .lw-slot {
+  border: 1px solid #ff9933 !important;
+  background: #000 !important;
+  border-radius: 0 !important;
+  box-shadow: inset 0 0 5px rgba(255, 153, 51, 0.2) !important;
+}
+.lw-settings-modal.is-channel-1 .lw-slot.is-now {
   border-color: #ff003c !important;
-  color: #ff003c !important;
-  background: rgba(255, 0, 60, 0.1) !important;
-  text-shadow: 0 0 5px #ff003c !important;
+  box-shadow: 0 0 10px #ff003c, inset 0 0 5px rgba(255, 0, 60, 0.2) !important;
 }
 
-.lw-settings-modal .lw-details {
-  border: 1px solid #008f11 !important;
-  background: rgba(0, 20, 10, 0.5) !important;
+.lw-settings-modal.is-channel-1 .lw-run {
+  border: 1px solid #ff9933 !important;
+  background: #000 !important;
   border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.lw-settings-modal .lw-details summary {
-  color: #ffb000 !important;
+  box-shadow: inset 0 0 5px rgba(255, 153, 51, 0.2) !important;
 }
 
-.lw-settings-modal .lw-divider {
-  border-top: 1px dashed #008f11 !important;
+.lw-settings-modal.is-channel-1 .lw-empty {
+  color: #ff9933 !important;
+  border: 1px dashed #ff9933 !important;
+  background: rgba(0,0,0,0.5) !important;
 }
 
-.lw-settings-modal .lw-clock-top {
-  border-bottom: 2px solid #00ff41 !important;
-}
-.lw-settings-modal .lw-clock-time {
-  color: #00ff41 !important;
-  text-shadow: 0 0 10px #00ff41 !important;
-}
-.lw-settings-modal .lw-clock-status {
-  color: #ffb000 !important;
-  text-shadow: 0 0 5px #ffb000 !important;
-}
-
-.lw-settings-modal .lw-state-card {
-  border: 1px solid #008f11 !important;
-  background: rgba(0, 0, 0, 0.5) !important;
+.lw-settings-modal.is-channel-1 .lw-btn {
+  background: #000 !important;
+  color: #ffcc00 !important;
+  border: 1px solid #ffcc00 !important;
   border-radius: 0 !important;
-  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
-}
-.lw-settings-modal .lw-state-label {
-  color: #ffb000 !important;
-  text-shadow: 0 0 2px #ffb000 !important;
-}
-.lw-settings-modal .lw-state-value {
-  color: #00ff41 !important;
-}
-
-.lw-settings-modal .lw-slot {
-  border: 1px solid #008f11 !important;
-  background: rgba(0, 20, 10, 0.5) !important;
-  border-radius: 0 !important;
-  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
-}
-.lw-settings-modal .lw-slot.is-now {
-  border-color: #ffb000 !important;
-  box-shadow: 0 0 10px #ffb000, inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
-  background: rgba(255, 176, 0, 0.1) !important;
-}
-
-.lw-settings-modal .lw-run {
-  border: 1px solid #008f11 !important;
-  background: rgba(0, 0, 0, 0.5) !important;
-  border-radius: 0 !important;
-  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.8) !important;
-}
-
-.lw-settings-modal .lw-empty {
-  color: #008f11 !important;
-  border: 1px dashed #008f11 !important;
-  background: rgba(0, 0, 0, 0.3) !important;
-}
-
-.lw-settings-modal .lw-btn {
-  background: transparent !important;
-  color: #00ff41 !important;
-  border: 1px solid #00ff41 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  text-shadow: 0 0 5px #00ff41 !important;
+  box-shadow: 0 0 10px rgba(255, 204, 0, 0.2) !important;
+  text-shadow: 0 0 5px #ffcc00 !important;
   clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
-  transition: all 0.2s !important;
 }
-.lw-settings-modal .lw-btn:hover {
-  background: #00ff41 !important;
+.lw-settings-modal.is-channel-1 .lw-btn:hover {
+  background: #ffcc00 !important;
   color: #000 !important;
-  box-shadow: 0 0 15px #00ff41 !important;
+  box-shadow: 0 0 15px #ffcc00 !important;
   text-shadow: none !important;
 }
-.lw-settings-modal .lw-btn:active {
-  transform: scale(0.98) !important;
-}
-.lw-settings-modal .lw-btn-primary {
-  border-color: #ffb000 !important;
-  color: #ffb000 !important;
-  text-shadow: 0 0 5px #ffb000 !important;
-}
-.lw-settings-modal .lw-btn-primary:hover {
-  background: #ffb000 !important;
-  color: #000 !important;
-  box-shadow: 0 0 15px #ffb000 !important;
-}
-.lw-settings-modal .lw-btn-danger {
+.lw-settings-modal.is-channel-1 .lw-btn-primary {
   border-color: #ff003c !important;
   color: #ff003c !important;
   text-shadow: 0 0 5px #ff003c !important;
 }
-.lw-settings-modal .lw-btn-danger:hover {
+.lw-settings-modal.is-channel-1 .lw-btn-primary:hover {
   background: #ff003c !important;
   color: #000 !important;
   box-shadow: 0 0 15px #ff003c !important;
+}
+.lw-settings-modal.is-channel-1 .lw-btn-danger {
+  border-color: #aa0000 !important;
+  color: #aa0000 !important;
+  text-shadow: none !important;
+}
+
+/* Channel 2: Ghibli Spirit Scrolls */
+.lw-settings-modal.is-channel-2 .lw-paper,
+.lw-settings-modal.is-channel-2 .lw-clock,
+.lw-settings-modal.is-channel-2 .lw-banner {
+  width: 100%;
+  max-width: none;
+  background: #fffacd !important;
+  background-image: linear-gradient(rgba(139, 69, 19, 0.1) 1px, transparent 1px) !important;
+  background-size: 100% 24px !important;
+  color: #5a3a2e !important;
+  border: 2px solid #8b4513 !important;
+  border-radius: 12px !important;
+  box-shadow: 4px 4px 0px rgba(139, 69, 19, 0.2), 0 5px 15px rgba(0,0,0,0.1) !important;
+  transform: none !important;
+  clip-path: none !important;
+  text-shadow: none !important;
+  backdrop-filter: blur(2px);
+}
+.lw-settings-modal.is-channel-2 .lw-paper:hover {
+  border-color: #d4af37 !important;
+  box-shadow: 4px 4px 0px rgba(212, 175, 55, 0.3), 0 5px 20px rgba(0,0,0,0.15) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-paper::before,
+.lw-settings-modal.is-channel-2 .lw-paper::after { display: none; }
+
+.lw-settings-modal.is-channel-2 .lw-panel-head {
+  border-bottom: 2px dashed #8b4513 !important;
+}
+.lw-settings-modal.is-channel-2 .lw-panel-head h3 {
+  color: #5a3a2e !important;
+  text-shadow: 1px 1px 0px rgba(255,255,255,0.5) !important;
+  font-family: Georgia, serif !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-field label,
+.lw-settings-modal.is-channel-2 .lw-toggle-label {
+  color: #8b4513 !important;
+  text-shadow: none !important;
+}
+.lw-settings-modal.is-channel-2 .lw-hint {
+  color: #8b8b00 !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-input,
+.lw-settings-modal.is-channel-2 .lw-select,
+.lw-settings-modal.is-channel-2 .lw-textarea {
+  background: rgba(255, 255, 255, 0.8) !important;
+  color: #5a3a2e !important;
+  border: 2px solid #8b4513 !important;
+  border-radius: 6px !important;
+  box-shadow: inset 1px 1px 4px rgba(139, 69, 19, 0.1) !important;
+  font-family: Georgia, serif !important;
+}
+.lw-settings-modal.is-channel-2 .lw-input:focus,
+.lw-settings-modal.is-channel-2 .lw-select:focus,
+.lw-settings-modal.is-channel-2 .lw-textarea:focus {
+  border-color: #d4af37 !important;
+  box-shadow: 0 0 8px rgba(212, 175, 55, 0.4) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-setting-row {
+  border-bottom: 1px dashed rgba(139, 69, 19, 0.2) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-chip-compact {
+  border: 2px solid #8b4513 !important;
+  background: #fffacd !important;
+  color: #5a3a2e !important;
+  border-radius: 6px !important;
+  clip-path: none !important;
+  box-shadow: 1px 1px 2px rgba(0,0,0,0.1) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-banner {
+  border: 2px solid #d9534f !important;
+  background: #f8d7da !important;
+  color: #a94442 !important;
+  text-shadow: none !important;
+  border-radius: 8px !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-details {
+  border: 2px solid #8b4513 !important;
+  background: #fffacd !important;
+  border-radius: 8px !important;
+  box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-details summary { color: #8b4513 !important; }
+
+.lw-settings-modal.is-channel-2 .lw-divider {
+  border-top: 2px dashed #8b4513 !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-clock-top { border-bottom: 2px solid #d4af37 !important; }
+.lw-settings-modal.is-channel-2 .lw-clock-time { color: #d4af37 !important; text-shadow: 0 0 5px #d4af37 !important; }
+.lw-settings-modal.is-channel-2 .lw-clock-status { color: #8b4513 !important; }
+
+.lw-settings-modal.is-channel-2 .lw-state-card {
+  border: 2px solid #8b4513 !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-radius: 8px !important;
+  box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-state-label { color: #8b4513 !important; }
+.lw-settings-modal.is-channel-2 .lw-state-value { color: #5a3a2e !important; }
+
+.lw-settings-modal.is-channel-2 .lw-slot {
+  border: 2px solid #8b4513 !important;
+  background: #fffacd !important;
+  border-radius: 8px !important;
+  box-shadow: 3px 3px 0px rgba(139, 69, 19, 0.2) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-slot.is-now {
+  border-color: #d4af37 !important;
+  box-shadow: 3px 3px 0px #d4af37 !important;
+  background: #fff8dc !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-run {
+  border: 2px solid #8b4513 !important;
+  background: #fffacd !important;
+  border-radius: 8px !important;
+  box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-empty {
+  color: #8b4513 !important;
+  border: 2px dashed #8b4513 !important;
+  background: rgba(255, 250, 205, 0.5) !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-btn {
+  background: linear-gradient(to bottom, #d4af37, #aa8c2c) !important;
+  color: #fff !important;
+  border: 2px solid #8b4513 !important;
+  border-radius: 6px !important;
+  box-shadow: 2px 2px 4px rgba(0,0,0,0.2) !important;
+  text-shadow: 1px 1px 1px rgba(0,0,0,0.3) !important;
+  clip-path: none !important;
+  font-family: Georgia, serif !important;
+}
+.lw-settings-modal.is-channel-2 .lw-btn:hover {
+  background: linear-gradient(to bottom, #e6c557, #ccaa3c) !important;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.3) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-btn-primary {
+  background: linear-gradient(to bottom, #5cb85c, #4cae4c) !important;
+  border-color: #4cae4c !important;
+}
+.lw-settings-modal.is-channel-2 .lw-btn-primary:hover {
+  background: linear-gradient(to bottom, #6cc56c, #5cb85c) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-btn-danger {
+  background: linear-gradient(to bottom, #d9534f, #c9302c) !important;
+  border-color: #c9302c !important;
 }
 `;
 
@@ -2598,10 +2788,10 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderModalTabs(shell: HTMLElement): void {
     const tabs = createElement("div", "lw-modal-tabs");
-    const director = createElement("button", `lw-modal-tab${activeChannel === "director" ? " is-active" : ""}`, "Director Note");
+    const director = createElement("button", `lw-modal-tab${activeChannel === "director" ? " is-active" : ""}`, "CH 1: Director");
     director.type = "button";
     director.addEventListener("click", () => setActiveChannel("director"));
-    const world = createElement("button", `lw-modal-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "World Agent");
+    const world = createElement("button", `lw-modal-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "CH 2: World Agent");
     world.type = "button";
     world.addEventListener("click", () => setActiveChannel("world_agent"));
     tabs.append(director, world);
@@ -2615,7 +2805,7 @@ export function setup(ctx: SpindleFrontendContext) {
     activeHandles = modalHandles;
     try {
       settingsModal.root.replaceChildren();
-      const shell = createElement("div", "lw-settings-modal");
+      const shell = createElement("div", `lw-settings-modal is-channel-${activeChannel === "director" ? "1" : "2"}`);
       renderModalTabs(shell);
 
       const actions = createElement("div", "lw-modal-actions");
