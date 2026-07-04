@@ -1224,12 +1224,20 @@ var CSS = `
 .lw-settings-modal {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 38px minmax(0, 1fr);
   gap: 10px 12px;
   align-items: start;
   color: #e0d6c8;
   font-family: 'Courier New', Courier, monospace;
   font-size: 11.5px;
   padding: 18px;
+  box-sizing: border-box;
+  width: 1280px;
+  height: 720px;
+  min-width: 1280px;
+  min-height: 720px;
+  max-width: 1280px;
+  max-height: 720px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1331,6 +1339,7 @@ var CSS = `
   position: relative;
   grid-column: 1;
   grid-row: 1;
+  align-self: start;
   z-index: 20;
   padding-bottom: 8px;
   border-bottom: 2px solid #333;
@@ -1402,6 +1411,7 @@ var CSS = `
   position: relative;
   grid-column: 2;
   grid-row: 1;
+  align-self: start;
   z-index: 20;
 }
 
@@ -1409,8 +1419,12 @@ var CSS = `
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-column: 1 / -1;
+  grid-row: 2;
   gap: 10px;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   position: relative;
   z-index: 20;
 }
@@ -1418,9 +1432,21 @@ var CSS = `
 .lw-settings-modal > .lw-empty {
   grid-column: 1 / -1;
 }
+.lw-settings-modal > .lw-banner {
+  position: absolute;
+  top: 64px;
+  left: 28px;
+  right: 28px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  z-index: 40;
+}
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 0.95fr 0.85fr 1.1fr 1.1fr;
+  grid-template-columns: 252px 220px 330px 330px;
+  grid-template-rows: 255px 1fr;
+  justify-content: center;
   grid-template-areas:
     "core model context notes"
     "core system user runs";
@@ -1435,11 +1461,13 @@ var CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 0.8fr 0.95fr 0.95fr 1.25fr;
+  grid-template-columns: 248px 248px 342px 248px;
+  grid-template-rows: 165px 165px 1fr;
+  justify-content: center;
   grid-template-areas:
-    "clock config params state"
-    "clock templates schedule state"
-    "runs templates schedule state";
+    "clock . . state"
+    "config . . state"
+    "params templates schedule runs";
   align-items: stretch;
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
@@ -1630,17 +1658,17 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-banner {
   width: 100%;
   max-width: none;
-  background: #fffacd !important;
-  background-image: linear-gradient(rgba(139, 69, 19, 0.1) 1px, transparent 1px) !important;
+  background: rgba(255, 250, 205, 0.76) !important;
+  background-image: linear-gradient(rgba(139, 69, 19, 0.08) 1px, transparent 1px) !important;
   background-size: 100% 24px !important;
   color: #5a3a2e !important;
   border: 2px solid #8b4513 !important;
   border-radius: 12px !important;
-  box-shadow: 4px 4px 0px rgba(139, 69, 19, 0.2), 0 5px 15px rgba(0,0,0,0.1) !important;
+  box-shadow: 4px 4px 0px rgba(139, 69, 19, 0.18), 0 5px 15px rgba(0,0,0,0.1) !important;
   transform: none !important;
   clip-path: none !important;
   text-shadow: none !important;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(1px) saturate(1.05);
   min-height: 0;
   padding: 14px !important;
 }
@@ -1726,7 +1754,7 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-state-card {
   border: 2px solid #8b4513 !important;
-  background: rgba(255, 255, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.48) !important;
   border-radius: 8px !important;
   box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
 }
@@ -1747,7 +1775,7 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-run {
   border: 2px solid #8b4513 !important;
-  background: #fffacd !important;
+  background: rgba(255, 250, 205, 0.72) !important;
   border-radius: 8px !important;
   box-shadow: 2px 2px 4px rgba(0,0,0,0.1) !important;
 }
@@ -1755,7 +1783,7 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-empty {
   color: #8b4513 !important;
   border: 2px dashed #8b4513 !important;
-  background: rgba(255, 250, 205, 0.5) !important;
+  background: rgba(255, 250, 205, 0.46) !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-btn {
@@ -1802,29 +1830,6 @@ var CSS = `
   max-height: 118px;
 }
 
-@media (max-width: 1180px) {
-  .lw-settings-modal {
-    grid-template-columns: 1fr;
-  }
-  .lw-settings-modal .lw-modal-tabs,
-  .lw-settings-modal .lw-modal-actions,
-  .lw-settings-modal .lw-modal-grid {
-    grid-column: 1;
-  }
-  .lw-settings-modal .lw-modal-actions {
-    grid-row: 2;
-    justify-content: flex-start;
-  }
-  .lw-settings-modal.is-channel-1 .lw-modal-grid,
-  .lw-settings-modal.is-channel-2 .lw-modal-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: none;
-  }
-  .lw-settings-modal.is-channel-1 .lw-modal-grid > *,
-  .lw-settings-modal.is-channel-2 .lw-modal-grid > * {
-    grid-area: auto;
-  }
-}
 `;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -2678,7 +2683,7 @@ function setup(ctx) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1640, maxHeight: 1120 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1320, maxHeight: 820 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
