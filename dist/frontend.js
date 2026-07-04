@@ -1223,11 +1223,13 @@ var CSS = `
    ========================================= */
 .lw-settings-modal {
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: start;
   color: #e0d6c8;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
-  padding: 30px;
+  padding: 18px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1324,10 +1326,12 @@ var CSS = `
   display: flex;
   gap: 12px;
   position: relative;
+  grid-column: 1;
+  grid-row: 1;
   z-index: 20;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
   border-bottom: 2px solid #333;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-tab {
@@ -1393,17 +1397,40 @@ var CSS = `
   justify-content: flex-end;
   flex-wrap: wrap;
   position: relative;
+  grid-column: 2;
+  grid-row: 1;
   z-index: 20;
 }
 
 .lw-settings-modal .lw-modal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
+  grid-column: 1 / -1;
+  gap: 10px;
   align-items: start;
   position: relative;
   z-index: 20;
 }
+.lw-settings-modal > .lw-banner,
+.lw-settings-modal > .lw-empty {
+  grid-column: 1 / -1;
+}
+
+.lw-settings-modal.is-channel-1 .lw-modal-grid {
+  grid-template-columns: 1.08fr 0.98fr 0.98fr 0.98fr;
+  grid-template-areas:
+    "settings status context notes"
+    "settings system system notes"
+    "user user runs runs";
+  align-items: stretch;
+}
+.lw-settings-modal.is-channel-1 .lw-director-settings-note { grid-area: settings; }
+.lw-settings-modal.is-channel-1 .lw-director-status-note { grid-area: status; }
+.lw-settings-modal.is-channel-1 .lw-director-context-note { grid-area: context; }
+.lw-settings-modal.is-channel-1 .lw-director-notes-note { grid-area: notes; }
+.lw-settings-modal.is-channel-1 .lw-director-system-note { grid-area: system; }
+.lw-settings-modal.is-channel-1 .lw-director-user-note { grid-area: user; }
+.lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 /* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
 
@@ -1423,8 +1450,8 @@ var CSS = `
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
   text-shadow: 0 0 5px #ff9933;
   backdrop-filter: blur(2px);
-  min-height: 148px;
-  padding: 22px !important;
+  min-height: 124px;
+  padding: 18px !important;
 }
 .lw-settings-modal.is-channel-1 .lw-paper:hover {
   border-color: #ffcc00 !important;
@@ -1572,7 +1599,52 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
-  min-height: 260px;
+  min-height: 180px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-settings-note,
+.lw-settings-modal.is-channel-1 .lw-director-notes-note {
+  align-self: stretch;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
+  min-height: 178px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-system-note .lw-textarea {
+  min-height: 190px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
+  min-height: 170px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-runs-note {
+  align-self: start;
+}
+
+@media (max-width: 1100px) {
+  .lw-settings-modal {
+    grid-template-columns: 1fr;
+  }
+  .lw-settings-modal .lw-modal-tabs,
+  .lw-settings-modal .lw-modal-actions,
+  .lw-settings-modal .lw-modal-grid {
+    grid-column: 1;
+  }
+  .lw-settings-modal .lw-modal-actions {
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  .lw-settings-modal.is-channel-1 .lw-modal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "settings status"
+      "context notes"
+      "system system"
+      "user user"
+      "runs runs";
+  }
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -2138,7 +2210,7 @@ function setup(ctx) {
     slot.appendChild(input);
   }
   function renderDirectorChannel(shell, includeExtras = true) {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", "lw-paper lw-director-settings-note");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Director Settings"));
     const toggleSlot = createElement("div", "lw-switch-slot");
@@ -2200,7 +2272,7 @@ function setup(ctx) {
     }
   }
   function renderDirectorStatus(shell) {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", "lw-paper lw-director-status-note");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Director Status"));
     paper.appendChild(head);
@@ -2234,10 +2306,10 @@ function setup(ctx) {
       shell.appendChild(paper);
     };
     const entriesHint = state?.permissions.worldBooks === false ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries." : "Fetch activated World Info entry content and send it to the controller.";
-    appendNote("Controller Context", "", toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."));
-    appendNote("Additional Notes", "", textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."));
-    appendNote("System Template", "lw-template-note", textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."));
-    appendNote("User Template", "lw-template-note", textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })));
+    appendNote("Controller Context", "lw-director-context-note", toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."));
+    appendNote("Additional Notes", "lw-director-notes-note", textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."));
+    appendNote("System Template", "lw-template-note lw-director-system-note", textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."));
+    appendNote("User Template", "lw-template-note lw-director-user-note", textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })));
   }
   function renderWorldAgentChannel(shell, includeExtras = true) {
     renderWorldAgentClock(shell);
@@ -2396,7 +2468,7 @@ function setup(ctx) {
     shell.appendChild(details);
   }
   function renderRuns(shell, channel) {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", `lw-paper ${channel === "director" ? "lw-runs-note" : "lw-world-runs-note"}`);
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
     const clear = createElement("button", "lw-btn", "Clear");
