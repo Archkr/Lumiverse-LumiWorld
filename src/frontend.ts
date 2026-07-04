@@ -343,8 +343,10 @@ const DEFAULT_SETTINGS: LumiWorldSettings = {
 
 const CSS = `
 .lw-root {
-  min-height: 100%;
-  height: 100%;
+  min-height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
+  height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
+  width: calc(100% + 24px);
+  margin: -12px -12px 0;
   color: #e0d6c8;
   background: #1a1a2e;
   box-sizing: border-box;
@@ -382,9 +384,9 @@ const CSS = `
   background: rgba(0,0,0,0.6);
   border: 1px solid rgba(255,255,255,0.2);
   color: #fff;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 28px;
+  height: 42px;
+  border-radius: 999px;
   cursor: pointer;
   font-size: 18px;
   display: flex;
@@ -434,19 +436,23 @@ const CSS = `
 }
 
 .lw-panel {
+  flex: 0 0 25%;
   width: 25%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 20px;
+  padding: 18px 34px 128px;
   box-sizing: border-box;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  padding-bottom: 140px; /* Space for floor */
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 158, 61, 0.45) transparent;
 }
-.lw-panel::-webkit-scrollbar { width: 0; background: transparent; }
+.lw-panel::-webkit-scrollbar { width: 6px; background: transparent; }
+.lw-panel::-webkit-scrollbar-thumb { background: rgba(255, 158, 61, 0.45); border-radius: 999px; }
 
 /* Continuous Floor */
 .lw-panel::after {
@@ -466,8 +472,8 @@ const CSS = `
 /* TV Panel (Panel 0) */
 .lw-window {
   position: absolute;
-  top: 20px; left: 20px;
-  width: 120px; height: 90px;
+  top: 18px; left: 18px;
+  width: clamp(96px, 31vw, 122px); height: clamp(72px, 23vw, 90px);
   background: linear-gradient(to bottom, #0f3460, #16213e);
   border: 6px solid #3a261f;
   border-radius: 2px;
@@ -527,19 +533,23 @@ const CSS = `
 
 .lw-led-sign {
   position: absolute;
-  top: 30px; right: 20px;
+  top: 34px; right: 18px;
+  width: min(215px, calc(100% - 166px));
   background: #111;
   border: 3px solid #3a2e2a;
-  padding: 8px 14px;
+  padding: 8px 10px;
   border-radius: 6px;
   box-shadow: 0 0 20px rgba(255, 126, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.9);
   color: #ff9e3d;
   text-shadow: 0 0 8px #ff9e3d, 0 0 15px #ff7e00, 0 0 25px #ff5500;
   font-weight: bold;
-  font-size: 14px;
-  letter-spacing: 1px;
+  font-size: clamp(11px, 3.3vw, 14px);
+  letter-spacing: 0.8px;
   animation: lw-flicker 4s infinite alternate;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
   z-index: 2;
 }
 @keyframes lw-flicker {
@@ -550,8 +560,9 @@ const CSS = `
 /* Retro CRT TV */
 .lw-tv-container {
   position: relative;
-  margin-top: auto;
-  margin-bottom: 80px;
+  width: min(100%, 288px);
+  margin-top: clamp(190px, 38vh, 280px);
+  margin-bottom: 78px;
   z-index: 2;
 }
 .lw-tv {
@@ -564,8 +575,8 @@ const CSS = `
     inset 0 2px 4px rgba(255,255,255,0.6), 
     inset 0 -4px 8px rgba(0,0,0,0.1);
   position: relative;
-  width: 280px;
-  max-width: 90%;
+  width: 100%;
+  max-width: none;
 }
 .lw-tv::before { /* Vents */
   content: '';
@@ -720,22 +731,24 @@ const CSS = `
 .lw-poster {
   background: #fff;
   color: #111;
-  padding: 10px 20px;
-  font-size: 18px;
+  width: min(100%, 318px);
+  padding: 9px 14px;
+  font-size: clamp(13px, 4vw, 17px);
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1.2px;
+  text-align: center;
   box-shadow: 3px 5px 15px rgba(0,0,0,0.6);
   transform: rotate(-2deg);
-  margin-top: 20px;
+  margin-top: 4px;
   border: 4px solid #111;
   z-index: 2;
 }
 .lw-poster.lw-alt { transform: rotate(2deg); background: #ff9e3d; }
 
 .lw-paper {
-  width: 90%;
-  max-width: 320px;
+  width: min(100%, 328px);
+  max-width: 328px;
   background-color: #fefae0;
   background-image: linear-gradient(#e6dcc3 1px, transparent 1px);
   background-size: 100% 20px;
@@ -839,8 +852,8 @@ const CSS = `
   margin-bottom: 10px;
   font-size: 11.5px;
   overflow-wrap: anywhere;
-  width: 90%;
-  max-width: 320px;
+  width: min(100%, 328px);
+  max-width: 328px;
   text-align: center;
 }
 .lw-banner.warn { background: #d8aa63; }
@@ -875,8 +888,8 @@ const CSS = `
   box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 5px 10px rgba(0,0,0,0.5);
   text-align: center;
   min-width: 0;
-  width: 90%;
-  max-width: 320px;
+  width: min(100%, 328px);
+  max-width: 328px;
 }
 .lw-clock-top {
   display: flex;
@@ -1011,7 +1024,7 @@ const CSS = `
 }
 .lw-mug {
   position: absolute;
-  bottom: 20px; left: 20px;
+  bottom: 18px; left: 26px;
   width: 30px; height: 35px;
   background: #eee;
   border-radius: 5px 5px 15px 15px;
@@ -1049,7 +1062,7 @@ const CSS = `
 }
 .lw-lamp {
   position: absolute;
-  bottom: 20px; right: 20px;
+  bottom: 18px; right: 26px;
   width: 60px; height: 80px;
 }
 .lw-lamp-base { width: 30px; height: 6px; background: #333; position: absolute; bottom: 0; left: 15px; border-radius: 2px; }
@@ -1066,12 +1079,13 @@ const CSS = `
 /* Bed Decorations (Panel 2) */
 .lw-bed {
   position: absolute;
-  bottom: 0; right: -50px;
-  width: 250px; height: 100px;
+  bottom: 0; right: -34px;
+  width: 210px; height: 86px;
   background: #6b5d4f;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
   z-index: 1;
+  opacity: 0.72;
 }
 .lw-pillow {
   position: absolute;
@@ -1092,8 +1106,8 @@ const CSS = `
 /* Bookshelf Decorations (Panel 3) */
 .lw-shelf {
   position: absolute;
-  bottom: 20px; right: 20px;
-  width: 80px; height: 100px;
+  bottom: 18px; right: 22px;
+  width: 72px; height: 92px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -1121,6 +1135,31 @@ const CSS = `
 .lw-book:nth-child(3) { height: 35px; background: #cf7e7e; }
 .lw-book:nth-child(4) { height: 20px; background: #d8aa63; }
 .lw-book:nth-child(5) { height: 30px; background: #fff; }
+
+@media (max-width: 360px) {
+  .lw-panel { padding: 16px 28px 118px; gap: 12px; }
+  .lw-nav-left { left: 4px; }
+  .lw-nav-right { right: 4px; }
+  .lw-window { top: 14px; left: 14px; width: 96px; height: 72px; border-width: 5px; }
+  .lw-led-sign {
+    top: 102px;
+    left: 50%;
+    right: auto;
+    width: min(88%, 260px);
+    transform: translateX(-50%);
+    font-size: 12px;
+  }
+  .lw-tv-container { width: min(100%, 246px); margin-top: 172px; margin-bottom: 72px; }
+  .lw-tv { padding: 12px; padding-bottom: 30px; border-radius: 16px 16px 8px 8px; }
+  .lw-tv-content { padding: 9px; font-size: 10px; }
+  .lw-tv-row { grid-template-columns: 34px 1fr; gap: 2px 5px; padding: 3px 4px; }
+  .lw-tv-status { grid-column: 2; justify-self: start; font-size: 8px; }
+  .lw-two { grid-template-columns: 1fr; }
+  .lw-clock-actions { grid-template-columns: 1fr; }
+  .lw-meter-grid { grid-template-columns: 1fr; }
+  .lw-poster, .lw-paper, .lw-banner, .lw-clock { max-width: 100%; }
+  .lw-bed { width: 178px; height: 76px; right: -46px; }
+}
 `;
 
 type MountedHandle = { destroy(): void };
@@ -1555,7 +1594,7 @@ export function setup(ctx: SpindleFrontendContext) {
     slot.appendChild(input);
   }
 
-  function renderDirectorChannel(shell: HTMLElement): void {
+  function renderDirectorChannel(shell: HTMLElement, includeExtras = true): void {
     const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Director Settings"));
@@ -1628,8 +1667,10 @@ export function setup(ctx: SpindleFrontendContext) {
     paper.appendChild(form);
     shell.appendChild(paper);
 
-    renderDirectorAdvanced(shell);
-    renderRuns(shell, "director");
+    if (includeExtras) {
+      renderDirectorAdvanced(shell);
+      renderRuns(shell, "director");
+    }
   }
 
   function renderDirectorAdvanced(shell: HTMLElement): void {
@@ -1651,7 +1692,7 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(details);
   }
 
-  function renderWorldAgentChannel(shell: HTMLElement): void {
+  function renderWorldAgentChannel(shell: HTMLElement, includeExtras = true): void {
     renderWorldAgentClock(shell);
 
     const paper = createElement("div", "lw-paper");
@@ -1695,8 +1736,10 @@ export function setup(ctx: SpindleFrontendContext) {
 
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
-    renderWorldAgentAdvanced(shell);
-    renderRuns(shell, "world_agent");
+    if (includeExtras) {
+      renderWorldAgentAdvanced(shell);
+      renderRuns(shell, "world_agent");
+    }
   }
 
   function renderWorldAgentClock(shell: HTMLElement): void {
@@ -1966,7 +2009,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderDirectorPanel(shell: HTMLElement): void {
     shell.appendChild(createElement("div", "lw-poster", "01 Director Note"));
     renderBanners(shell);
-    renderDirectorChannel(shell);
+    renderDirectorChannel(shell, false);
     
     const deskDecor = createElement("div", "lw-desk-decor");
     const mug = createElement("div", "lw-mug");
@@ -1979,7 +2022,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderWorldAgentPanel(shell: HTMLElement): void {
     shell.appendChild(createElement("div", "lw-poster lw-alt", "02 World Agent"));
-    renderWorldAgentChannel(shell);
+    renderWorldAgentChannel(shell, false);
     
     const bed = createElement("div", "lw-bed");
     bed.innerHTML = `<div class="lw-pillow"></div><div class="lw-blanket"></div>`;
@@ -2010,11 +2053,15 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(shelf);
   }
 
+  function setCurrentPanel(panelIndex: number): void {
+    currentPanel = Math.min(3, Math.max(0, panelIndex));
+    if (currentPanel === 1) activeChannel = "director";
+    if (currentPanel === 2) activeChannel = "world_agent";
+    updateRoomPosition();
+  }
+
   function switchChannel(channel: LumiWorldChannel, panelIndex: number): void {
     activeChannel = channel;
-    // Update TV UI instantly without full re-render
-    document.querySelectorAll(".lw-tv-row").forEach(el => el.classList.remove("is-active"));
-    // It's safer to just re-render to ensure the Archives panel updates too
     currentPanel = panelIndex;
     render();
   }
@@ -2022,8 +2069,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function navigateRoom(direction: "left" | "right"): void {
     const target = direction === "left" ? currentPanel - 1 : currentPanel + 1;
     if (target >= 0 && target <= 3) {
-      currentPanel = target;
-      updateRoomPosition();
+      setCurrentPanel(target);
     }
   }
 
@@ -2063,8 +2109,7 @@ export function setup(ctx: SpindleFrontendContext) {
     for (let i = 0; i < 4; i++) {
       const dot = createElement("div", `lw-dot${i === currentPanel ? " is-active" : ""}`);
       dot.addEventListener("click", () => {
-        currentPanel = i;
-        updateRoomPosition();
+        setCurrentPanel(i);
       });
       navDots.appendChild(dot);
     }
@@ -2075,7 +2120,7 @@ export function setup(ctx: SpindleFrontendContext) {
     roomWrapper.style.transform = `translateX(-${currentPanel * 25}%)`;
 
     // Panel 0: TV
-    const tvPanel = createElement("div", "lw-panel");
+    const tvPanel = createElement("div", "lw-panel lw-tv-room");
     if (!state) {
       tvPanel.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
     } else {
@@ -2083,15 +2128,15 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     
     // Panel 1: Director
-    const directorPanel = createElement("div", "lw-panel");
+    const directorPanel = createElement("div", "lw-panel lw-settings-room");
     if (state) renderDirectorPanel(directorPanel);
 
     // Panel 2: World Agent
-    const worldAgentPanel = createElement("div", "lw-panel");
+    const worldAgentPanel = createElement("div", "lw-panel lw-settings-room");
     if (state) renderWorldAgentPanel(worldAgentPanel);
 
     // Panel 3: Archives
-    const archivesPanel = createElement("div", "lw-panel");
+    const archivesPanel = createElement("div", "lw-panel lw-settings-room");
     if (state) renderArchivesPanel(archivesPanel);
 
     roomWrapper.append(tvPanel, directorPanel, worldAgentPanel, archivesPanel);
