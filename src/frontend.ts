@@ -1583,6 +1583,8 @@ const CSS = `
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
   text-shadow: 0 0 5px #ff9933;
   backdrop-filter: blur(2px);
+  min-height: 148px;
+  padding: 22px !important;
 }
 .lw-settings-modal.is-channel-1 .lw-paper:hover {
   border-color: #ffcc00 !important;
@@ -1723,6 +1725,14 @@ const CSS = `
   border-color: #aa0000 !important;
   color: #aa0000 !important;
   text-shadow: none !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-details {
+  min-height: 220px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
+  min-height: 260px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -2419,28 +2429,73 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(paper);
 
     if (includeExtras) {
+      renderDirectorStatus(shell);
       renderDirectorAdvanced(shell);
       renderRuns(shell, "director");
     }
   }
 
+  function renderDirectorStatus(shell: HTMLElement): void {
+    const paper = createElement("div", "lw-paper");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Director Status"));
+    paper.appendChild(head);
+
+    const grid = createElement("div", "lw-meter-grid");
+    const connection = selectedConnection(draft.connectionId);
+    const run = latestRun("director");
+    const cards = [
+      ["State", draft.enabled ? "Enabled" : "Disabled"],
+      ["Connection", connection?.name || "Not selected"],
+      ["Model", draft.modelOverride || connection?.model || "Connection default"],
+      ["Last Run", run ? formatStatus(run.status) : "No run yet"],
+      ["History", `${draft.historyMessageLimit} messages`],
+      ["World Info", draft.includeWorldInfoEntries ? "Included" : "Off"],
+    ];
+    for (const [label, value] of cards) {
+      const card = createElement("div", "lw-state-card");
+      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
+      grid.appendChild(card);
+    }
+    paper.appendChild(grid);
+    shell.appendChild(paper);
+  }
+
   function renderDirectorAdvanced(shell: HTMLElement): void {
-    const details = createElement("details", "lw-paper lw-details") as HTMLDetailsElement;
-    const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lw-details-body");
+    const appendNote = (title: string, className: string, ...children: HTMLElement[]) => {
+      const paper = createElement("div", `lw-paper ${className}`);
+      const head = createElement("div", "lw-panel-head");
+      head.appendChild(createElement("h3", undefined, title));
+      const body = createElement("div", "lw-form");
+      body.append(...children);
+      paper.append(head, body);
+      shell.appendChild(paper);
+    };
     const entriesHint = state?.permissions.worldBooks === false
       ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries."
       : "Fetch activated World Info entry content and send it to the controller.";
-    body.append(
+    appendNote(
+      "Controller Context",
+      "",
       toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
-      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
-      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."),
-      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."),
+      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller.")
+    );
+    appendNote(
+      "Additional Notes",
+      "",
+      textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message.")
+    );
+    appendNote(
+      "System Template",
+      "lw-template-note",
+      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}.")
+    );
+    appendNote(
+      "User Template",
+      "lw-template-note",
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value }))
     );
-    details.append(summary, body);
-    shell.appendChild(details);
   }
 
   function renderWorldAgentChannel(shell: HTMLElement, includeExtras = true): void {
