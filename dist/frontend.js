@@ -2563,7 +2563,7 @@ function setup(ctx) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1120, maxHeight: 860 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1500, maxHeight: 1040 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
