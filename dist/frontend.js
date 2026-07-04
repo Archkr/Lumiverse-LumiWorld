@@ -1528,21 +1528,22 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 600px 380px 500px;
-  grid-template-rows: 360px 300px 370px;
+  grid-template-columns: 600px 390px 500px;
+  grid-template-rows: 350px 310px 320px;
   justify-content: center;
+  align-content: start;
   grid-template-areas:
+    "status status status"
     "core model context"
-    "core notes system"
-    "runs user user";
+    "system user notes";
 }
+.lw-settings-modal.is-channel-1 .lw-director-status-note { grid-area: status; }
 .lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
 .lw-settings-modal.is-channel-1 .lw-director-model-note { grid-area: model; }
 .lw-settings-modal.is-channel-1 .lw-director-context-note { grid-area: context; }
 .lw-settings-modal.is-channel-1 .lw-director-notes-note { grid-area: notes; }
 .lw-settings-modal.is-channel-1 .lw-director-system-note { grid-area: system; }
 .lw-settings-modal.is-channel-1 .lw-director-user-note { grid-area: user; }
-.lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
@@ -1756,16 +1757,26 @@ var CSS = `
   text-shadow: none !important;
 }
 
+.lw-settings-modal.is-channel-1 .lw-director-status-note {
+  justify-self: center;
+  align-self: center;
+  width: 900px !important;
+  max-width: 900px !important;
+  height: 280px !important;
+  max-height: 280px !important;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-status-note .lw-meter-grid {
+  grid-template-rows: repeat(3, minmax(58px, 1fr));
+  height: calc(100% - 42px);
+}
+
 .lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
   min-height: 208px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
   min-height: 208px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
-  max-height: 280px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea,
@@ -2205,16 +2216,6 @@ function formatHourLabel(hour) {
   const displayHour = normalized % 12 || 12;
   return `${displayHour}:00${period}`;
 }
-function formatWorldInfoRunDiagnostics(run) {
-  const hasDiagnostics = run.worldInfoActivatedCount != null || run.worldInfoFetchedCount != null || run.worldInfoFallbackTaggedCount != null;
-  if (!hasDiagnostics)
-    return null;
-  return [
-    `WI active ${run.worldInfoActivatedCount ?? 0}`,
-    `fetched ${run.worldInfoFetchedCount ?? 0}`,
-    `tagged fallback ${run.worldInfoFallbackTaggedCount ?? 0}`
-  ].join(" / ");
-}
 function connectionLabel(connection) {
   const bits = [connection.name, connection.provider, connection.model].filter(Boolean);
   return `${bits.join(" / ")}${connection.hasApiKey ? "" : " (no key)"}`;
@@ -2448,7 +2449,36 @@ function setup(ctx) {
     input.addEventListener("input", () => onChange(input.value));
     slot.appendChild(input);
   }
-  function renderDirectorChannel(shell, includeExtras = true) {
+  function renderDirectorStatus(shell) {
+    const paper = createElement("div", "lw-paper lw-director-status-note");
+    const head = createElement("div", "lw-panel-head");
+    head.appendChild(createElement("h3", undefined, "Director Status"));
+    paper.appendChild(head);
+    const connection = selectedConnection(draft.connectionId);
+    const contextBits = [
+      draft.includeWorldInfoEntries ? "Entries" : null,
+      draft.includeUserPersona ? "Persona" : null,
+      draft.includeCharacter ? "Character" : null
+    ].filter(Boolean);
+    const cards = [
+      ["State", draft.enabled ? "Enabled" : "Disabled"],
+      ["Connection", connection?.name ?? "No connection"],
+      ["Model", draft.modelOverride || connection?.model || "Connection default"],
+      ["History", `${draft.historyMessageLimit} messages`],
+      ["Context", contextBits.length ? contextBits.join(", ") : "Chat only"],
+      ["Runs on", draft.generationTypes.length ? draft.generationTypes.join(", ") : "None"]
+    ];
+    const grid = createElement("div", "lw-meter-grid");
+    for (const [label, value] of cards) {
+      const card = createElement("div", "lw-state-card");
+      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
+      grid.appendChild(card);
+    }
+    paper.appendChild(grid);
+    shell.appendChild(paper);
+  }
+  function renderDirectorChannel(shell) {
+    renderDirectorStatus(shell);
     const paper1 = createElement("div", "lw-paper lw-director-core-note");
     const head1 = createElement("div", "lw-panel-head");
     head1.appendChild(createElement("h3", undefined, "Director Core"));
@@ -2522,9 +2552,6 @@ function setup(ctx) {
     appendCard("Additional Notes", "lw-director-notes-note", textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."));
     appendCard("System Template", "lw-template-note lw-director-system-note", textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."));
     appendCard("User Template", "lw-template-note lw-director-user-note", textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })));
-    if (includeExtras) {
-      renderRuns(shell, "director");
-    }
   }
   function renderWorldAgentChannel(shell) {
     renderWorldAgentClock(shell);
@@ -2647,53 +2674,6 @@ function setup(ctx) {
       strip.appendChild(slot);
     }
     paper.appendChild(strip);
-    shell.appendChild(paper);
-  }
-  function renderRuns(shell, channel) {
-    const paper = createElement("div", `lw-paper ${channel === "director" ? "lw-runs-note" : "lw-world-runs-note"}`);
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
-    const clear = createElement("button", "lw-btn", "Clear");
-    clear.type = "button";
-    clear.addEventListener("click", () => send(ctx, { type: "clear_runs" }));
-    head.appendChild(clear);
-    paper.appendChild(head);
-    const runs = (state?.runs ?? []).filter((run) => (run.channel ?? "director") === channel);
-    const scroll = createElement("div", "lw-scrollbox");
-    if (!runs.length) {
-      scroll.appendChild(createElement("div", "lw-empty", channel === "director" ? "No controller runs yet." : "No World Agent runs yet."));
-      paper.appendChild(scroll);
-      shell.appendChild(paper);
-      return;
-    }
-    const list = createElement("div", "lw-runs");
-    for (const run of runs) {
-      const item = createElement("article", "lw-run");
-      const runHead = createElement("div", "lw-run-head");
-      runHead.append(createElement("span", `lw-status ${run.status}`, formatStatus(run.status)), createElement("span", "lw-muted", formatTime(run.timestamp)));
-      item.appendChild(runHead);
-      const title = [run.action ? run.action.replace(/_/g, " ") : null, run.generationType ?? null].filter(Boolean).join(" / ");
-      if (title)
-        item.appendChild(createElement("div", "lw-muted", title));
-      const meta = [run.connectionName, run.model, run.durationMs != null ? `${Math.round(run.durationMs)} ms` : null].filter(Boolean).join(" / ");
-      if (meta)
-        item.appendChild(createElement("div", "lw-muted", meta));
-      const worldTime = run.worldAgentDay ? `Day ${run.worldAgentDay}, ${String(run.worldAgentHour ?? 0).padStart(2, "0")}:00` : null;
-      if (worldTime)
-        item.appendChild(createElement("div", "lw-muted", worldTime));
-      const wi = formatWorldInfoRunDiagnostics(run);
-      if (wi)
-        item.appendChild(createElement("div", "lw-muted", wi));
-      if (run.directivePreview)
-        item.appendChild(createElement("div", undefined, run.directivePreview));
-      if (run.error)
-        item.appendChild(createElement("div", "lw-muted", run.error));
-      if (run.worldInfoFetchError)
-        item.appendChild(createElement("div", "lw-muted", `World Info fetch: ${run.worldInfoFetchError}`));
-      list.appendChild(item);
-    }
-    scroll.appendChild(list);
-    paper.appendChild(scroll);
     shell.appendChild(paper);
   }
   function renderNotice(shell) {
@@ -2848,7 +2828,7 @@ function setup(ctx) {
       renderBanners(shell);
       const grid = createElement("div", "lw-modal-grid");
       if (activeChannel === "director")
-        renderDirectorChannel(grid, true);
+        renderDirectorChannel(grid);
       else
         renderWorldAgentChannel(grid);
       shell.appendChild(grid);
