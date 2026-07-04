@@ -1619,8 +1619,8 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 608px 384px 512px;
-  grid-template-rows: 400px 288px 374px;
+  grid-template-columns: 600px 380px 500px;
+  grid-template-rows: 360px 300px 370px;
   justify-content: center;
   grid-template-areas:
     "core model context"
@@ -1636,8 +1636,8 @@ const CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 608px 400px 496px;
-  grid-template-rows: 352px 320px 390px;
+  grid-template-columns: 600px 390px 500px;
+  grid-template-rows: 340px 300px 390px;
   justify-content: center;
   grid-template-areas:
     "clock state state"
