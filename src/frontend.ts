@@ -2373,7 +2373,7 @@ export function setup(ctx: SpindleFrontendContext) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 860, maxHeight: 720 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1120, maxHeight: 860 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
