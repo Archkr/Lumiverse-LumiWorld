@@ -1523,7 +1523,7 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 220px 350px 480px;
+  grid-template-rows: 300px 330px 390px;
   justify-content: center;
   grid-template-areas:
     ". state state"
@@ -1945,16 +1945,16 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-params-note .lw-textarea {
-  min-height: 220px;
-  height: 220px;
-  max-height: 220px;
+  min-height: 188px;
+  height: 188px;
+  max-height: 188px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
   flex-wrap: wrap;
   align-content: flex-start;
   max-height: none;
-  height: calc(100% - 46px);
+  height: auto;
   overflow-y: auto;
 }
 
@@ -1989,8 +1989,8 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note {
   align-self: start;
-  height: 330px !important;
-  max-height: 330px !important;
+  height: 310px !important;
+  max-height: 310px !important;
   gap: 5px;
   padding: 10px !important;
 }
@@ -1999,6 +1999,24 @@ var CSS = `
   align-self: start;
   height: 320px !important;
   max-height: 320px !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-state-note {
+  align-self: center;
+  height: 280px !important;
+  max-height: 280px !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-state-note .lw-meter-grid {
+  grid-template-rows: repeat(3, minmax(58px, 1fr));
+  height: calc(100% - 42px);
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-params-note,
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note {
+  align-self: start;
+  height: auto !important;
+  max-height: none !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time {
@@ -2753,7 +2771,7 @@ function setup(ctx) {
     const director = createElement("button", `lw-modal-tab${activeChannel === "director" ? " is-active" : ""}`, "CH 1: Director");
     director.type = "button";
     director.addEventListener("click", () => setActiveChannel("director"));
-    const world = createElement("button", `lw-modal-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "CH 2: World Agent");
+    const world = createElement("button", `lw-modal-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "CH 2: World");
     world.type = "button";
     world.addEventListener("click", () => setActiveChannel("world_agent"));
     tabs.append(director, world);
