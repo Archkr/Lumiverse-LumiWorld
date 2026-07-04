@@ -1422,17 +1422,43 @@ function setup(ctx) {
   let saveInFlight = false;
   let saveState = "idle";
   let settingsModal = null;
+  let widget = null;
   let notice = null;
   cleanups.push(ctx.dom.addStyle(CSS));
-  const widget = ctx.ui.createFloatWidget({
-    width: 260,
-    height: 308,
-    initialPosition: { x: 24, y: 160 },
-    snapToEdge: true,
-    tooltip: "LumiWorld",
-    chromeless: true
-  });
-  cleanups.push(() => widget.destroy());
+  function createWidget() {
+    if (widget)
+      return;
+    widget = ctx.ui.createFloatWidget({
+      width: 260,
+      height: 308,
+      initialPosition: { x: 24, y: 160 },
+      snapToEdge: true,
+      tooltip: "LumiWorld",
+      chromeless: true
+    });
+  }
+  async function ensureWidget() {
+    try {
+      createWidget();
+      render();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("PERMISSION_DENIED:ui_panels")) {
+        console.warn("[LumiWorld] Failed to create floating widget:", message);
+        return;
+      }
+      try {
+        await ctx.permissions.request(["ui_panels"], {
+          reason: "LumiWorld uses a floating CRT monitor widget instead of a drawer tab."
+        });
+        createWidget();
+        render();
+      } catch (requestError) {
+        console.warn("[LumiWorld] UI Panels permission was not granted:", requestError);
+      }
+    }
+  }
+  cleanups.push(() => widget?.destroy());
   function destroyHandles(handles) {
     while (handles.length) {
       const handle = handles.pop();
@@ -1973,6 +1999,8 @@ function setup(ctx) {
     parent.appendChild(row);
   }
   function renderWidget() {
+    if (!widget)
+      return;
     destroyHandles(widgetHandles);
     activeHandles = widgetHandles;
     widget.root.replaceChildren();
@@ -2150,7 +2178,7 @@ function setup(ctx) {
   }));
   const initial = activeChat(ctx);
   send(ctx, { type: "ready", chatId: initial.chatId, characterId: initial.characterId });
-  render();
+  ensureWidget();
   return () => {
     if (saveTimer) {
       clearTimeout(saveTimer);

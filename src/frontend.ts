@@ -1619,19 +1619,45 @@ export function setup(ctx: SpindleFrontendContext) {
   let saveInFlight = false;
   let saveState: "idle" | "saving" | "error" = "idle";
   let settingsModal: ReturnType<SpindleFrontendContext["ui"]["showModal"]> | null = null;
+  let widget: ReturnType<SpindleFrontendContext["ui"]["createFloatWidget"]> | null = null;
   let notice: { tone: "info" | "warn" | "error" | "success"; text: string } | null = null;
 
   cleanups.push(ctx.dom.addStyle(CSS));
 
-  const widget = ctx.ui.createFloatWidget({
-    width: 260,
-    height: 308,
-    initialPosition: { x: 24, y: 160 },
-    snapToEdge: true,
-    tooltip: "LumiWorld",
-    chromeless: true,
-  });
-  cleanups.push(() => widget.destroy());
+  function createWidget(): void {
+    if (widget) return;
+    widget = ctx.ui.createFloatWidget({
+      width: 260,
+      height: 308,
+      initialPosition: { x: 24, y: 160 },
+      snapToEdge: true,
+      tooltip: "LumiWorld",
+      chromeless: true,
+    });
+  }
+
+  async function ensureWidget(): Promise<void> {
+    try {
+      createWidget();
+      render();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("PERMISSION_DENIED:ui_panels")) {
+        console.warn("[LumiWorld] Failed to create floating widget:", message);
+        return;
+      }
+      try {
+        await ctx.permissions.request(["ui_panels"], {
+          reason: "LumiWorld uses a floating CRT monitor widget instead of a drawer tab.",
+        });
+        createWidget();
+        render();
+      } catch (requestError) {
+        console.warn("[LumiWorld] UI Panels permission was not granted:", requestError);
+      }
+    }
+  }
+  cleanups.push(() => widget?.destroy());
 
   function destroyHandles(handles: MountedHandle[]): void {
     while (handles.length) {
@@ -2246,6 +2272,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderWidget(): void {
+    if (!widget) return;
     destroyHandles(widgetHandles);
     activeHandles = widgetHandles;
     widget.root.replaceChildren();
@@ -2435,7 +2462,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const initial = activeChat(ctx);
   send(ctx, { type: "ready", chatId: initial.chatId, characterId: initial.characterId });
-  render();
+  void ensureWidget();
 
   return () => {
     if (saveTimer) {

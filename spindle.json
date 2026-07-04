@@ -6,7 +6,7 @@
   "github": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "homepage": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "description": "Lofi world-simulation channels for private director notes and per-chat World Agent state.",
-  "permissions": ["interceptor", "generation", "chats", "characters", "personas", "world_books"],
+  "permissions": ["interceptor", "generation", "chats", "characters", "personas", "world_books", "ui_panels"],
   "interceptorTimeoutMs": 2147483647,
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
