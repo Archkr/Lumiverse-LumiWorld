@@ -149,7 +149,7 @@ var PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override."
 ].join(`
 `);
-var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+var PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Create {{char}}'s private background schedule for the entire current day.",
   "",
@@ -167,6 +167,26 @@ var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "",
   "Return compact JSON only in this shape:",
   '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":7,"location":"...","activity":"..."},{"hour":12,"location":"...","activity":"..."},{"hour":18,"location":"...","activity":"..."}]}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan exactly 24 hourly entries, one entry for every hour from 0 through 23.",
+  "Each entry's hour is the exact hour it describes. Use 0-23 hour values.",
+  "If {{char}} keeps doing the same thing for several hours, repeat the same location and activity for each hour.",
+  "For example, sleeping from midnight to 6am still needs separate 0, 1, 2, 3, 4, 5, and 6 entries.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":1,"location":"...","activity":"..."},{"hour":2,"location":"...","activity":"..."},{"hour":3,"location":"...","activity":"..."}]}'
 ].join(`
 `);
 var PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
@@ -259,7 +279,7 @@ function normalizeWorldAgentSettings(value) {
   const obj = asRecord(value);
   const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
   const storedUpdateTemplate = cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE);
-  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
+  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -1030,6 +1050,23 @@ function scheduleItemFromRecord(value, index) {
     activity: activity || (location ? `At ${location}` : "Unspecified activity")
   };
 }
+function expandScheduleToEveryHour(items) {
+  if (!items.length)
+    return [];
+  const byHour = new Map;
+  for (const item of items) {
+    if (!byHour.has(item.hour))
+      byHour.set(item.hour, item);
+  }
+  const anchors = [...byHour.values()].sort((left, right) => left.hour - right.hour);
+  return Array.from({ length: 24 }, (_, hour) => {
+    const anchor = [...anchors].reverse().find((item) => item.hour <= hour) ?? anchors[anchors.length - 1];
+    return {
+      ...anchor,
+      hour
+    };
+  });
+}
 function normalizeWorldAgentSchedule(value) {
   const raw = Array.isArray(value) ? value : [];
   const expanded = raw.flatMap((item) => {
@@ -1052,7 +1089,7 @@ function normalizeWorldAgentSchedule(value) {
     seen.add(key);
     items.push(item);
   }
-  return items.sort((left, right) => left.hour - right.hour).slice(0, 48);
+  return expandScheduleToEveryHour(items.sort((left, right) => left.hour - right.hour));
 }
 function parseWorldAgentSchedule(raw) {
   const parsed = parseJsonishValue(raw);
@@ -1067,7 +1104,7 @@ function parseWorldAgentSchedule(raw) {
     if (loose.length > 0)
       return loose;
     const fallback = normalizeDirectiveText(raw, 900);
-    return fallback ? [{ hour: 0, activity: fallback }] : [];
+    return fallback ? normalizeWorldAgentSchedule([{ hour: 0, activity: fallback }]) : [];
   }
   return [];
 }
@@ -1148,6 +1185,12 @@ function applyWorldAgentUpdate(state, update, timestamp = Date.now()) {
 function formatWorldAgentClock(day, hour) {
   return `Day ${Math.max(1, Math.round(day))}, ${String(Math.max(0, Math.min(23, Math.round(hour)))).padStart(2, "0")}:00`;
 }
+function formatWorldAgentHourLabel(hour) {
+  const normalized = Math.max(0, Math.min(23, Math.round(hour)));
+  const period = normalized < 12 ? "am" : "pm";
+  const displayHour = normalized % 12 || 12;
+  return `${displayHour}:00${period}`;
+}
 function currentScheduleItems(state) {
   return state.schedule.filter((item) => item.hour === state.hour);
 }
@@ -1156,7 +1199,7 @@ function formatWorldAgentSchedule(schedule) {
     return "No schedule generated.";
   return schedule.map((item) => {
     const pieces = [
-      `${String(item.hour).padStart(2, "0")}:00`,
+      formatWorldAgentHourLabel(item.hour),
       item.location ? `Location: ${item.location}` : null,
       `Activity: ${item.activity}`
     ].filter(Boolean);
@@ -1705,7 +1748,7 @@ function buildWorldAgentMessages(options) {
   const vars = buildWorldAgentTemplateVars(options.state, options.identity);
   const systemTemplate = options.mode === "schedule" ? options.settings.scheduleTemplate : options.settings.updateTemplate;
   const system = renderTemplate(systemTemplate, vars);
-  const action = options.mode === "schedule" ? "Generate today's full private schedule as start-hour blocks covering the whole day. Only include hour, location, and activity; do not assign mood, thoughts, or current goals." : "Advance the private state by one simulated hour.";
+  const action = options.mode === "schedule" ? "Generate today's full private schedule as exactly 24 hourly entries, one for every hour 0 through 23. Repeat location/activity across consecutive hours when needed. Only include hour, location, and activity; do not assign mood, thoughts, or current goals." : "Advance the private state by one simulated hour.";
   return [
     { role: "system", content: system },
     ...options.contextMessages,

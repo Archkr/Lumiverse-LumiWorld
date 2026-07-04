@@ -137,7 +137,7 @@ var PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override."
 ].join(`
 `);
-var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+var PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Create {{char}}'s private background schedule for the entire current day.",
   "",
@@ -155,6 +155,26 @@ var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "",
   "Return compact JSON only in this shape:",
   '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":7,"location":"...","activity":"..."},{"hour":12,"location":"...","activity":"..."},{"hour":18,"location":"...","activity":"..."}]}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan exactly 24 hourly entries, one entry for every hour from 0 through 23.",
+  "Each entry's hour is the exact hour it describes. Use 0-23 hour values.",
+  "If {{char}} keeps doing the same thing for several hours, repeat the same location and activity for each hour.",
+  "For example, sleeping from midnight to 6am still needs separate 0, 1, 2, 3, 4, 5, and 6 entries.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":1,"location":"...","activity":"..."},{"hour":2,"location":"...","activity":"..."},{"hour":3,"location":"...","activity":"..."}]}'
 ].join(`
 `);
 var PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
@@ -2078,7 +2098,7 @@ function normalizeGenerationTypes(value) {
 function normalizeWorldAgentSettings(value) {
   const obj = asRecord(value);
   const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
-  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
+  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -2175,6 +2195,12 @@ function formatClock(state) {
   if (!state)
     return "Day 1, 08:00";
   return `Day ${state.day}, ${String(state.hour).padStart(2, "0")}:00`;
+}
+function formatHourLabel(hour) {
+  const normalized = Math.max(0, Math.min(23, Math.round(hour)));
+  const period = normalized < 12 ? "am" : "pm";
+  const displayHour = normalized % 12 || 12;
+  return `${displayHour}:00${period}`;
 }
 function formatWorldInfoRunDiagnostics(run) {
   const hasDiagnostics = run.worldInfoActivatedCount != null || run.worldInfoFetchedCount != null || run.worldInfoFallbackTaggedCount != null;
@@ -2611,7 +2637,7 @@ function setup(ctx) {
     const strip = createElement("div", "lw-schedule-strip");
     for (const item of schedule) {
       const slot = createElement("article", `lw-slot${item.hour === state?.worldState?.hour ? " is-now" : ""}`);
-      slot.append(createElement("strong", undefined, `${String(item.hour).padStart(2, "0")}:00`));
+      slot.append(createElement("strong", undefined, formatHourLabel(item.hour)));
       if (item.location)
         slot.appendChild(createElement("div", "lw-muted", item.location));
       slot.appendChild(createElement("div", undefined, item.activity || "Unspecified activity"));
