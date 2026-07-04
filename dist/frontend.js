@@ -1223,13 +1223,11 @@ var CSS = `
    ========================================= */
 .lw-settings-modal {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 12px;
-  align-items: start;
+  gap: 14px;
   color: #e0d6c8;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
-  padding: 18px;
+  padding: 30px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1326,12 +1324,10 @@ var CSS = `
   display: flex;
   gap: 12px;
   position: relative;
-  grid-column: 1;
-  grid-row: 1;
   z-index: 20;
-  padding-bottom: 8px;
+  padding-bottom: 12px;
   border-bottom: 2px solid #333;
-  margin-bottom: 0;
+  margin-bottom: 10px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-tab {
@@ -1397,40 +1393,17 @@ var CSS = `
   justify-content: flex-end;
   flex-wrap: wrap;
   position: relative;
-  grid-column: 2;
-  grid-row: 1;
   z-index: 20;
 }
 
 .lw-settings-modal .lw-modal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  grid-column: 1 / -1;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
   align-items: start;
   position: relative;
   z-index: 20;
 }
-.lw-settings-modal > .lw-banner,
-.lw-settings-modal > .lw-empty {
-  grid-column: 1 / -1;
-}
-
-.lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 1.08fr 0.98fr 0.98fr 0.98fr;
-  grid-template-areas:
-    "settings status context notes"
-    "settings system system notes"
-    "user user runs runs";
-  align-items: stretch;
-}
-.lw-settings-modal.is-channel-1 .lw-director-settings-note { grid-area: settings; }
-.lw-settings-modal.is-channel-1 .lw-director-status-note { grid-area: status; }
-.lw-settings-modal.is-channel-1 .lw-director-context-note { grid-area: context; }
-.lw-settings-modal.is-channel-1 .lw-director-notes-note { grid-area: notes; }
-.lw-settings-modal.is-channel-1 .lw-director-system-note { grid-area: system; }
-.lw-settings-modal.is-channel-1 .lw-director-user-note { grid-area: user; }
-.lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 /* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
 
@@ -1450,8 +1423,6 @@ var CSS = `
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
   text-shadow: 0 0 5px #ff9933;
   backdrop-filter: blur(2px);
-  min-height: 124px;
-  padding: 18px !important;
 }
 .lw-settings-modal.is-channel-1 .lw-paper:hover {
   border-color: #ffcc00 !important;
@@ -1592,59 +1563,6 @@ var CSS = `
   border-color: #aa0000 !important;
   color: #aa0000 !important;
   text-shadow: none !important;
-}
-
-.lw-settings-modal.is-channel-1 .lw-details {
-  min-height: 220px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
-  min-height: 180px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-settings-note,
-.lw-settings-modal.is-channel-1 .lw-director-notes-note {
-  align-self: stretch;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
-  min-height: 178px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-system-note .lw-textarea {
-  min-height: 190px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
-  min-height: 170px;
-}
-
-.lw-settings-modal.is-channel-1 .lw-runs-note {
-  align-self: start;
-}
-
-@media (max-width: 1100px) {
-  .lw-settings-modal {
-    grid-template-columns: 1fr;
-  }
-  .lw-settings-modal .lw-modal-tabs,
-  .lw-settings-modal .lw-modal-actions,
-  .lw-settings-modal .lw-modal-grid {
-    grid-column: 1;
-  }
-  .lw-settings-modal .lw-modal-actions {
-    grid-row: 2;
-    justify-content: flex-start;
-  }
-  .lw-settings-modal.is-channel-1 .lw-modal-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      "settings status"
-      "context notes"
-      "system system"
-      "user user"
-      "runs runs";
-  }
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -2210,29 +2128,19 @@ function setup(ctx) {
     slot.appendChild(input);
   }
   function renderDirectorChannel(shell, includeExtras = true) {
-    const paper = createElement("div", "lw-paper lw-director-settings-note");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Director Settings"));
+    const paper1 = createElement("div", "lw-paper");
+    const head1 = createElement("div", "lw-panel-head");
+    head1.appendChild(createElement("h3", undefined, "Director Core"));
     const toggleSlot = createElement("div", "lw-switch-slot");
     renderSwitchControl(toggleSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable Director Note");
-    head.appendChild(toggleSlot);
-    paper.appendChild(head);
-    const form = createElement("div", "lw-form");
+    head1.appendChild(toggleSlot);
+    paper1.appendChild(head1);
+    const form1 = createElement("div", "lw-form");
     const connSlot = createElement("div");
     renderConnectionControl(connSlot, draft.connectionId, (id) => updateDraft({ connectionId: id, modelOverride: "" }), "Director Note connection");
-    form.appendChild(field("Connection", connSlot));
     const modelSlot = createElement("div");
     renderModelControl(modelSlot, draft.connectionId, draft.modelOverride, (m) => updateDraft({ modelOverride: m }));
-    form.appendChild(field("Model Override", modelSlot));
-    const paramsGrid = createElement("div", "lw-two");
-    paramsGrid.append(numberField("Temp", draft.temperature, 0, 2, 0.05, (v) => updateDraft({ temperature: v })), numberField("Tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (v) => updateDraft({ maxTokens: v })));
-    form.appendChild(paramsGrid);
-    const paramsGrid2 = createElement("div", "lw-two");
-    paramsGrid2.append(numberField("Timeout", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (v) => updateDraft({ timeoutMs: v })), numberField("History", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (v) => updateDraft({ historyMessageLimit: v })));
-    form.appendChild(paramsGrid2);
-    const paramsGrid3 = createElement("div", "lw-two");
-    paramsGrid3.append(numberField("Cap Chars", draft.maxInputChars, 4000, 500000, 1000, (v) => updateDraft({ maxInputChars: v })), numberField("Log Limit", draft.runLogLimit, 0, 50, 1, (v) => updateDraft({ runLogLimit: v })));
-    form.appendChild(paramsGrid3);
+    form1.append(field("Connection", connSlot), field("Model Override", modelSlot));
     const runsOnDiv = createElement("div", "lw-field");
     runsOnDiv.appendChild(createElement("label", undefined, "Runs On"));
     const chips = createElement("div", "lw-chips-inline");
@@ -2262,82 +2170,75 @@ function setup(ctx) {
       }
     }
     runsOnDiv.appendChild(chips);
-    form.appendChild(runsOnDiv);
-    paper.appendChild(form);
-    shell.appendChild(paper);
+    form1.appendChild(runsOnDiv);
+    paper1.appendChild(form1);
+    shell.appendChild(paper1);
+    const paper2 = createElement("div", "lw-paper");
+    const head2 = createElement("div", "lw-panel-head");
+    head2.appendChild(createElement("h3", undefined, "Model Parameters"));
+    paper2.appendChild(head2);
+    const form2 = createElement("div", "lw-form");
+    const paramsGrid1 = createElement("div", "lw-two");
+    paramsGrid1.append(numberField("Temp", draft.temperature, 0, 2, 0.05, (v) => updateDraft({ temperature: v })), numberField("Tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (v) => updateDraft({ maxTokens: v })));
+    const paramsGrid2 = createElement("div", "lw-two");
+    paramsGrid2.append(numberField("Timeout", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (v) => updateDraft({ timeoutMs: v })), numberField("History", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (v) => updateDraft({ historyMessageLimit: v })));
+    const paramsGrid3 = createElement("div", "lw-two");
+    paramsGrid3.append(numberField("Cap Chars", draft.maxInputChars, 4000, 500000, 1000, (v) => updateDraft({ maxInputChars: v })), numberField("Log Limit", draft.runLogLimit, 0, 50, 1, (v) => updateDraft({ runLogLimit: v })));
+    form2.append(paramsGrid1, paramsGrid2, paramsGrid3);
+    paper2.appendChild(form2);
+    shell.appendChild(paper2);
+    const paper3 = createElement("div", "lw-paper");
+    const head3 = createElement("div", "lw-panel-head");
+    head3.appendChild(createElement("h3", undefined, "Context & Templates"));
+    paper3.appendChild(head3);
+    const form3 = createElement("div", "lw-form");
+    const entriesHint = state?.permissions.worldBooks === false ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries." : "Fetch activated World Info entry content and send it to the controller.";
+    form3.append(toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."), textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."), textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."), textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })));
+    paper3.appendChild(form3);
+    shell.appendChild(paper3);
     if (includeExtras) {
-      renderDirectorStatus(shell);
-      renderDirectorAdvanced(shell);
       renderRuns(shell, "director");
     }
   }
-  function renderDirectorStatus(shell) {
-    const paper = createElement("div", "lw-paper lw-director-status-note");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Director Status"));
-    paper.appendChild(head);
-    const grid = createElement("div", "lw-meter-grid");
-    const connection = selectedConnection(draft.connectionId);
-    const run = latestRun("director");
-    const cards = [
-      ["State", draft.enabled ? "Enabled" : "Disabled"],
-      ["Connection", connection?.name || "Not selected"],
-      ["Model", draft.modelOverride || connection?.model || "Connection default"],
-      ["Last Run", run ? formatStatus(run.status) : "No run yet"],
-      ["History", `${draft.historyMessageLimit} messages`],
-      ["World Info", draft.includeWorldInfoEntries ? "Included" : "Off"]
-    ];
-    for (const [label, value] of cards) {
-      const card = createElement("div", "lw-state-card");
-      card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
-      grid.appendChild(card);
-    }
-    paper.appendChild(grid);
-    shell.appendChild(paper);
-  }
-  function renderDirectorAdvanced(shell) {
-    const appendNote = (title, className, ...children) => {
-      const paper = createElement("div", `lw-paper ${className}`);
-      const head = createElement("div", "lw-panel-head");
-      head.appendChild(createElement("h3", undefined, title));
-      const body = createElement("div", "lw-form");
-      body.append(...children);
-      paper.append(head, body);
-      shell.appendChild(paper);
-    };
-    const entriesHint = state?.permissions.worldBooks === false ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries." : "Fetch activated World Info entry content and send it to the controller.";
-    appendNote("Controller Context", "lw-director-context-note", toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint), toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."), toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."));
-    appendNote("Additional Notes", "lw-director-notes-note", textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."));
-    appendNote("System Template", "lw-template-note lw-director-system-note", textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."));
-    appendNote("User Template", "lw-template-note lw-director-user-note", textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })));
-  }
   function renderWorldAgentChannel(shell, includeExtras = true) {
     renderWorldAgentClock(shell);
-    const paper = createElement("div", "lw-paper");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "World Agent Settings"));
-    paper.appendChild(head);
-    const form = createElement("div", "lw-form");
-    form.append(toggleField("Enable Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Per-chat simulation state."), toggleField("Inject State", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add state to visible prompt."), toggleField("Visible-only Ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Ticks run only when Lumiverse is visible."));
-    form.appendChild(createElement("hr", "lw-divider"));
+    const paper1 = createElement("div", "lw-paper");
+    const head1 = createElement("div", "lw-panel-head");
+    head1.appendChild(createElement("h3", undefined, "Agent Configuration"));
+    paper1.appendChild(head1);
+    const form1 = createElement("div", "lw-form");
+    form1.append(toggleField("Enable Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Per-chat simulation state."), toggleField("Inject State", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add state to visible prompt."), toggleField("Visible-only Ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Ticks run only when Lumiverse is visible."));
+    form1.appendChild(createElement("hr", "lw-divider"));
     const connSlot = createElement("div");
     renderConnectionControl(connSlot, draft.worldAgent.connectionId, (id) => updateWorldAgent({ connectionId: id, modelOverride: "" }), "World Agent connection");
-    form.appendChild(field("Connection", connSlot));
     const modelSlot = createElement("div");
     renderModelControl(modelSlot, draft.worldAgent.connectionId, draft.worldAgent.modelOverride, (m) => updateWorldAgent({ modelOverride: m }));
-    form.appendChild(field("Model Override", modelSlot));
-    const paramsGrid = createElement("div", "lw-two");
-    paramsGrid.append(numberField("Temp", draft.worldAgent.temperature, 0, 2, 0.05, (v) => updateWorldAgent({ temperature: v })), numberField("Tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (v) => updateWorldAgent({ maxTokens: v })));
-    form.appendChild(paramsGrid);
+    form1.append(field("Connection", connSlot), field("Model Override", modelSlot));
+    paper1.appendChild(form1);
+    shell.appendChild(paper1);
+    const paper2 = createElement("div", "lw-paper");
+    const head2 = createElement("div", "lw-panel-head");
+    head2.appendChild(createElement("h3", undefined, "Simulation Parameters"));
+    paper2.appendChild(head2);
+    const form2 = createElement("div", "lw-form");
+    const paramsGrid1 = createElement("div", "lw-two");
+    paramsGrid1.append(numberField("Temp", draft.worldAgent.temperature, 0, 2, 0.05, (v) => updateWorldAgent({ temperature: v })), numberField("Tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (v) => updateWorldAgent({ maxTokens: v })));
     const paramsGrid2 = createElement("div", "lw-two");
     paramsGrid2.append(numberField("Timeout", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (v) => updateWorldAgent({ timeoutMs: v })), numberField("Hour Dur", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (v) => updateWorldAgent({ hourDurationMs: v })));
-    form.appendChild(paramsGrid2);
-    paper.appendChild(form);
-    shell.appendChild(paper);
+    form2.append(paramsGrid1, paramsGrid2);
+    paper2.appendChild(form2);
+    shell.appendChild(paper2);
+    const paper3 = createElement("div", "lw-paper");
+    const head3 = createElement("div", "lw-panel-head");
+    head3.appendChild(createElement("h3", undefined, "Prompt Templates"));
+    paper3.appendChild(head3);
+    const form3 = createElement("div", "lw-form");
+    form3.append(textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."), textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."));
+    paper3.appendChild(form3);
+    shell.appendChild(paper3);
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
     if (includeExtras) {
-      renderWorldAgentAdvanced(shell);
       renderRuns(shell, "world_agent");
     }
   }
@@ -2459,16 +2360,8 @@ function setup(ctx) {
     paper.appendChild(strip);
     shell.appendChild(paper);
   }
-  function renderWorldAgentAdvanced(shell) {
-    const details = createElement("details", "lw-paper lw-details");
-    const summary = createElement("summary", undefined, "Advanced Settings");
-    const body = createElement("div", "lw-details-body");
-    body.append(textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."), textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."));
-    details.append(summary, body);
-    shell.appendChild(details);
-  }
   function renderRuns(shell, channel) {
-    const paper = createElement("div", `lw-paper ${channel === "director" ? "lw-runs-note" : "lw-world-runs-note"}`);
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
     const clear = createElement("button", "lw-btn", "Clear");
