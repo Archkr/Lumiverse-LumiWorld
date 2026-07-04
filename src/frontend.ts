@@ -1392,12 +1392,12 @@ const CSS = `
   font-size: 11.5px;
   padding: 18px;
   box-sizing: border-box;
-  width: 1280px;
-  height: 720px;
-  min-width: 1280px;
-  min-height: 720px;
-  max-width: 1280px;
-  max-height: 720px;
+  width: 1000px;
+  height: 740px;
+  min-width: 1000px;
+  min-height: 740px;
+  max-width: 1000px;
+  max-height: 740px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1604,12 +1604,13 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 252px 220px 330px 330px;
-  grid-template-rows: 255px 1fr;
+  grid-template-columns: 300px 250px 300px;
+  grid-template-rows: 250px 165px 173px;
   justify-content: center;
   grid-template-areas:
-    "core model context notes"
-    "core system user runs";
+    "core model context"
+    "core notes system"
+    "runs user user";
   align-items: stretch;
 }
 .lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
@@ -1621,12 +1622,12 @@ const CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 248px 248px 342px 248px;
-  grid-template-rows: 165px 165px 1fr;
+  grid-template-columns: 210px 210px 225px 225px;
+  grid-template-rows: 210px 230px 148px;
   justify-content: center;
   grid-template-areas:
-    "clock . . state"
-    "config . . state"
+    "clock . state state"
+    "config templates state state"
     "params templates schedule runs";
   align-items: stretch;
 }
@@ -1830,6 +1831,7 @@ const CSS = `
   text-shadow: none !important;
   backdrop-filter: blur(1px) saturate(1.05);
   min-height: 0;
+  overflow: hidden;
   padding: 14px !important;
 }
 .lw-settings-modal.is-channel-2 .lw-paper:hover {
@@ -1855,6 +1857,7 @@ const CSS = `
   text-shadow: none !important;
 }
 .lw-settings-modal.is-channel-2 .lw-hint {
+  display: none !important;
   color: #8b8b00 !important;
 }
 
@@ -1974,11 +1977,12 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
   min-height: 116px;
+  max-height: 126px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
   flex-wrap: wrap;
-  max-height: 210px;
+  max-height: 92px;
   overflow-y: auto;
 }
 
@@ -1987,7 +1991,39 @@ const CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
-  max-height: 118px;
+  max-height: 122px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-clock-note {
+  gap: 5px;
+  padding: 10px !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-actions {
+  gap: 5px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-set {
+  gap: 5px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-field label {
+  font-size: 9px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note .lw-form,
+.lw-settings-modal.is-channel-2 .lw-world-params-note .lw-form,
+.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-form {
+  gap: 5px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note .lw-divider {
+  margin: 1px 0;
 }
 
 `;
@@ -2978,7 +3014,7 @@ export function setup(ctx: SpindleFrontendContext) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1320, maxHeight: 820 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1040, maxHeight: 830 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
