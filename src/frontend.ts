@@ -1372,9 +1372,8 @@ const CSS = `
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 7px;
-  padding-top: 5px;
-  border-top: 1px dashed rgba(255, 126, 0, 0.75);
+  margin-top: auto;
+  padding-top: 7px;
   position: relative;
   z-index: 1;
 }
