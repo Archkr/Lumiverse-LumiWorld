@@ -1248,12 +1248,12 @@ var CSS = `
   font-size: 11.5px;
   padding: 18px;
   box-sizing: border-box;
-  width: 1000px;
-  height: 740px;
-  min-width: 1000px;
-  min-height: 740px;
-  max-width: 1000px;
-  max-height: 740px;
+  width: 2000px;
+  height: 1480px;
+  min-width: 2000px;
+  min-height: 1480px;
+  max-width: 2000px;
+  max-height: 1480px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1459,8 +1459,8 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 380px 240px 320px;
-  grid-template-rows: 250px 180px 206px;
+  grid-template-columns: 760px 480px 640px;
+  grid-template-rows: 500px 360px 468px;
   justify-content: center;
   grid-template-areas:
     "core model context"
@@ -1476,8 +1476,8 @@ var CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 380px 250px 310px;
-  grid-template-rows: 220px 200px 216px;
+  grid-template-columns: 760px 500px 620px;
+  grid-template-rows: 440px 400px 488px;
   justify-content: center;
   grid-template-areas:
     "clock state state"
@@ -1670,28 +1670,28 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
-  min-height: 128px;
+  min-height: 260px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
-  min-height: 118px;
+  min-height: 260px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
-  max-height: 142px;
+  max-height: 350px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea,
 .lw-settings-modal.is-channel-1 .lw-director-system-note .lw-textarea {
-  height: 86px;
-  min-height: 86px;
-  max-height: 86px;
+  height: 260px;
+  min-height: 260px;
+  max-height: 260px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
-  height: 138px;
-  min-height: 138px;
-  max-height: 138px;
+  height: 340px;
+  min-height: 340px;
+  max-height: 340px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -1857,13 +1857,13 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
-  min-height: 116px;
-  max-height: 126px;
+  min-height: 280px;
+  max-height: 300px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
   flex-wrap: wrap;
-  max-height: 92px;
+  max-height: 380px;
   overflow-y: auto;
 }
 
@@ -1872,7 +1872,7 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
-  max-height: 122px;
+  max-height: 280px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note,
@@ -2743,7 +2743,7 @@ function setup(ctx) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1040, maxHeight: 830 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 2080, maxHeight: 1660 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
