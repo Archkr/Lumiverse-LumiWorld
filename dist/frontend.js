@@ -1,6 +1,4 @@
 // src/frontend.ts
-var EXTENSION_NAME = "LumiWorld";
-var EXTENSION_VERSION = "v1.0.0-lofi";
 var VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"];
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_CONTROLLER_TIMEOUT_MS = 2147483647;
@@ -8,7 +6,6 @@ var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
 var DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
-var LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/><path d="M8.3 10.2h3.8"/><path d="M8.2 15.8h4.5"/></svg>`;
 var LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
@@ -1020,6 +1017,242 @@ var CSS = `
   .lw-bed { width: 200px; height: 90px; right: 0; }
   .lw-desk-decor { padding: 0 5%; }
 }
+
+.lw-float-root {
+  width: 260px;
+  min-height: 308px;
+  color: #2b201d;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  position: relative;
+  user-select: none;
+}
+.lw-float-root * { box-sizing: border-box; }
+.lw-monitor {
+  width: 220px;
+  margin: 0 auto;
+  padding: 14px 14px 32px;
+  border-radius: 20px 20px 10px 10px;
+  background: linear-gradient(145deg, #efe6d1, #c8baa0);
+  border: 2px solid rgba(58, 38, 31, 0.55);
+  box-shadow: 0 14px 24px rgba(0,0,0,0.45), inset 0 2px 4px rgba(255,255,255,0.75), inset 0 -5px 10px rgba(0,0,0,0.16);
+  position: relative;
+}
+.lw-monitor::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 92px;
+  height: 5px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: repeating-linear-gradient(90deg, #8f887a 0 3px, #665e54 3px 6px);
+}
+.lw-monitor::after {
+  content: 'LumiVision';
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #81796f;
+  font-family: Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+}
+.lw-monitor-screen {
+  aspect-ratio: 4 / 3;
+  border: 7px solid #211f1d;
+  border-radius: 18px / 14px;
+  background: radial-gradient(circle at 55% 40%, rgba(255,126,0,0.16), transparent 42%), #080807;
+  color: #ff9e3d;
+  padding: 10px;
+  box-shadow: inset 0 0 28px rgba(0,0,0,0.95), inset 0 0 10px rgba(255,158,61,0.1);
+  overflow: hidden;
+  position: relative;
+  text-shadow: 0 0 5px #ff5500;
+}
+.lw-monitor-screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(rgba(255,255,255,0.035) 50%, rgba(0,0,0,0.2) 50%);
+  background-size: 100% 4px;
+}
+.lw-monitor-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  border-bottom: 1px solid #ff7e00;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.lw-monitor-channel {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+.lw-monitor-channel:hover { background: rgba(255, 158, 61, 0.12); }
+.lw-monitor-channel.is-active {
+  background: #ff9e3d;
+  color: #080807;
+  text-shadow: none;
+  box-shadow: 0 0 10px rgba(255,126,0,0.4);
+}
+.lw-monitor-channel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lw-monitor-status { font-size: 8px; text-transform: uppercase; }
+.lw-monitor-knob {
+  position: absolute;
+  right: -10px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid #24211f;
+  background: radial-gradient(circle at 35% 30%, #aaa, #333);
+  box-shadow: 1px 2px 4px rgba(0,0,0,0.55);
+}
+.lw-monitor-knob.one { bottom: 24px; }
+.lw-monitor-knob.two { bottom: 48px; }
+.lw-widget-note {
+  width: 232px;
+  margin: -2px auto 0;
+  padding: 12px 14px 14px;
+  background: #fff6c9;
+  background-image: linear-gradient(#eadfae 1px, transparent 1px);
+  background-size: 100% 20px;
+  color: #352924;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.32);
+  transform: rotate(-1deg);
+  position: relative;
+}
+.lw-widget-note::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 56px;
+  height: 15px;
+  transform: translateX(-50%) rotate(2deg);
+  background: rgba(255,255,255,0.45);
+  border: 1px dashed rgba(0,0,0,0.12);
+}
+.lw-note-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.lw-note-lines {
+  display: grid;
+  gap: 3px;
+  min-height: 54px;
+}
+.lw-note-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lw-note-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 10px;
+}
+.lw-mini-btn {
+  appearance: none;
+  border: 1px solid #211712;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, #f7e8bd, #c9b88a);
+  color: #211712;
+  font: inherit;
+  font-weight: 800;
+  min-height: 28px;
+  cursor: pointer;
+  box-shadow: 0 3px 0 #6f5d45, 0 5px 8px rgba(0,0,0,0.22);
+  text-transform: uppercase;
+}
+.lw-mini-btn.primary {
+  background: linear-gradient(to bottom, #ffad4f, #d17a00);
+  border-color: #5a3000;
+  box-shadow: 0 3px 0 #5a3000, 0 5px 8px rgba(0,0,0,0.25);
+}
+.lw-mini-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #6f5d45; }
+.lw-save-dot {
+  color: #6b5d4f;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.lw-save-dot.is-saving { color: #9a6100; }
+.lw-save-dot.is-error { color: #9a1c1c; }
+.lw-settings-modal {
+  display: grid;
+  gap: 14px;
+  color: #2b201d;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+}
+.lw-modal-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-bottom: 4px;
+  background: var(--lumiverse-modal-fill, var(--lumiverse-fill, transparent));
+}
+.lw-modal-tab {
+  appearance: none;
+  border: 1px solid #211712;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, #e6dcc3, #c4b89a);
+  color: #2b201d;
+  font: inherit;
+  font-weight: 800;
+  min-height: 34px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.lw-modal-tab.is-active {
+  background: linear-gradient(to bottom, #ffad4f, #d17a00);
+  color: #111;
+}
+.lw-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.lw-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.lw-settings-modal .lw-paper,
+.lw-settings-modal .lw-clock,
+.lw-settings-modal .lw-banner {
+  width: 100%;
+  max-width: none;
+}
+.lw-settings-modal .lw-paper:hover {
+  transform: rotate(0deg);
+}
 `;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -1177,30 +1410,32 @@ function worldStateCardValue(value, fallback = "Unset") {
 }
 function setup(ctx) {
   const cleanups = [];
-  const componentHandles = [];
+  const widgetHandles = [];
+  const modalHandles = [];
+  let activeHandles = widgetHandles;
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
   let activeChannel = "director";
-  let currentPanel = 0;
   let saveTimer = null;
   let localRevision = 0;
   let saveRevision = 0;
   let saveInFlight = false;
+  let saveState = "idle";
+  let settingsModal = null;
   let notice = null;
   cleanups.push(ctx.dom.addStyle(CSS));
-  const tab = ctx.ui.registerDrawerTab({
-    id: "lumi-world",
-    title: EXTENSION_NAME,
-    shortName: "World",
-    headerTitle: "LumiWorld",
-    description: "World simulation channels",
-    keywords: ["lumiworld", "world", "director", "interceptor", "simulation"],
-    iconSvg: LUMIWORLD_ICON
+  const widget = ctx.ui.createFloatWidget({
+    width: 260,
+    height: 308,
+    initialPosition: { x: 24, y: 160 },
+    snapToEdge: true,
+    tooltip: "LumiWorld",
+    chromeless: true
   });
-  cleanups.push(() => tab.destroy());
-  function destroyComponents() {
-    while (componentHandles.length) {
-      const handle = componentHandles.pop();
+  cleanups.push(() => widget.destroy());
+  function destroyHandles(handles) {
+    while (handles.length) {
+      const handle = handles.pop();
       try {
         handle?.destroy();
       } catch {}
@@ -1209,7 +1444,8 @@ function setup(ctx) {
   function scheduleAutoSave() {
     if (saveTimer)
       clearTimeout(saveTimer);
-    tab.setBadge("Saving");
+    saveState = "saving";
+    renderWidget();
     saveTimer = setTimeout(() => {
       saveTimer = null;
       saveRevision = localRevision;
@@ -1268,7 +1504,7 @@ function setup(ctx) {
             onChange(next);
         }
       });
-      componentHandles.push(handle);
+      activeHandles.push(handle);
       return;
     }
     slot.appendChild(numberInput(value, min, max, step, onChange));
@@ -1282,7 +1518,7 @@ function setup(ctx) {
     const components = ctx.components;
     if (components?.mountTextArea) {
       const handle = components.mountTextArea(slot, { value, rows: 8, ariaLabel, onChange });
-      componentHandles.push(handle);
+      activeHandles.push(handle);
       return;
     }
     const input = createElement("textarea", "lw-textarea");
@@ -1300,7 +1536,7 @@ function setup(ctx) {
     const components = ctx.components;
     if (components?.mountSwitch && !disabled) {
       const handle = components.mountSwitch(slot, { checked, size: "md", ariaLabel, onChange });
-      componentHandles.push(handle);
+      activeHandles.push(handle);
       return;
     }
     const input = createElement("input");
@@ -1358,7 +1594,7 @@ function setup(ctx) {
           render();
         }
       });
-      componentHandles.push(handle);
+      activeHandles.push(handle);
       return;
     }
     const select = createElement("select", "lw-select");
@@ -1385,7 +1621,7 @@ function setup(ctx) {
         browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
         onChange
       });
-      componentHandles.push(handle);
+      activeHandles.push(handle);
       return;
     }
     const input = createElement("input", "lw-input");
@@ -1436,7 +1672,7 @@ function setup(ctx) {
       if (components?.mountCheckbox) {
         const slot = createElement("div");
         const handle = components.mountCheckbox(slot, { checked: draft.generationTypes.includes(type), label: type, onChange: updateType });
-        componentHandles.push(handle);
+        activeHandles.push(handle);
         chips.appendChild(slot);
       } else {
         const label = createElement("label", "lw-chip-compact");
@@ -1696,160 +1932,151 @@ function setup(ctx) {
     if (draft.worldAgent.enabled && !draft.worldAgent.connectionId)
       shell.appendChild(createElement("div", "lw-banner warn", "World Agent is enabled but no model connection is selected."));
   }
-  function renderTvPanel(shell) {
-    const window = createElement("div", "lw-window");
-    window.innerHTML = `<div class="lw-moon"></div><div class="lw-city"></div><div class="lw-city-lights"></div><div class="lw-rain"></div>`;
-    shell.appendChild(window);
-    shell.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
-    const tvContainer = createElement("div", "lw-tv-container");
-    tvContainer.appendChild(createElement("div", "lw-tv-antenna lw-left"));
-    tvContainer.appendChild(createElement("div", "lw-tv-antenna lw-right"));
-    const tv = createElement("div", "lw-tv");
-    const tvScreen = createElement("div", "lw-tv-screen");
-    tvScreen.appendChild(createElement("div", "lw-tv-scanlines"));
-    tvScreen.appendChild(createElement("div", "lw-tv-glare"));
-    const content = createElement("div", "lw-tv-content");
-    const header = createElement("div", "lw-tv-header");
-    header.append(createElement("span", undefined, "◆ LUMI-VISION"), createElement("span", undefined, formatClock(state?.worldState)));
-    content.appendChild(header);
-    const list = createElement("div", "lw-tv-list");
-    const ch1 = createElement("div", `lw-tv-row${activeChannel === "director" ? " is-active" : ""}`);
-    ch1.innerHTML = `<span class="lw-tv-ch">CH 01</span><span class="lw-tv-name">DIRECTOR NOTE</span><span class="lw-tv-status">${draft.enabled ? "● LIVE" : "OFF"}</span>`;
-    ch1.addEventListener("click", () => switchChannel("director", 1));
-    const ch2 = createElement("div", `lw-tv-row${activeChannel === "world_agent" ? " is-active" : ""}`);
-    ch2.innerHTML = `<span class="lw-tv-ch">CH 02</span><span class="lw-tv-name">WORLD AGENT</span><span class="lw-tv-status">${state?.worldState?.running ? "● RUN" : "PAUSE"}</span>`;
-    ch2.addEventListener("click", () => switchChannel("world_agent", 2));
-    list.append(ch1, ch2);
-    content.appendChild(list);
-    const footer = createElement("div", "lw-tv-footer", "SELECT CHANNEL TO TUNE IN");
-    content.appendChild(footer);
-    tvScreen.appendChild(content);
-    tv.appendChild(createElement("div", "lw-tv-knob"));
-    tv.appendChild(createElement("div", "lw-tv-knob"));
-    tv.appendChild(tvScreen);
-    tvContainer.appendChild(tv);
-    shell.appendChild(tvContainer);
-    const plant = createElement("div", "lw-plant");
-    plant.innerHTML = `<div class="lw-leaf"></div><div class="lw-leaf"></div><div class="lw-leaf"></div><div class="lw-pot"></div>`;
-    shell.appendChild(plant);
+  function latestRun(channel) {
+    return (state?.runs ?? []).find((run) => (run.channel ?? "director") === channel) ?? null;
   }
-  function renderDirectorPanel(shell) {
-    shell.appendChild(createElement("div", "lw-poster", "01 Director Note"));
-    renderBanners(shell);
-    renderDirectorChannel(shell, false);
-    const deskDecor = createElement("div", "lw-desk-decor");
-    const mug = createElement("div", "lw-mug");
-    mug.innerHTML = `<div class="lw-steam"></div><div class="lw-steam lw-steam2"></div>`;
-    const lamp = createElement("div", "lw-lamp");
-    lamp.innerHTML = `<div class="lw-lamp-glow"></div><div class="lw-lamp-base"></div><div class="lw-lamp-arm"></div><div class="lw-lamp-head"></div>`;
-    deskDecor.append(mug, lamp);
-    shell.appendChild(deskDecor);
+  function channelStatus(channel) {
+    if (channel === "director")
+      return draft.enabled ? "live" : "off";
+    if (!draft.worldAgent.enabled)
+      return "off";
+    return state?.worldState?.running ? "run" : "pause";
   }
-  function renderWorldAgentPanel(shell) {
-    shell.appendChild(createElement("div", "lw-poster lw-alt", "02 World Agent"));
-    renderWorldAgentChannel(shell, false);
-    const bed = createElement("div", "lw-bed");
-    bed.innerHTML = `<div class="lw-pillow"></div><div class="lw-blanket"></div>`;
-    shell.appendChild(bed);
-  }
-  function renderArchivesPanel(shell) {
-    shell.appendChild(createElement("div", "lw-poster", "03 Archives"));
-    if (activeChannel === "director") {
-      renderDirectorAdvanced(shell);
-      renderRuns(shell, "director");
-    } else {
-      renderWorldAgentAdvanced(shell);
-      renderRuns(shell, "world_agent");
-    }
-    const shelf = createElement("div", "lw-shelf");
-    shelf.innerHTML = `
-      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
-      <div class="lw-shelf-board"></div>
-      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
-      <div class="lw-shelf-board"></div>
-      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
-      <div class="lw-shelf-board"></div>
-    `;
-    shell.appendChild(shelf);
-  }
-  function setCurrentPanel(panelIndex) {
-    currentPanel = Math.min(3, Math.max(0, panelIndex));
-    if (currentPanel === 1)
-      activeChannel = "director";
-    if (currentPanel === 2)
-      activeChannel = "world_agent";
-    updateRoomPosition();
-  }
-  function switchChannel(channel, panelIndex) {
+  function setActiveChannel(channel) {
     activeChannel = channel;
-    currentPanel = panelIndex;
     render();
   }
-  function navigateRoom(direction) {
-    const target = direction === "left" ? currentPanel - 1 : currentPanel + 1;
-    if (target >= 0 && target <= 3) {
-      setCurrentPanel(target);
+  function widgetNoteLines() {
+    if (!state)
+      return ["Loading LumiWorld...", "Waiting for extension state.", "Open settings after load."];
+    if (activeChannel === "director") {
+      const connection = selectedConnection(draft.connectionId);
+      const run = latestRun("director");
+      return [
+        draft.enabled ? "Director: enabled" : "Director: disabled",
+        connection ? `Model: ${connection.name}` : "No controller connection",
+        run ? `Last: ${formatStatus(run.status)}${run.durationMs != null ? ` / ${Math.round(run.durationMs)} ms` : ""}` : "No director runs yet"
+      ];
+    }
+    const world = state.worldState ?? null;
+    return [
+      draft.worldAgent.enabled ? `Clock: ${world?.running ? "running" : "paused"}` : "World Agent disabled",
+      `Time: ${formatClock(world)}`,
+      `Mood: ${worldStateCardValue(world?.mood, "Neutral")}`,
+      `Goal: ${worldStateCardValue(world?.goal, "Unset")}`
+    ];
+  }
+  function renderWidgetChannel(parent, channel, label, ch) {
+    const row = createElement("div", `lw-monitor-channel${activeChannel === channel ? " is-active" : ""}`);
+    row.append(createElement("span", undefined, ch), createElement("span", undefined, label), createElement("span", "lw-monitor-status", channelStatus(channel)));
+    row.addEventListener("click", () => setActiveChannel(channel));
+    parent.appendChild(row);
+  }
+  function renderWidget() {
+    destroyHandles(widgetHandles);
+    activeHandles = widgetHandles;
+    widget.root.replaceChildren();
+    const root = createElement("div", "lw-float-root");
+    const monitor = createElement("div", "lw-monitor");
+    const screen = createElement("div", "lw-monitor-screen");
+    const head = createElement("div", "lw-monitor-head");
+    head.append(createElement("span", undefined, "LumiWorld"), createElement("span", undefined, formatClock(state?.worldState)));
+    screen.appendChild(head);
+    renderWidgetChannel(screen, "director", "DIRECTOR", "CH1");
+    renderWidgetChannel(screen, "world_agent", "WORLD", "CH2");
+    monitor.append(screen, createElement("div", "lw-monitor-knob one"), createElement("div", "lw-monitor-knob two"));
+    const note = createElement("div", "lw-widget-note");
+    const noteHead = createElement("div", "lw-note-head");
+    noteHead.append(createElement("span", undefined, activeChannel === "director" ? "Director Note" : "World Agent"), createElement("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
+    const lines = createElement("div", "lw-note-lines");
+    for (const line of widgetNoteLines())
+      lines.appendChild(createElement("div", "lw-note-line", line));
+    const actions = createElement("div", "lw-note-actions");
+    const refresh = createElement("button", "lw-mini-btn", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => {
+      send(ctx, { type: "refresh_state" });
+      send(ctx, { type: "refresh_world_state" });
+    });
+    const open = createElement("button", "lw-mini-btn primary", "Settings");
+    open.type = "button";
+    open.addEventListener("click", () => openSettingsModal());
+    actions.append(refresh, open);
+    note.append(noteHead, lines, actions);
+    root.append(monitor, note);
+    widget.root.appendChild(root);
+  }
+  function renderModalTabs(shell) {
+    const tabs = createElement("div", "lw-modal-tabs");
+    const director = createElement("button", `lw-modal-tab${activeChannel === "director" ? " is-active" : ""}`, "Director Note");
+    director.type = "button";
+    director.addEventListener("click", () => setActiveChannel("director"));
+    const world = createElement("button", `lw-modal-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "World Agent");
+    world.type = "button";
+    world.addEventListener("click", () => setActiveChannel("world_agent"));
+    tabs.append(director, world);
+    shell.appendChild(tabs);
+  }
+  function renderSettingsModal() {
+    if (!settingsModal)
+      return;
+    destroyHandles(modalHandles);
+    const previousHandles = activeHandles;
+    activeHandles = modalHandles;
+    try {
+      settingsModal.root.replaceChildren();
+      const shell = createElement("div", "lw-settings-modal");
+      renderModalTabs(shell);
+      const actions = createElement("div", "lw-modal-actions");
+      const refresh = createElement("button", "lw-btn", "Refresh");
+      refresh.type = "button";
+      refresh.addEventListener("click", () => {
+        send(ctx, { type: "refresh_state" });
+        send(ctx, { type: "refresh_world_state" });
+      });
+      const test = createElement("button", "lw-btn lw-btn-primary", "Test Director");
+      test.type = "button";
+      test.addEventListener("click", () => {
+        notice = { tone: "info", text: "Testing Director Note controller..." };
+        send(ctx, { type: "test_controller", settings: draft });
+        render();
+      });
+      actions.append(refresh, test);
+      shell.appendChild(actions);
+      renderNotice(shell);
+      if (!state) {
+        shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
+        settingsModal.root.appendChild(shell);
+        return;
+      }
+      renderBanners(shell);
+      const grid = createElement("div", "lw-modal-grid");
+      if (activeChannel === "director")
+        renderDirectorChannel(grid, true);
+      else
+        renderWorldAgentChannel(grid, true);
+      shell.appendChild(grid);
+      settingsModal.root.appendChild(shell);
+    } finally {
+      activeHandles = previousHandles;
     }
   }
-  function updateRoomPosition() {
-    const wrapper = document.getElementById("lw-room-wrapper");
-    if (wrapper) {
-      wrapper.style.transform = `translateX(-${currentPanel * 25}%)`;
+  function openSettingsModal() {
+    if (settingsModal) {
+      renderSettingsModal();
+      return;
     }
-    const leftBtn = document.getElementById("lw-nav-left");
-    const rightBtn = document.getElementById("lw-nav-right");
-    if (leftBtn)
-      leftBtn.disabled = currentPanel === 0;
-    if (rightBtn)
-      rightBtn.disabled = currentPanel === 3;
-    document.querySelectorAll(".lw-dot").forEach((dot, index) => {
-      dot.classList.toggle("is-active", index === currentPanel);
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 860, maxHeight: 720 });
+    settingsModal.onDismiss(() => {
+      destroyHandles(modalHandles);
+      settingsModal = null;
     });
+    renderSettingsModal();
   }
   function render() {
-    destroyComponents();
-    tab.root.replaceChildren();
-    const root = createElement("div", "lw-root");
-    const navLeft = createElement("button", "lw-nav-btn lw-nav-left", "‹");
-    navLeft.id = "lw-nav-left";
-    navLeft.type = "button";
-    navLeft.addEventListener("click", () => navigateRoom("left"));
-    const navRight = createElement("button", "lw-nav-btn lw-nav-right", "›");
-    navRight.id = "lw-nav-right";
-    navRight.type = "button";
-    navRight.addEventListener("click", () => navigateRoom("right"));
-    const navDots = createElement("div", "lw-nav-dots");
-    for (let i = 0;i < 4; i++) {
-      const dot = createElement("div", `lw-dot${i === currentPanel ? " is-active" : ""}`);
-      dot.addEventListener("click", () => {
-        setCurrentPanel(i);
-      });
-      navDots.appendChild(dot);
-    }
-    const viewport = createElement("div", "lw-viewport");
-    const roomWrapper = createElement("div", "lw-room-wrapper");
-    roomWrapper.id = "lw-room-wrapper";
-    roomWrapper.style.transform = `translateX(-${currentPanel * 25}%)`;
-    const tvPanel = createElement("div", "lw-panel lw-tv-room");
-    if (!state) {
-      tvPanel.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
-    } else {
-      renderTvPanel(tvPanel);
-    }
-    const directorPanel = createElement("div", "lw-panel lw-settings-room");
-    if (state)
-      renderDirectorPanel(directorPanel);
-    const worldAgentPanel = createElement("div", "lw-panel lw-settings-room");
-    if (state)
-      renderWorldAgentPanel(worldAgentPanel);
-    const archivesPanel = createElement("div", "lw-panel lw-settings-room");
-    if (state)
-      renderArchivesPanel(archivesPanel);
-    roomWrapper.append(tvPanel, directorPanel, worldAgentPanel, archivesPanel);
-    viewport.appendChild(roomWrapper);
-    root.append(navLeft, navRight, viewport, navDots);
-    tab.root.appendChild(root);
-    updateRoomPosition();
+    renderWidget();
+    if (settingsModal)
+      renderSettingsModal();
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
@@ -1873,10 +2100,11 @@ function setup(ctx) {
       case "settings_saved":
         saveInFlight = false;
         if (saveRevision === localRevision) {
+          saveState = "idle";
           draft = cloneSettings(message.settings);
           if (state)
             state = { ...state, settings: message.settings };
-          tab.setBadge(null);
+          render();
         } else if (!saveTimer) {
           scheduleAutoSave();
         }
@@ -1906,7 +2134,7 @@ function setup(ctx) {
       case "error":
         saveInFlight = false;
         if (!saveTimer && localRevision === saveRevision)
-          tab.setBadge("Error");
+          saveState = "error";
         notice = { tone: "error", text: message.message };
         render();
         break;
@@ -1928,7 +2156,9 @@ function setup(ctx) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    destroyComponents();
+    destroyHandles(widgetHandles);
+    destroyHandles(modalHandles);
+    settingsModal?.dismiss();
     for (const cleanup of cleanups.reverse()) {
       try {
         cleanup();
