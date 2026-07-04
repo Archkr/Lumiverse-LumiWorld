@@ -344,19 +344,19 @@ const DEFAULT_SETTINGS: LumiWorldSettings = {
 const CSS = `
 .lw-root {
   min-height: 100%;
-  padding: 10px 8px;
+  padding: 12px 8px 40px;
   color: #e0d6c8;
-  background-color: #2b201d;
+  /* Realistic Running-Bond Brick Wall */
+  background-color: #4a322a;
   background-image:
-    linear-gradient(335deg, #251c1a 23px, transparent 23px),
-    linear-gradient(155deg, #251c1a 23px, transparent 23px),
-    linear-gradient(335deg, #251c1a 23px, transparent 23px),
-    linear-gradient(155deg, #251c1a 23px, transparent 23px),
-    linear-gradient(90deg, #2b201d 10px, transparent 10px),
-    linear-gradient(90deg, #2b201d 10px, transparent 10px),
-    #332925;
-  background-size: 58px 58px, 58px 58px, 58px 58px, 58px 58px, 29px 29px, 29px 29px;
-  background-position: 0px 0px, 0px 0px, 29px 29px, 29px 29px, 0px 0px, 29px 29px;
+    linear-gradient(335deg, #3a261f 23px, transparent 23px),
+    linear-gradient(155deg, #3a261f 23px, transparent 23px),
+    linear-gradient(335deg, #3a261f 23px, transparent 23px),
+    linear-gradient(155deg, #3a261f 23px, transparent 23px),
+    linear-gradient(90deg, #3a261f 4px, transparent 4px),
+    linear-gradient(90deg, #3a261f 4px, transparent 4px);
+  background-size: 58px 29px, 58px 29px, 58px 29px, 58px 29px, 29px 29px, 29px 29px;
+  background-position: 0px 0px, 0px 0px, 29px 14.5px, 29px 14.5px, 0px 0px, 29px 29px;
   box-sizing: border-box;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
@@ -394,67 +394,90 @@ const CSS = `
   margin: 0 auto;
 }
 
-/* LED Sign */
+/* Shelf and LED Sign */
+.lw-shelf-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  width: 100%;
+}
 .lw-led-sign {
-  align-self: flex-start;
+  margin-left: 15px;
+  margin-bottom: 2px;
   background: #111;
   border: 2px solid #3a2e2a;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-radius: 4px;
   box-shadow: 0 0 12px rgba(255, 126, 0, 0.35), inset 0 0 8px rgba(0,0,0,0.9);
   color: #ff9e3d;
   text-shadow: 0 0 5px #ff9e3d, 0 0 10px #ff7e00, 0 0 20px #ff5500;
   font-weight: bold;
-  font-size: 13px;
-  letter-spacing: 1.5px;
+  font-size: 12px;
+  letter-spacing: 1px;
   animation: lw-flicker 4s infinite alternate;
-  margin-bottom: 2px;
-  max-width: calc(100% - 18px);
   white-space: nowrap;
-  position: relative;
-}
-.lw-led-sign::after {
-  content: '';
-  position: absolute;
-  top: 50%; left: 100%;
-  transform: translateY(-50%);
-  width: 18px; height: 3px;
-  background: #3a2e2a;
-  border-radius: 2px;
 }
 @keyframes lw-flicker {
   0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; text-shadow: 0 0 5px #ff9e3d, 0 0 10px #ff7e00, 0 0 20px #ff5500; }
   20%, 24%, 55% { opacity: 0.8; text-shadow: none; }
 }
+.lw-shelf {
+  width: 100%;
+  height: 8px;
+  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
+  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
+  border-radius: 2px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+  position: relative;
+}
+.lw-shelf::before, .lw-shelf::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  width: 4px;
+  height: 6px;
+  background: #3a261f;
+}
+.lw-shelf::before { left: 15%; }
+.lw-shelf::after { right: 15%; }
 
 /* Window */
+.lw-window-container {
+  width: 100%;
+  max-width: 220px;
+  margin: 0 auto;
+}
+.lw-window-frame {
+  padding: 6px;
+  background: #4a332d;
+  background-image: repeating-linear-gradient(90deg, #3a261f 0px, #4a332d 2px, #3a261f 4px);
+  border-radius: 4px;
+  box-shadow: 0 5px 10px rgba(0,0,0,0.5);
+}
 .lw-window {
   width: 100%;
-  height: 78px;
+  height: 70px;
   background: linear-gradient(to bottom, #1a2a3a, #3d5a80);
-  border: 5px solid #6b4f3c;
-  border-radius: 4px;
-  box-shadow: inset 0 0 24px rgba(0,0,0,0.8), 0 5px 10px rgba(0,0,0,0.45);
   position: relative;
   overflow: hidden;
+  border: 2px solid #3a261f;
 }
-.lw-window::before {
+.lw-window::before, .lw-window::after {
   content: '';
   position: absolute;
-  top: 0; left: 50%;
-  width: 3px; height: 100%;
-  background: #6b4f3c;
-  transform: translateX(-50%);
+  background: #4a332d;
   z-index: 2;
 }
-.lw-window::after {
-  content: '';
+.lw-window::before { top: 0; left: 50%; width: 4px; height: 100%; transform: translateX(-50%); }
+.lw-window::after { left: 0; top: 50%; width: 100%; height: 4px; transform: translateY(-50%); }
+.lw-moon {
   position: absolute;
-  left: 0; top: 50%;
-  width: 100%; height: 3px;
-  background: #6b4f3c;
-  transform: translateY(-50%);
-  z-index: 2;
+  top: 10px; right: 15px;
+  width: 12px; height: 12px;
+  background: #fffae0;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #fffae0;
 }
 .lw-stars {
   position: absolute;
@@ -464,14 +487,21 @@ const CSS = `
     radial-gradient(1px 1px at 40px 70px, #fff, transparent),
     radial-gradient(1px 1px at 50px 160px, #fff, transparent),
     radial-gradient(1px 1px at 90px 40px, #fff, transparent),
-    radial-gradient(1px 1px at 130px 80px, #fff, transparent),
-    radial-gradient(1px 1px at 160px 120px, #fff, transparent);
+    radial-gradient(1px 1px at 130px 80px, #fff, transparent);
   background-size: 200px 200px;
   background-repeat: repeat;
   animation: lw-twinkle 4s infinite alternate;
   opacity: 0.8;
 }
 @keyframes lw-twinkle { 0% {opacity: 0.4;} 100% {opacity: 1;} }
+.lw-window-sill {
+  height: 10px;
+  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
+  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
+  margin: 6px -6px -6px -6px;
+  border-radius: 2px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+}
 
 /* Toolbar */
 .lw-toolbar {
@@ -523,7 +553,13 @@ const CSS = `
 .lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
 .lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
 
-/* Box TV */
+/* TV Stand and Table */
+.lw-tv-stand {
+  width: 100%;
+  margin: 20px auto 0;
+  position: relative;
+  padding-bottom: 40px; /* space for legs */
+}
 .lw-tv {
   background: #d4c5a9;
   border: 8px solid #8b7765;
@@ -534,15 +570,12 @@ const CSS = `
     inset 0 0 20px rgba(0,0,0,0.1),
     inset 0 0 0 2px #6b4f3c;
   position: relative;
-  width: min(100%, 360px);
-  max-width: 360px;
-  aspect-ratio: 4 / 3;
+  width: 100%;
   min-width: 0;
-  margin: 28px auto 0;
+  margin: 0;
   box-sizing: border-box;
-  display: flex;
+  z-index: 2;
 }
-/* TV Antennas */
 .lw-tv::before, .lw-tv::after {
   content: '';
   position: absolute;
@@ -561,30 +594,21 @@ const CSS = `
   border-radius: 8px;
   padding: 10px;
   position: relative;
-  overflow-y: hidden;
-  overflow-x: hidden;
   width: 100%;
-  min-height: 100%;
-  min-width: 0;
+  min-height: 60vh;
   box-shadow: inset 0 0 38px rgba(0,0,0,0.9);
   background-image: linear-gradient(rgba(255, 255, 255, 0.03) 50%, transparent 50%);
   background-size: 100% 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
-.lw-tv-screen::-webkit-scrollbar { width: 8px; }
-.lw-tv-screen::-webkit-scrollbar-track { background: #111; }
-.lw-tv-screen::-webkit-scrollbar-thumb { background: #ff7e00; border: 2px solid #111; border-radius: 0; }
 
 /* TV Controls (Tabs) */
 .lw-tv-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  width: min(100%, 280px);
-  margin: 0 auto;
-  padding: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 6px;
   background: #b0a090;
   border-radius: 6px;
   border: 2px solid #8b7765;
@@ -594,12 +618,12 @@ const CSS = `
   background: linear-gradient(to bottom, #4a3a35, #2b201d);
   border: 1px solid #1a1a1a;
   color: #ff9e3d;
-  padding: 7px 5px;
+  padding: 6px 5px;
   border-radius: 3px;
   cursor: pointer;
   font-family: 'Courier New', monospace;
   font-weight: bold;
-  font-size: 10.5px;
+  font-size: 10px;
   line-height: 1.15;
   text-shadow: 0 0 5px #ff5500;
   box-shadow: 0 3px 0 #1a1a1a, inset 0 1px 0 rgba(255,255,255,0.2);
@@ -617,6 +641,7 @@ const CSS = `
   box-shadow: 0 1px 0 #1a1a1a, inset 0 2px 4px rgba(0,0,0,0.4);
   transform: translateY(3px);
 }
+
 /* Panels (Paper Notes) */
 .lw-panel {
   border: none;
@@ -625,8 +650,8 @@ const CSS = `
   background-size: 100% 20px;
   color: #2b201d;
   border-radius: 2px;
-  padding: 14px;
-  margin-bottom: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
   box-shadow: 2px 4px 10px rgba(0,0,0,0.55);
   position: relative;
   transform: rotate(-0.25deg);
@@ -638,13 +663,11 @@ const CSS = `
 .lw-panel:nth-child(even) { transform: rotate(0.25deg); background-color: #f5f5dc; }
 .lw-panel:nth-child(3n) { transform: rotate(-0.1deg); }
 .lw-panel:hover { transform: rotate(0deg); z-index: 2; }
-
-/* Tape effect for panels */
 .lw-panel::before {
   content: '';
   position: absolute;
-  top: -8px; left: 50%;
-  width: 72px; height: 16px;
+  top: -6px; left: 50%;
+  width: 60px; height: 14px;
   background: rgba(255, 255, 255, 0.4);
   border: 1px solid rgba(0,0,0,0.1);
   transform: translateX(-50%) rotate(2deg);
@@ -657,17 +680,17 @@ const CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   border-bottom: 2px dashed #8b7765;
   padding-bottom: 6px;
   flex-wrap: wrap;
 }
-.lw-panel-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
+.lw-panel-head h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
 
-.lw-form { display: grid; gap: 10px; }
+.lw-form { display: grid; gap: 8px; }
 .lw-field { display: grid; gap: 4px; min-width: 0; }
-.lw-field label, .lw-toggle-label { font-size: 11px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
-.lw-hint { color: #6b5d4f; font-size: 10.5px; font-style: italic; overflow-wrap: anywhere; }
+.lw-field label, .lw-toggle-label { font-size: 10px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
+.lw-hint { color: #6b5d4f; font-size: 10px; font-style: italic; overflow-wrap: anywhere; }
 
 .lw-input, .lw-select, .lw-textarea {
   width: 100%;
@@ -676,56 +699,57 @@ const CSS = `
   background: #fff;
   color: #2b201d;
   font: inherit;
-  padding: 7px 8px;
+  padding: 6px 8px;
   box-shadow: inset 1px 1px 4px rgba(0,0,0,0.1);
   min-width: 0;
 }
 .lw-input:focus, .lw-select:focus, .lw-textarea:focus { outline: 2px solid #ff7e00; outline-offset: -1px; }
 .lw-textarea {
   resize: vertical;
-  min-height: 132px;
+  min-height: 100px;
   line-height: 1.4;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
-.lw-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; align-items: start; }
-.lw-three { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
-.lw-three > .lw-btn { grid-column: 1 / -1; }
+.lw-two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: end; }
+.lw-three { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: end; }
 
 .lw-setting-row {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 6px 0;
+  padding: 4px 0;
   border-bottom: 1px dashed rgba(0,0,0,0.1);
 }
 .lw-setting-row.is-disabled { opacity: 0.55; }
 .lw-setting-row > div:last-child { min-width: 0; }
 .lw-switch-slot { flex: 0 0 auto; padding-top: 1px; }
 
-.lw-type-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
-.lw-chip {
+.lw-chips-inline { display: flex; flex-wrap: wrap; gap: 6px; }
+.lw-chip-compact {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 4px 8px;
   border: 1px solid #8b7765;
   border-radius: 2px;
-  padding: 7px 8px;
   background: #fff;
-  box-shadow: 2px 2px 0px rgba(0,0,0,0.1);
+  font-size: 10px;
+  text-transform: capitalize;
+  box-shadow: 1px 1px 0px rgba(0,0,0,0.1);
 }
 
 .lw-banner {
   border: 1px solid #111;
   border-radius: 2px;
-  padding: 9px 10px;
+  padding: 8px 10px;
   background: #ff9e3d;
   color: #111;
   font-weight: bold;
   box-shadow: 2px 3px 0px rgba(0,0,0,0.3);
-  margin-bottom: 10px;
-  font-size: 11.5px;
+  margin-bottom: 8px;
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 .lw-banner.warn { background: #d8aa63; }
@@ -736,55 +760,68 @@ const CSS = `
   border-radius: 2px;
   background: #e6dcc3;
   padding: 0;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
 }
-.lw-details summary { cursor: pointer; padding: 9px 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-.lw-details-body { padding: 0 11px 11px; display: grid; gap: 10px; }
+.lw-details summary { cursor: pointer; padding: 8px 10px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.lw-details-body { padding: 0 10px 10px; display: grid; gap: 8px; }
+
+.lw-divider {
+  border: 0;
+  border-top: 2px dashed #8b7765;
+  margin: 4px 0;
+  width: 100%;
+}
 
 /* Retro Digital Clock */
 .lw-clock {
   display: grid;
-  gap: 9px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border: 2px solid #111;
   border-radius: 4px;
   background: #111;
   color: #ff5500;
   box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 5px 10px rgba(0,0,0,0.5);
   text-align: center;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   min-width: 0;
 }
+.lw-clock-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid #ff5500;
+  padding-bottom: 6px;
+  gap: 8px;
+}
 .lw-clock-time {
-  font-size: clamp(24px, 8vw, 32px);
-  line-height: 1;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 10px #ff5500;
   font-family: 'Courier New', Courier, monospace;
-  border-bottom: 2px solid #ff5500;
-  padding-bottom: 9px;
-  margin-bottom: 4px;
   white-space: nowrap;
 }
-.lw-clock-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; }
-.lw-clock-row .lw-btn { flex: 1 1 94px; min-width: 0; }
+.lw-clock-status { font-size: 11px; color: #ff9e3d; white-space: nowrap; }
+.lw-clock-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.lw-clock-set { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.lw-clock-set .lw-btn { grid-column: span 2; }
 
-.lw-meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.lw-meter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .lw-state-card {
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
-  padding: 9px;
-  min-height: 66px;
+  padding: 8px;
+  min-height: 50px;
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 4px;
   box-shadow: 2px 2px 0px rgba(0,0,0,0.1);
 }
-.lw-state-label { color: #6b5d4f; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
-.lw-state-value { overflow-wrap: anywhere; font-size: 12px; }
+.lw-state-label { color: #6b5d4f; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
+.lw-state-value { overflow-wrap: anywhere; font-size: 11px; }
 
 .lw-schedule-strip {
   display: flex;
@@ -793,27 +830,27 @@ const CSS = `
   padding: 3px 3px 9px;
 }
 .lw-slot {
-  flex: 0 0 132px;
+  flex: 0 0 120px;
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #f5f5dc;
-  padding: 9px;
+  padding: 8px;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
 }
 .lw-slot.is-now { border-color: #ff5500; box-shadow: 3px 3px 0px #ff5500; background: #fff9e6; }
 
 .lw-runs { display: grid; gap: 8px; }
 .lw-scrollbox {
-  max-height: min(360px, 42vh);
+  max-height: 300px;
   overflow-y: auto;
   padding-right: 5px;
 }
 .lw-run {
   display: grid;
-  gap: 5px;
-  padding: 9px;
+  gap: 4px;
+  padding: 8px;
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
@@ -824,7 +861,7 @@ const CSS = `
   display: inline-flex;
   align-items: center;
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: bold;
   border: 1px solid #111;
   text-transform: uppercase;
@@ -835,26 +872,25 @@ const CSS = `
 .lw-status.skipped { color: #111; background: #d8aa63; }
 
 .lw-empty {
-  padding: 14px;
+  padding: 12px;
   text-align: center;
   color: #6b5d4f;
   border: 1px dashed #8b7765;
   border-radius: 2px;
   background: rgba(255,255,255,0.5);
   font-style: italic;
+  font-size: 11px;
 }
 
-@media (max-width: 520px) {
-  .lw-root { padding: 8px 6px; font-size: 11.5px; }
+@media (max-width: 340px) {
+  .lw-root { padding: 8px 6px 30px; font-size: 11.5px; }
   .lw-shell { gap: 10px; }
   .lw-toolbar { flex-direction: column; align-items: stretch; }
   .lw-actions { width: 100%; justify-content: stretch; }
   .lw-actions .lw-btn { flex: 1; }
-  .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; width: min(100%, 340px); }
+  .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; }
   .lw-tv-screen { border-width: 5px; padding: 8px; }
-  .lw-window { height: 64px; }
-  .lw-two, .lw-meter-grid, .lw-type-grid { grid-template-columns: 1fr; }
-  .lw-clock-time { font-size: 24px; letter-spacing: 0; }
+  .lw-clock-time { font-size: 16px; letter-spacing: 0; }
 }
 `;
 
@@ -1289,79 +1325,50 @@ export function setup(ctx: SpindleFrontendContext) {
     slot.appendChild(input);
   }
 
-  function renderConnectionFields(shell: HTMLElement, channel: LumiWorldChannel): void {
-    const isDirector = channel === "director";
+  function renderDirectorChannel(shell: HTMLElement): void {
     const panel = createElement("section", "lw-panel");
     const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, isDirector ? "Controller" : "World Agent Model"));
+    head.appendChild(createElement("h3", undefined, "Director Settings"));
+    
+    const toggleSlot = createElement("div", "lw-switch-slot");
+    renderSwitchControl(toggleSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable Director Note");
+    head.appendChild(toggleSlot);
     panel.appendChild(head);
 
     const form = createElement("div", "lw-form");
-    const connectionSlot = createElement("div");
-    form.appendChild(field("Connection", connectionSlot, "Use a Lumiverse LLM connection profile. API keys stay inside Lumiverse."));
-    renderConnectionControl(
-      connectionSlot,
-      isDirector ? draft.connectionId : draft.worldAgent.connectionId,
-      (connectionId) => isDirector
-        ? updateDraft({ connectionId, modelOverride: "" })
-        : updateWorldAgent({ connectionId, modelOverride: "" }),
-      isDirector ? "Director Note connection" : "World Agent connection",
-    );
+    
+    const connSlot = createElement("div");
+    renderConnectionControl(connSlot, draft.connectionId, (id) => updateDraft({ connectionId: id, modelOverride: "" }), "Director Note connection");
+    form.appendChild(field("Connection", connSlot));
 
     const modelSlot = createElement("div");
-    form.appendChild(field("Model override", modelSlot, "Leave blank to use the selected connection's configured model."));
-    renderModelControl(
-      modelSlot,
-      isDirector ? draft.connectionId : draft.worldAgent.connectionId,
-      isDirector ? draft.modelOverride : draft.worldAgent.modelOverride,
-      (model) => isDirector ? updateDraft({ modelOverride: model }) : updateWorldAgent({ modelOverride: model }),
+    renderModelControl(modelSlot, draft.connectionId, draft.modelOverride, (m) => updateDraft({ modelOverride: m }));
+    form.appendChild(field("Model Override", modelSlot));
+
+    const paramsGrid = createElement("div", "lw-two");
+    paramsGrid.append(
+      numberField("Temp", draft.temperature, 0, 2, 0.05, v => updateDraft({ temperature: v })),
+      numberField("Tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, v => updateDraft({ maxTokens: v }))
     );
+    form.appendChild(paramsGrid);
 
-    const two = createElement("div", "lw-two");
-    if (isDirector) {
-      two.append(
-        numberField("Temperature", draft.temperature, 0, 2, 0.05, (value) => updateDraft({ temperature: value })),
-        numberField("Max tokens", draft.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateDraft({ maxTokens: value })),
-        numberField("Timeout ms", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateDraft({ timeoutMs: value })),
-        numberField("Chat history", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (value) => updateDraft({ historyMessageLimit: value })),
-        numberField("Prompt cap chars", draft.maxInputChars, 4000, 500000, 1000, (value) => updateDraft({ maxInputChars: value })),
-      );
-    } else {
-      two.append(
-        numberField("Temperature", draft.worldAgent.temperature, 0, 2, 0.05, (value) => updateWorldAgent({ temperature: value })),
-        numberField("Max tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, (value) => updateWorldAgent({ maxTokens: value })),
-        numberField("Timeout ms", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (value) => updateWorldAgent({ timeoutMs: value })),
-        numberField("Hour duration ms", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (value) => updateWorldAgent({ hourDurationMs: value }), `Current: ${formatDurationMs(draft.worldAgent.hourDurationMs)}`),
-      );
-    }
-    form.appendChild(two);
-    panel.appendChild(form);
-    shell.appendChild(panel);
-  }
+    const paramsGrid2 = createElement("div", "lw-two");
+    paramsGrid2.append(
+      numberField("Timeout", draft.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, v => updateDraft({ timeoutMs: v })),
+      numberField("History", draft.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, v => updateDraft({ historyMessageLimit: v }))
+    );
+    form.appendChild(paramsGrid2);
 
-  function renderDirectorChannel(shell: HTMLElement): void {
-    const enabled = createElement("section", "lw-panel");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Director Note"));
-    head.appendChild(createElement("span", "lw-muted", BREAKDOWN_NAME));
-    enabled.appendChild(head);
-    enabled.appendChild(toggleField("Enable Director Note", draft.enabled, (checked) => updateDraft({ enabled: checked }), "Visible generations receive a private director note before the main model replies."));
-    shell.appendChild(enabled);
+    const paramsGrid3 = createElement("div", "lw-two");
+    paramsGrid3.append(
+      numberField("Cap Chars", draft.maxInputChars, 4000, 500000, 1000, v => updateDraft({ maxInputChars: v })),
+      numberField("Log Limit", draft.runLogLimit, 0, 50, 1, v => updateDraft({ runLogLimit: v }))
+    );
+    form.appendChild(paramsGrid3);
 
-    renderConnectionFields(shell, "director");
-    renderGenerationTypes(shell);
-    renderDirectorAdvanced(shell);
-    renderRuns(shell, "director");
-  }
-
-  function renderGenerationTypes(shell: HTMLElement): void {
-    const panel = createElement("section", "lw-panel");
-    const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Runs On"));
-    head.appendChild(createElement("span", "lw-muted", "Quiet jobs are skipped"));
-    panel.appendChild(head);
-
-    const grid = createElement("div", "lw-type-grid");
+    const runsOnDiv = createElement("div", "lw-field");
+    runsOnDiv.appendChild(createElement("label", undefined, "Runs On"));
+    const chips = createElement("div", "lw-chips-inline");
     const components = (ctx as any).components;
     for (const type of VISIBLE_GENERATION_TYPES) {
       const updateType = (checked: boolean) => {
@@ -1370,28 +1377,29 @@ export function setup(ctx: SpindleFrontendContext) {
         else next.delete(type);
         updateDraft({ generationTypes: [...next] });
       };
-
       if (components?.mountCheckbox) {
         const slot = createElement("div");
-        const handle = components.mountCheckbox(slot, {
-          checked: draft.generationTypes.includes(type),
-          label: type,
-          onChange: updateType,
-        }) as MountedHandle;
+        const handle = components.mountCheckbox(slot, { checked: draft.generationTypes.includes(type), label: type, onChange: updateType }) as MountedHandle;
         componentHandles.push(handle);
-        grid.appendChild(slot);
+        chips.appendChild(slot);
       } else {
-        const label = createElement("label", "lw-chip") as HTMLLabelElement;
+        const label = createElement("label", "lw-chip-compact") as HTMLLabelElement;
         const input = createElement("input") as HTMLInputElement;
         input.type = "checkbox";
         input.checked = draft.generationTypes.includes(type);
         input.addEventListener("change", () => updateType(input.checked));
         label.append(input, document.createTextNode(type));
-        grid.appendChild(label);
+        chips.appendChild(label);
       }
     }
-    panel.appendChild(grid);
+    runsOnDiv.appendChild(chips);
+    form.appendChild(runsOnDiv);
+
+    panel.appendChild(form);
     shell.appendChild(panel);
+
+    renderDirectorAdvanced(shell);
+    renderRuns(shell, "director");
   }
 
   function renderDirectorAdvanced(shell: HTMLElement): void {
@@ -1407,8 +1415,7 @@ export function setup(ctx: SpindleFrontendContext) {
       toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
       textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."),
       textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."),
-      textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value })),
-      numberField("Run log limit", draft.runLogLimit, 0, 50, 1, (value) => updateDraft({ runLogLimit: value })),
+      textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value }))
     );
     details.append(summary, body);
     shell.appendChild(details);
@@ -1417,19 +1424,45 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderWorldAgentChannel(shell: HTMLElement): void {
     renderWorldAgentClock(shell);
 
-    const settingsPanel = createElement("section", "lw-panel");
+    const panel = createElement("section", "lw-panel");
     const head = createElement("div", "lw-panel-head");
-    head.appendChild(createElement("h3", undefined, "Channel"));
-    head.appendChild(createElement("span", "lw-muted", WORLD_AGENT_BREAKDOWN_NAME));
-    settingsPanel.appendChild(head);
-    settingsPanel.append(
-      toggleField("Enable World Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Use per-chat simulation state for this channel."),
-      toggleField("Inject state", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add the current World Agent state to visible prompt generations."),
-      toggleField("Visible-only ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Automatic ticks only run while Lumiverse is visible."),
-    );
-    shell.appendChild(settingsPanel);
+    head.appendChild(createElement("h3", undefined, "World Agent Settings"));
+    panel.appendChild(head);
 
-    renderConnectionFields(shell, "world_agent");
+    const form = createElement("div", "lw-form");
+    form.append(
+      toggleField("Enable Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Per-chat simulation state."),
+      toggleField("Inject State", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add state to visible prompt."),
+      toggleField("Visible-only Ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Ticks run only when Lumiverse is visible.")
+    );
+
+    form.appendChild(createElement("hr", "lw-divider"));
+
+    const connSlot = createElement("div");
+    renderConnectionControl(connSlot, draft.worldAgent.connectionId, (id) => updateWorldAgent({ connectionId: id, modelOverride: "" }), "World Agent connection");
+    form.appendChild(field("Connection", connSlot));
+
+    const modelSlot = createElement("div");
+    renderModelControl(modelSlot, draft.worldAgent.connectionId, draft.worldAgent.modelOverride, (m) => updateWorldAgent({ modelOverride: m }));
+    form.appendChild(field("Model Override", modelSlot));
+
+    const paramsGrid = createElement("div", "lw-two");
+    paramsGrid.append(
+      numberField("Temp", draft.worldAgent.temperature, 0, 2, 0.05, v => updateWorldAgent({ temperature: v })),
+      numberField("Tokens", draft.worldAgent.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS, 1, v => updateWorldAgent({ maxTokens: v }))
+    );
+    form.appendChild(paramsGrid);
+
+    const paramsGrid2 = createElement("div", "lw-two");
+    paramsGrid2.append(
+      numberField("Timeout", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, v => updateWorldAgent({ timeoutMs: v })),
+      numberField("Hour Dur", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, v => updateWorldAgent({ hourDurationMs: v }))
+    );
+    form.appendChild(paramsGrid2);
+
+    panel.appendChild(form);
+    shell.appendChild(panel);
+
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
     renderWorldAgentAdvanced(shell);
@@ -1439,14 +1472,15 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderWorldAgentClock(shell: HTMLElement): void {
     const panel = createElement("section", "lw-clock");
     const stateNow = state?.worldState ?? null;
-    const top = createElement("div", "lw-clock-row");
+    
+    const top = createElement("div", "lw-clock-top");
     top.append(
       createElement("div", "lw-clock-time", formatClock(stateNow)),
-      createElement("span", "lw-muted", stateNow?.running ? "running" : "paused"),
+      createElement("span", "lw-clock-status", stateNow?.running ? "▶ Running" : "⏸ Paused")
     );
     panel.appendChild(top);
 
-    const actions = createElement("div", "lw-clock-row");
+    const actions = createElement("div", "lw-clock-actions");
     const startPause = createElement("button", `lw-btn${stateNow?.running ? "" : " lw-btn-primary"}`, stateNow?.running ? "Pause" : "Start");
     startPause.type = "button";
     startPause.addEventListener("click", () => {
@@ -1474,7 +1508,7 @@ export function setup(ctx: SpindleFrontendContext) {
     actions.append(startPause, advance, schedule, reset);
     panel.appendChild(actions);
 
-    const timeRow = createElement("div", "lw-three");
+    const timeRow = createElement("div", "lw-clock-set");
     const dayInput = numberInput(stateNow?.day ?? 1, 1, Number.MAX_SAFE_INTEGER, 1, () => {});
     const hourInput = numberInput(stateNow?.hour ?? 8, 0, 23, 1, () => {});
     const setButton = createElement("button", "lw-btn", "Set Time");
@@ -1482,6 +1516,7 @@ export function setup(ctx: SpindleFrontendContext) {
     setButton.addEventListener("click", () => send(ctx, { type: "world_agent_set_time", day: Number(dayInput.value), hour: Number(hourInput.value) }));
     timeRow.append(field("Day", dayInput), field("Hour", hourInput), setButton);
     panel.appendChild(timeRow);
+    
     shell.appendChild(panel);
   }
 
@@ -1500,7 +1535,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ["Activity", worldStateCardValue(current?.activity, "Idle")],
       ["Goal", worldStateCardValue(current?.goal)],
       ["Thought", worldStateCardValue(current?.thought)],
-      ["Schedule", current?.schedule?.length ? `${current.schedule.length} entries` : "No schedule"],
+      ["Schedule", current?.schedule?.length ? `${current.schedule.length} entries` : "No schedule"]
     ];
     for (const [label, value] of cards) {
       const card = createElement("div", "lw-state-card");
@@ -1511,7 +1546,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
     const history = current?.history ?? [];
     const box = createElement("div", "lw-scrollbox");
-    box.style.marginTop = "16px";
+    box.style.marginTop = "10px";
     if (!history.length) {
       box.appendChild(createElement("div", "lw-empty", "No World Agent activity yet."));
     } else {
@@ -1566,7 +1601,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const body = createElement("div", "lw-details-body");
     body.append(
       textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
-      textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."),
+      textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}.")
     );
     details.append(summary, body);
     shell.appendChild(details);
@@ -1629,7 +1664,7 @@ export function setup(ctx: SpindleFrontendContext) {
       (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.chats ? "Chats" : null,
       (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.characters ? "Characters" : null,
       (draft.includeUserPersona || draft.worldAgent.enabled) && !state.permissions.personas ? "Personas" : null,
-      draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null,
+      draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null
     ].filter(Boolean);
     if (missingPermissions.length) {
       shell.appendChild(createElement("div", "lw-banner warn", `Grant ${missingPermissions.join(", ")} permission${missingPermissions.length === 1 ? "" : "s"} in Lumiverse's Extensions panel.`));
@@ -1640,15 +1675,22 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderToolbar(shell: HTMLElement): void {
-    // 1. LED Sign on the brick wall
-    const ledSign = createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`);
-    shell.appendChild(ledSign);
+    // 1. Shelf and LED Sign
+    const shelfContainer = createElement("div", "lw-shelf-container");
+    shelfContainer.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
+    shelfContainer.appendChild(createElement("div", "lw-shelf"));
+    shell.appendChild(shelfContainer);
 
     // 2. Window on the brick wall
+    const windowContainer = createElement("div", "lw-window-container");
+    const windowFrame = createElement("div", "lw-window-frame");
     const windowEl = createElement("div", "lw-window");
-    const stars = createElement("div", "lw-stars");
-    windowEl.appendChild(stars);
-    shell.appendChild(windowEl);
+    windowEl.appendChild(createElement("div", "lw-stars"));
+    windowEl.appendChild(createElement("div", "lw-moon"));
+    windowFrame.appendChild(windowEl);
+    windowFrame.appendChild(createElement("div", "lw-window-sill"));
+    windowContainer.appendChild(windowFrame);
+    shell.appendChild(windowContainer);
 
     // 3. Original Toolbar setup, stylized to fit the room
     const toolbar = createElement("div", "lw-toolbar");
@@ -1676,13 +1718,14 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderBottomTv(shell: HTMLElement): void {
+    const tvStand = createElement("div", "lw-tv-stand");
     const tv = createElement("div", "lw-tv");
     const tvScreen = createElement("div", "lw-tv-screen");
 
     const tvControls = createElement("div", "lw-tv-controls");
     const channels: Array<[LumiWorldChannel, string]> = [
       ["director", "CH 1: Director"],
-      ["world_agent", "CH 2: World Agent"],
+      ["world_agent", "CH 2: World Agent"]
     ];
     for (const [channel, label] of channels) {
       const button = createElement("button", `lw-tv-btn${activeChannel === channel ? " is-active" : ""}`, label);
@@ -1695,8 +1738,13 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     tvScreen.appendChild(tvControls);
 
+    if (activeChannel === "director") renderDirectorChannel(tvScreen);
+    else renderWorldAgentChannel(tvScreen);
+
     tv.appendChild(tvScreen);
-    shell.appendChild(tv);
+    tvStand.appendChild(tv);
+    tvStand.appendChild(createElement("div", "lw-tv-table"));
+    shell.appendChild(tvStand);
   }
 
   function render(): void {
@@ -1717,10 +1765,6 @@ export function setup(ctx: SpindleFrontendContext) {
     }
 
     renderBanners(shell);
-
-    if (activeChannel === "director") renderDirectorChannel(shell);
-    else renderWorldAgentChannel(shell);
-
     renderBottomTv(shell);
   }
 
@@ -1794,7 +1838,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const characterId = readCharacterId(payload);
       send(ctx, { type: "refresh_state", chatId, characterId });
       send(ctx, { type: "refresh_world_state", chatId, characterId });
-    }),
+    })
   );
 
   const initial = activeChat(ctx);
