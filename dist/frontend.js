@@ -1248,12 +1248,12 @@ var CSS = `
   font-size: 11.5px;
   padding: 18px;
   box-sizing: border-box;
-  width: 2000px;
-  height: 1480px;
-  min-width: 2000px;
-  min-height: 1480px;
-  max-width: 2000px;
-  max-height: 1480px;
+  width: 1600px;
+  height: 1184px;
+  min-width: 1600px;
+  min-height: 1184px;
+  max-width: 1600px;
+  max-height: 1184px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1459,8 +1459,8 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 760px 480px 640px;
-  grid-template-rows: 500px 360px 468px;
+  grid-template-columns: 608px 384px 512px;
+  grid-template-rows: 400px 288px 374px;
   justify-content: center;
   grid-template-areas:
     "core model context"
@@ -1476,8 +1476,8 @@ var CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 760px 500px 620px;
-  grid-template-rows: 440px 400px 488px;
+  grid-template-columns: 608px 400px 496px;
+  grid-template-rows: 352px 320px 390px;
   justify-content: center;
   grid-template-areas:
     "clock state state"
@@ -1670,28 +1670,28 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
-  min-height: 260px;
+  min-height: 208px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
-  min-height: 260px;
+  min-height: 208px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
-  max-height: 350px;
+  max-height: 280px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea,
 .lw-settings-modal.is-channel-1 .lw-director-system-note .lw-textarea {
-  height: 260px;
-  min-height: 260px;
-  max-height: 260px;
+  height: 208px;
+  min-height: 208px;
+  max-height: 208px;
 }
 
 .lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
-  height: 340px;
-  min-height: 340px;
-  max-height: 340px;
+  height: 272px;
+  min-height: 272px;
+  max-height: 272px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -1857,13 +1857,13 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
-  min-height: 280px;
-  max-height: 300px;
+  min-height: 224px;
+  max-height: 240px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
   flex-wrap: wrap;
-  max-height: 380px;
+  max-height: 304px;
   overflow-y: auto;
 }
 
@@ -1872,7 +1872,7 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
-  max-height: 280px;
+  max-height: 224px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note,
@@ -2743,7 +2743,7 @@ function setup(ctx) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 2080, maxHeight: 1660 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1664, maxHeight: 1328 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
