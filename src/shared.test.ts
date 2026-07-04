@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
   advanceWorldAgentHour,
@@ -139,6 +140,18 @@ describe("settings normalization", () => {
     });
 
     expect(normalizeSettings({}).worldAgent.enabled).toBe(false);
+  });
+
+  test("migrates the previous stock World Agent schedule template to the full-day version", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        scheduleTemplate: PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
+    expect(settings.worldAgent.scheduleTemplate).toContain("full 24-hour day");
+    expect(settings.worldAgent.scheduleTemplate).toContain("8-14 concise entries");
   });
 });
 

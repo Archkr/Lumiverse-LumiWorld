@@ -124,7 +124,7 @@ var DEFAULT_USER_TEMPLATE = [
   'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
-var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+var PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Create the current day's background schedule for {{char}}.",
   "",
@@ -135,6 +135,23 @@ var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   '{"schedule":[{"hour":0,"location":"...","activity":"...","mood":"...","goal":"..."}]}',
   "",
   "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override."
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":7,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":12,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":18,"location":"...","activity":"...","mood":"...","goal":"..."}]}'
 ].join(`
 `);
 var DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
@@ -726,6 +743,8 @@ var CSS = `
   max-width: 420px;
   text-align: center;
 }
+.lw-banner.info { background: #d8aa63; color: #111; }
+.lw-banner.success { background: #8fbd88; color: #102610; }
 .lw-banner.warn { background: #d8aa63; }
 .lw-banner.error { background: #cf7e7e; color: #fff; }
 
@@ -1481,8 +1500,8 @@ var CSS = `
   justify-content: center;
   grid-template-areas:
     "clock state state"
-    "config params runs"
-    "templates schedule runs";
+    "config params schedule"
+    "templates params schedule";
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
@@ -1490,7 +1509,6 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-templates-note { grid-area: templates; }
 .lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
-.lw-settings-modal.is-channel-2 .lw-world-runs-note { grid-area: runs; }
 
 .lw-settings-modal .lw-modal-grid > .lw-paper,
 .lw-settings-modal .lw-modal-grid > .lw-clock {
@@ -1588,6 +1606,25 @@ var CSS = `
   color: #ff003c !important;
   text-shadow: 0 0 5px #ff003c !important;
   clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.lw-settings-modal.is-channel-1 .lw-banner.info,
+.lw-settings-modal.is-channel-1 .lw-banner.warn {
+  border-color: #ffcc00 !important;
+  background: rgba(255, 204, 0, 0.16) !important;
+  color: #ffcc00 !important;
+  text-shadow: 0 0 5px #ffcc00 !important;
+}
+.lw-settings-modal.is-channel-1 .lw-banner.success {
+  border-color: #55ff77 !important;
+  background: rgba(85, 255, 119, 0.14) !important;
+  color: #55ff77 !important;
+  text-shadow: 0 0 5px #55ff77 !important;
+}
+.lw-settings-modal.is-channel-1 .lw-banner.error {
+  border-color: #ff003c !important;
+  background: rgba(255, 0, 60, 0.2) !important;
+  color: #ff003c !important;
+  text-shadow: 0 0 5px #ff003c !important;
 }
 
 .lw-settings-modal.is-channel-1 .lw-details {
@@ -1779,6 +1816,22 @@ var CSS = `
   text-shadow: none !important;
   border-radius: 8px !important;
 }
+.lw-settings-modal.is-channel-2 .lw-banner.info,
+.lw-settings-modal.is-channel-2 .lw-banner.warn {
+  border-color: #d4af37 !important;
+  background: #fff3cd !important;
+  color: #5a3a2e !important;
+}
+.lw-settings-modal.is-channel-2 .lw-banner.success {
+  border-color: #4f8f52 !important;
+  background: #dff0d8 !important;
+  color: #2f5f31 !important;
+}
+.lw-settings-modal.is-channel-2 .lw-banner.error {
+  border-color: #d9534f !important;
+  background: #f8d7da !important;
+  color: #a94442 !important;
+}
 
 .lw-settings-modal.is-channel-1 > .lw-banner,
 .lw-settings-modal.is-channel-2 > .lw-banner {
@@ -1872,7 +1925,9 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
   flex-wrap: wrap;
-  max-height: 304px;
+  align-content: flex-start;
+  max-height: none;
+  height: calc(100% - 46px);
   overflow-y: auto;
 }
 
@@ -1888,8 +1943,7 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-params-note,
 .lw-settings-modal.is-channel-2 .lw-world-templates-note,
 .lw-settings-modal.is-channel-2 .lw-world-state-note,
-.lw-settings-modal.is-channel-2 .lw-world-schedule-note,
-.lw-settings-modal.is-channel-2 .lw-world-runs-note {
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   scrollbar-width: thin;
@@ -1900,8 +1954,7 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar,
-.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar,
-.lw-settings-modal.is-channel-2 .lw-world-runs-note::-webkit-scrollbar {
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar {
   width: 8px;
 }
 
@@ -1909,8 +1962,7 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar-thumb,
-.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar-thumb,
-.lw-settings-modal.is-channel-2 .lw-world-runs-note::-webkit-scrollbar-thumb {
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar-thumb {
   background: rgba(139, 69, 19, 0.55);
   border-radius: 8px;
 }
@@ -1975,6 +2027,8 @@ function normalizeGenerationTypes(value) {
 }
 function normalizeWorldAgentSettings(value) {
   const obj = asRecord(value);
+  const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
+  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -1985,7 +2039,7 @@ function normalizeWorldAgentSettings(value) {
     hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
     injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
     autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
-    scheduleTemplate: cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE) || DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+    scheduleTemplate,
     updateTemplate: cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE) || DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
   };
 }
@@ -2118,7 +2172,22 @@ function setup(ctx) {
   let settingsModal = null;
   let widget = null;
   let notice = null;
+  let noticeTimer = null;
   cleanups.push(ctx.dom.addStyle(CSS));
+  function setNotice(next, ttlMs = 9000) {
+    if (noticeTimer) {
+      clearTimeout(noticeTimer);
+      noticeTimer = null;
+    }
+    notice = next;
+    if (next && ttlMs > 0) {
+      noticeTimer = setTimeout(() => {
+        notice = null;
+        noticeTimer = null;
+        render();
+      }, ttlMs);
+    }
+  }
   function createWidget() {
     if (widget)
       return;
@@ -2378,7 +2447,7 @@ function setup(ctx) {
       renderRuns(shell, "director");
     }
   }
-  function renderWorldAgentChannel(shell, includeExtras = true) {
+  function renderWorldAgentChannel(shell) {
     renderWorldAgentClock(shell);
     const paper1 = createElement("div", "lw-paper lw-world-config-note");
     const head1 = createElement("div", "lw-panel-head");
@@ -2416,9 +2485,6 @@ function setup(ctx) {
     shell.appendChild(paper3);
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
-    if (includeExtras) {
-      renderRuns(shell, "world_agent");
-    }
   }
   function renderWorldAgentClock(shell) {
     const panel = createElement("div", "lw-clock lw-world-clock-note");
@@ -2430,21 +2496,21 @@ function setup(ctx) {
     const startPause = createElement("button", `lw-btn${stateNow?.running ? "" : " lw-btn-primary"}`, stateNow?.running ? "Pause" : "Start");
     startPause.type = "button";
     startPause.addEventListener("click", () => {
-      notice = { tone: "info", text: stateNow?.running ? "Pausing World Agent..." : "Starting World Agent..." };
+      setNotice({ tone: "info", text: stateNow?.running ? "Pausing World Agent..." : "Starting World Agent..." });
       render();
       send(ctx, { type: stateNow?.running ? "world_agent_pause" : "world_agent_start" });
     });
     const advance = createElement("button", "lw-btn", "+1 Hour");
     advance.type = "button";
     advance.addEventListener("click", () => {
-      notice = { tone: "info", text: "Advancing one simulated hour..." };
+      setNotice({ tone: "info", text: "Advancing one simulated hour..." });
       render();
       send(ctx, { type: "world_agent_advance_hour" });
     });
     const schedule = createElement("button", "lw-btn", "Schedule");
     schedule.type = "button";
     schedule.addEventListener("click", () => {
-      notice = { tone: "info", text: "Regenerating the daily schedule..." };
+      setNotice({ tone: "info", text: "Regenerating the daily schedule..." });
       render();
       send(ctx, { type: "world_agent_regenerate_schedule" });
     });
@@ -2588,7 +2654,7 @@ function setup(ctx) {
   function renderNotice(shell) {
     if (!notice)
       return;
-    const div = createElement("div", `lw-banner ${notice.tone === "warn" || notice.tone === "error" ? notice.tone : ""}`, notice.text);
+    const div = createElement("div", `lw-banner ${notice.tone}`, notice.text);
     shell.appendChild(div);
   }
   function renderBanners(shell) {
@@ -2713,13 +2779,15 @@ function setup(ctx) {
       const refresh = createElement("button", "lw-btn", "Refresh");
       refresh.type = "button";
       refresh.addEventListener("click", () => {
+        setNotice(null);
+        render();
         send(ctx, { type: "refresh_state" });
         send(ctx, { type: "refresh_world_state" });
       });
       const test = createElement("button", "lw-btn lw-btn-primary", "Test Director");
       test.type = "button";
       test.addEventListener("click", () => {
-        notice = { tone: "info", text: "Testing Director Note controller..." };
+        setNotice({ tone: "info", text: "Testing Director Note controller..." });
         send(ctx, { type: "test_controller", settings: draft });
         render();
       });
@@ -2736,7 +2804,7 @@ function setup(ctx) {
       if (activeChannel === "director")
         renderDirectorChannel(grid, true);
       else
-        renderWorldAgentChannel(grid, true);
+        renderWorldAgentChannel(grid);
       shell.appendChild(grid);
       settingsModal.root.appendChild(shell);
     } finally {
@@ -2798,7 +2866,7 @@ function setup(ctx) {
         }
         break;
       case "world_agent_result":
-        notice = message.ok ? { tone: "success", text: message.message || "World Agent updated." } : { tone: "error", text: message.error };
+        setNotice(message.ok ? { tone: "success", text: message.message || "World Agent updated." } : { tone: "error", text: message.error }, message.ok ? 7000 : 12000);
         if (message.state && state)
           state = { ...state, worldState: message.state };
         render();
@@ -2810,14 +2878,14 @@ function setup(ctx) {
         }
         break;
       case "test_result":
-        notice = message.ok ? { tone: "success", text: `Controller test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` } : { tone: "error", text: `Controller test failed: ${message.error}` };
+        setNotice(message.ok ? { tone: "success", text: `Controller test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` } : { tone: "error", text: `Controller test failed: ${message.error}` }, message.ok ? 7000 : 12000);
         render();
         break;
       case "error":
         saveInFlight = false;
         if (!saveTimer && localRevision === saveRevision)
           saveState = "error";
-        notice = { tone: "error", text: message.message };
+        setNotice({ tone: "error", text: message.message }, 12000);
         render();
         break;
     }
@@ -2837,6 +2905,10 @@ function setup(ctx) {
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
+    }
+    if (noticeTimer) {
+      clearTimeout(noticeTimer);
+      noticeTimer = null;
     }
     destroyHandles(widgetHandles);
     destroyHandles(modalHandles);

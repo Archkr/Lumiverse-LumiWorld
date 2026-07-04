@@ -633,7 +633,9 @@ function buildWorldAgentMessages(options: {
   const vars = buildWorldAgentTemplateVars(options.state, options.identity);
   const systemTemplate = options.mode === "schedule" ? options.settings.scheduleTemplate : options.settings.updateTemplate;
   const system = renderTemplate(systemTemplate, vars);
-  const action = options.mode === "schedule" ? "Generate today's private schedule." : "Advance the private state by one simulated hour.";
+  const action = options.mode === "schedule"
+    ? "Generate today's full private schedule as start-hour blocks covering the whole day."
+    : "Advance the private state by one simulated hour.";
   return [
     { role: "system", content: system },
     ...options.contextMessages,
