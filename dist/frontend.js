@@ -1277,7 +1277,7 @@ var CSS = `
     linear-gradient(rgba(255,255,255,0.025) 50%, rgba(0,0,0,0.15) 50%);
   background-size: 100% 4px;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 30;
   opacity: 0.8;
 }
 
@@ -1459,8 +1459,8 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-grid {
-  grid-template-columns: 360px 220px 300px;
-  grid-template-rows: 250px 165px 173px;
+  grid-template-columns: 380px 240px 320px;
+  grid-template-rows: 250px 180px 206px;
   justify-content: center;
   grid-template-areas:
     "core model context"
@@ -1476,8 +1476,8 @@ var CSS = `
 .lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
-  grid-template-columns: 360px 250px 290px;
-  grid-template-rows: 230px 175px 183px;
+  grid-template-columns: 380px 250px 310px;
+  grid-template-rows: 220px 200px 216px;
   justify-content: center;
   grid-template-areas:
     "clock state state"
@@ -1500,6 +1500,11 @@ var CSS = `
   height: 100%;
   max-height: 100%;
   box-sizing: border-box;
+}
+
+.lw-settings-modal .lw-paper:focus-within,
+.lw-settings-modal .lw-clock:focus-within {
+  z-index: 100 !important;
 }
 
 /* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
@@ -1674,6 +1679,19 @@ var CSS = `
 
 .lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
   max-height: 142px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea,
+.lw-settings-modal.is-channel-1 .lw-director-system-note .lw-textarea {
+  height: 86px;
+  min-height: 86px;
+  max-height: 86px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-user-note .lw-textarea {
+  height: 138px;
+  min-height: 138px;
+  max-height: 138px;
 }
 
 /* Channel 2: Ghibli Spirit Scrolls */
@@ -1855,6 +1873,37 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
   max-height: 122px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note,
+.lw-settings-modal.is-channel-2 .lw-world-params-note,
+.lw-settings-modal.is-channel-2 .lw-world-templates-note,
+.lw-settings-modal.is-channel-2 .lw-world-state-note,
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note,
+.lw-settings-modal.is-channel-2 .lw-world-runs-note {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 69, 19, 0.55) rgba(255, 250, 205, 0.28);
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-runs-note::-webkit-scrollbar {
+  width: 8px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-templates-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-runs-note::-webkit-scrollbar-thumb {
+  background: rgba(139, 69, 19, 0.55);
+  border-radius: 8px;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note {
@@ -2222,45 +2271,8 @@ function setup(ctx) {
   function renderConnectionControl(slot, value, onChange, ariaLabel) {
     slot.classList.add("lw-control-slot", "lw-connection-slot");
     const connections = state?.connections ?? [];
-    const components = ctx.components;
-    const options = connections.map((connection) => ({
-      value: connection.id,
-      label: connection.name || connection.id,
-      sublabel: [connection.provider || null, connection.model || null, connection.hasApiKey ? null : "no API key", connection.isDefault ? "default" : null].filter(Boolean).join(" / "),
-      group: connection.provider || "Connections",
-      leading: { type: "initial", text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase() }
-    }));
-    if (value && !options.some((option) => option.value === value)) {
-      options.unshift({
-        value,
-        label: "Saved connection not found",
-        sublabel: value,
-        group: "Unavailable",
-        leading: { type: "initial", text: "!" }
-      });
-    }
-    if (components?.mountSelect) {
-      const handle = components.mountSelect(slot, {
-        value: value ?? "",
-        options,
-        placeholder: "Select connection...",
-        searchPlaceholder: "Search LLM connections...",
-        emptyMessage: state?.connectionError || "No LLM connection profiles found.",
-        noResultsMessage: "No matching LLM connection profiles.",
-        clearable: true,
-        clearLabel: "No connection",
-        ariaLabel,
-        portal: true,
-        maxHeight: 320,
-        onChange: (next) => {
-          onChange(next || null);
-          render();
-        }
-      });
-      activeHandles.push(handle);
-      return;
-    }
     const select = createElement("select", "lw-select");
+    select.setAttribute("aria-label", ariaLabel);
     select.appendChild(new Option("Select connection...", ""));
     for (const connection of connections) {
       select.appendChild(new Option(connectionLabel(connection), connection.id));
@@ -2275,19 +2287,6 @@ function setup(ctx) {
   function renderModelControl(slot, connectionId, value, onChange) {
     slot.classList.add("lw-control-slot", "lw-model-slot");
     const selected = selectedConnection(connectionId);
-    const components = ctx.components;
-    if (selected && components?.mountModelCombobox) {
-      const handle = components.mountModelCombobox(slot, {
-        value,
-        connection: { kind: "llm", id: selected.id },
-        appearance: "standard",
-        placeholder: selected.model || "model id",
-        browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
-        onChange
-      });
-      activeHandles.push(handle);
-      return;
-    }
     const input = createElement("input", "lw-input");
     input.type = "text";
     input.placeholder = selected?.model || "model id";
