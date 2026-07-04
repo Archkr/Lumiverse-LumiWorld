@@ -186,10 +186,8 @@ var DEFAULT_SETTINGS = {
 };
 var CSS = `
 .lw-root {
-  min-height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
-  width: calc(100% + 24px);
-  margin: -12px -12px 0;
-  padding: 12px 16px 40px;
+  min-height: 100%;
+  padding: 12px 8px 40px;
   color: #e0d6c8;
   /* Realistic Running-Bond Brick Wall */
   background-color: #4a322a;
@@ -234,10 +232,9 @@ var CSS = `
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 100%;
   max-width: 100%;
   min-width: 0;
-  margin: 0;
+  margin: 0 auto;
 }
 
 /* Shelf and LED Sign */
@@ -435,57 +432,130 @@ var CSS = `
 .lw-tv::after { right: 30%; transform: rotate(35deg); transform-origin: bottom center; }
 
 .lw-tv-screen {
-  background: #1a1a1a;
+  background: #111;
   border: 6px solid #2a2a2a;
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 12px;
+  padding: 0;
   position: relative;
   width: 100%;
-  min-height: 60vh;
-  box-shadow: inset 0 0 38px rgba(0,0,0,0.9);
-  background-image: linear-gradient(rgba(255, 255, 255, 0.03) 50%, transparent 50%);
-  background-size: 100% 4px;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.9);
+}
+.lw-tv-screen::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%);
+  pointer-events: none;
+  z-index: 3;
 }
 
-/* TV Controls (Tabs) */
-.lw-tv-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  width: 100%;
-  margin-bottom: 12px;
-  padding: 6px;
-  background: #b0a090;
-  border-radius: 6px;
-  border: 2px solid #8b7765;
-  box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+/* CRT Screen Elements */
+.lw-tv-static {
+  position: absolute;
+  top: -10%; left: -10%; width: 120%; height: 120%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+  background-size: 100px 100px;
+  animation: lw-tv-static 0.2s steps(4) infinite;
+  opacity: 0.4;
+  z-index: 1;
 }
-.lw-tv-btn {
-  background: linear-gradient(to bottom, #4a3a35, #2b201d);
-  border: 1px solid #1a1a1a;
-  color: #ff9e3d;
-  padding: 6px 5px;
-  border-radius: 3px;
-  cursor: pointer;
+@keyframes lw-tv-static {
+  0% { transform: translate(0,0); }
+  25% { transform: translate(-2%, 1%); }
+  50% { transform: translate(1%, -1%); }
+  75% { transform: translate(-1%, 2%); }
+  100% { transform: translate(2%, 0%); }
+}
+.lw-tv-scanlines {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(rgba(255,255,255,0) 50%, rgba(0,0,0,0.25) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+  z-index: 2;
+}
+.lw-tv-content {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
   font-family: 'Courier New', monospace;
-  font-weight: bold;
-  font-size: 10px;
-  line-height: 1.15;
-  text-shadow: 0 0 5px #ff5500;
-  box-shadow: 0 3px 0 #1a1a1a, inset 0 1px 0 rgba(255,255,255,0.2);
-  transition: all 0.1s;
-  text-transform: uppercase;
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  color: #fff;
+  text-shadow: 0 0 5px rgba(255,255,255,0.4);
 }
-.lw-tv-btn:hover { color: #ffcc00; text-shadow: 0 0 8px #ffcc00; }
-.lw-tv-btn.is-active {
+.lw-tv-header {
+  font-size: 10px;
+  letter-spacing: 1px;
+  border-bottom: 1px solid rgba(255,255,255,0.3);
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+.lw-tv-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lw-tv-channel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  transition: background 0.1s;
+}
+.lw-tv-channel:hover { background: rgba(255,255,255,0.2); }
+.lw-tv-channel.is-active {
   background: #ff9e3d;
   color: #111;
+  border-color: #ff9e3d;
+  box-shadow: 0 0 8px rgba(255, 126, 0, 0.5);
   text-shadow: none;
-  box-shadow: 0 1px 0 #1a1a1a, inset 0 2px 4px rgba(0,0,0,0.4);
-  transform: translateY(3px);
+}
+.ch-num { font-size: 16px; font-weight: bold; }
+.ch-name { font-size: 12px; flex: 1; font-weight: bold; }
+.ch-status { font-size: 10px; opacity: 0.8; }
+
+/* TV Table */
+.lw-tv-table {
+  width: 110%;
+  margin-left: -5%;
+  height: 12px;
+  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
+  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
+  border-radius: 2px;
+  box-shadow: 0 8px 12px rgba(0,0,0,0.6);
+  position: relative;
+  z-index: 1;
+}
+.lw-tv-table::before, .lw-tv-table::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  width: 12px;
+  height: 40px;
+  background: linear-gradient(to right, #3a261f, #5a3a2e, #3a261f);
+  z-index: 0;
+}
+.lw-tv-table::before { left: 15%; }
+.lw-tv-table::after { right: 15%; }
+
+/* Settings Area (Paper Notes on Wall) */
+.lw-settings-area {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Panels (Paper Notes) */
@@ -735,7 +805,6 @@ var CSS = `
   .lw-actions { width: 100%; justify-content: stretch; }
   .lw-actions .lw-btn { flex: 1; }
   .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; }
-  .lw-tv-screen { border-width: 5px; padding: 8px; }
   .lw-clock-time { font-size: 16px; letter-spacing: 0; }
 }
 `;
@@ -1445,29 +1514,34 @@ function setup(ctx) {
     toolbar.append(title, actions);
     shell.appendChild(toolbar);
   }
-  function renderBottomTv(shell) {
+  function renderTvGuide(shell) {
     const tvStand = createElement("div", "lw-tv-stand");
     const tv = createElement("div", "lw-tv");
     const tvScreen = createElement("div", "lw-tv-screen");
-    const tvControls = createElement("div", "lw-tv-controls");
-    const channels = [
-      ["director", "CH 1: Director"],
-      ["world_agent", "CH 2: World Agent"]
-    ];
-    for (const [channel, label] of channels) {
-      const button = createElement("button", `lw-tv-btn${activeChannel === channel ? " is-active" : ""}`, label);
-      button.type = "button";
-      button.addEventListener("click", () => {
-        activeChannel = channel;
-        render();
-      });
-      tvControls.appendChild(button);
-    }
-    tvScreen.appendChild(tvControls);
-    if (activeChannel === "director")
-      renderDirectorChannel(tvScreen);
-    else
-      renderWorldAgentChannel(tvScreen);
+    tvScreen.appendChild(createElement("div", "lw-tv-static"));
+    tvScreen.appendChild(createElement("div", "lw-tv-scanlines"));
+    const content = createElement("div", "lw-tv-content");
+    const header = createElement("div", "lw-tv-header");
+    header.append(createElement("span", undefined, "LUMI-VISION GUIDE"), createElement("span", undefined, formatClock(state?.worldState)));
+    content.appendChild(header);
+    const channels = createElement("div", "lw-tv-channels");
+    const ch1 = createElement("button", `lw-tv-channel${activeChannel === "director" ? " is-active" : ""}`);
+    ch1.type = "button";
+    ch1.innerHTML = `<span class="ch-num">01</span><span class="ch-name">DIRECTOR NOTE</span><span class="ch-status">${draft.enabled ? "ENABLED" : "DISABLED"}</span>`;
+    ch1.addEventListener("click", () => {
+      activeChannel = "director";
+      render();
+    });
+    const ch2 = createElement("button", `lw-tv-channel${activeChannel === "world_agent" ? " is-active" : ""}`);
+    ch2.type = "button";
+    ch2.innerHTML = `<span class="ch-num">02</span><span class="ch-name">WORLD AGENT</span><span class="ch-status">${state?.worldState?.running ? "RUNNING" : "PAUSED"}</span>`;
+    ch2.addEventListener("click", () => {
+      activeChannel = "world_agent";
+      render();
+    });
+    channels.append(ch1, ch2);
+    content.appendChild(channels);
+    tvScreen.appendChild(content);
     tv.appendChild(tvScreen);
     tvStand.appendChild(tv);
     tvStand.appendChild(createElement("div", "lw-tv-table"));
@@ -1487,7 +1561,13 @@ function setup(ctx) {
       return;
     }
     renderBanners(shell);
-    renderBottomTv(shell);
+    renderTvGuide(shell);
+    const settingsArea = createElement("div", "lw-settings-area");
+    if (activeChannel === "director")
+      renderDirectorChannel(settingsArea);
+    else
+      renderWorldAgentChannel(settingsArea);
+    shell.appendChild(settingsArea);
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
