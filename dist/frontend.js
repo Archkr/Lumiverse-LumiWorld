@@ -1527,7 +1527,7 @@ var CSS = `
   justify-content: center;
   align-content: start;
   grid-template-areas:
-    ". state state"
+    "state state state"
     "clock params schedule"
     "config params schedule";
 }
@@ -2003,7 +2003,10 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note {
+  justify-self: center;
   align-self: center;
+  width: 900px !important;
+  max-width: 900px !important;
   height: 280px !important;
   max-height: 280px !important;
 }
