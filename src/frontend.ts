@@ -796,15 +796,15 @@ const CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   border-bottom: 2px dashed #8b7765;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
   flex-wrap: wrap;
 }
-.lw-panel-head h3 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
+.lw-panel-head h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
 
-.lw-form { display: grid; gap: 10px; }
-.lw-field { display: grid; gap: 4px; min-width: 0; }
+.lw-form { display: grid; gap: 7px; }
+.lw-field { display: grid; gap: 3px; min-width: 0; }
 .lw-field label, .lw-toggle-label { font-size: 11px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
 .lw-hint { color: #6b5d4f; font-size: 10.5px; font-style: italic; overflow-wrap: anywhere; }
 
@@ -815,26 +815,26 @@ const CSS = `
   background: #fff;
   color: #2b201d;
   font: inherit;
-  padding: 8px 9px;
+  padding: 6px 8px;
   box-shadow: inset 1px 1px 4px rgba(0,0,0,0.1);
   min-width: 0;
 }
 .lw-input:focus, .lw-select:focus, .lw-textarea:focus { outline: 2px solid #ff7e00; outline-offset: -1px; }
 .lw-textarea {
   resize: vertical;
-  min-height: 100px;
-  line-height: 1.4;
+  min-height: 76px;
+  line-height: 1.3;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
-.lw-two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-items: end; }
+.lw-two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: end; }
 
 .lw-setting-row {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 6px 0;
+  padding: 4px 0;
   border-bottom: 1px dashed rgba(0,0,0,0.1);
 }
 .lw-setting-row.is-disabled { opacity: 0.55; }
@@ -893,8 +893,8 @@ const CSS = `
 /* Retro Digital Clock */
 .lw-clock {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 7px;
+  padding: 12px;
   border: 2px solid #111;
   border-radius: 4px;
   background: #111;
@@ -914,7 +914,7 @@ const CSS = `
   gap: 8px;
 }
 .lw-clock-time {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 10px #ff5500;
@@ -926,13 +926,13 @@ const CSS = `
 .lw-clock-set { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
 .lw-clock-set .lw-btn { grid-column: span 2; }
 
-.lw-meter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.lw-meter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .lw-state-card {
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
-  padding: 10px;
-  min-height: 50px;
+  padding: 7px;
+  min-height: 42px;
   display: grid;
   align-content: start;
   gap: 4px;
@@ -943,7 +943,7 @@ const CSS = `
 
 .lw-schedule-strip {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
   padding: 3px 3px 9px;
 }
@@ -952,23 +952,23 @@ const CSS = `
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #f5f5dc;
-  padding: 10px;
+  padding: 8px;
   display: grid;
   gap: 4px;
   box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
 }
 .lw-slot.is-now { border-color: #ff5500; box-shadow: 3px 3px 0px #ff5500; background: #fff9e6; }
 
-.lw-runs { display: grid; gap: 8px; }
+.lw-runs { display: grid; gap: 6px; }
 .lw-scrollbox {
-  max-height: 300px;
+  max-height: 150px;
   overflow-y: auto;
   padding-right: 5px;
 }
 .lw-run {
   display: grid;
   gap: 4px;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
@@ -1007,11 +1007,11 @@ const CSS = `
   background: linear-gradient(to bottom, #e6dcc3, #c4b89a);
   color: #2b201d;
   border-radius: 3px;
-  padding: 8px 10px;
+  padding: 6px 9px;
   font: inherit;
   font-weight: bold;
   cursor: pointer;
-  min-height: 30px;
+  min-height: 28px;
   box-shadow: 0 3px 0 #5a4a3f, 0 4px 6px rgba(0,0,0,0.3);
   transition: transform 0.1s, box-shadow 0.1s;
   text-transform: uppercase;
@@ -1383,11 +1383,13 @@ const CSS = `
    ========================================= */
 .lw-settings-modal {
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: start;
   color: #e0d6c8;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 12px;
-  padding: 30px;
+  font-size: 11.5px;
+  padding: 18px;
   background: #050505;
   position: relative;
   overflow: hidden;
@@ -1422,7 +1424,10 @@ const CSS = `
     linear-gradient(rgba(255, 153, 51, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 153, 51, 0.03) 1px, transparent 1px);
   background-size: 20px 20px;
-  animation: lw-eva-bg-pulse 4s infinite alternate;
+  animation: none;
+  border: 24px solid #1a1a1a !important;
+  border-radius: 40px / 30px !important;
+  box-shadow: 0 0 0 4px #333, 0 20px 50px rgba(0,0,0,0.8), inset 0 0 100px rgba(0,0,0,0.8) !important;
 }
 
 /* Rotating Targeting Reticle in Background */
@@ -1484,10 +1489,12 @@ const CSS = `
   display: flex;
   gap: 12px;
   position: relative;
+  grid-column: 1;
+  grid-row: 1;
   z-index: 20;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
   border-bottom: 2px solid #333;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .lw-settings-modal.is-channel-1 .lw-modal-tab {
@@ -1553,17 +1560,55 @@ const CSS = `
   justify-content: flex-end;
   flex-wrap: wrap;
   position: relative;
+  grid-column: 2;
+  grid-row: 1;
   z-index: 20;
 }
 
 .lw-settings-modal .lw-modal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-column: 1 / -1;
+  gap: 10px;
   align-items: start;
   position: relative;
   z-index: 20;
 }
+.lw-settings-modal > .lw-banner,
+.lw-settings-modal > .lw-empty {
+  grid-column: 1 / -1;
+}
+
+.lw-settings-modal.is-channel-1 .lw-modal-grid {
+  grid-template-columns: 0.95fr 0.85fr 1.1fr 1.1fr;
+  grid-template-areas:
+    "core model context notes"
+    "core system user runs";
+  align-items: stretch;
+}
+.lw-settings-modal.is-channel-1 .lw-director-core-note { grid-area: core; }
+.lw-settings-modal.is-channel-1 .lw-director-model-note { grid-area: model; }
+.lw-settings-modal.is-channel-1 .lw-director-context-note { grid-area: context; }
+.lw-settings-modal.is-channel-1 .lw-director-notes-note { grid-area: notes; }
+.lw-settings-modal.is-channel-1 .lw-director-system-note { grid-area: system; }
+.lw-settings-modal.is-channel-1 .lw-director-user-note { grid-area: user; }
+.lw-settings-modal.is-channel-1 .lw-runs-note { grid-area: runs; }
+
+.lw-settings-modal.is-channel-2 .lw-modal-grid {
+  grid-template-columns: 0.8fr 0.95fr 0.95fr 1.25fr;
+  grid-template-areas:
+    "clock config params state"
+    "clock templates schedule state"
+    "runs templates schedule state";
+  align-items: stretch;
+}
+.lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
+.lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
+.lw-settings-modal.is-channel-2 .lw-world-params-note { grid-area: params; }
+.lw-settings-modal.is-channel-2 .lw-world-templates-note { grid-area: templates; }
+.lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
+.lw-settings-modal.is-channel-2 .lw-world-runs-note { grid-area: runs; }
 
 /* --- OVERRIDING LOFI PAPER TO MATCH TV SHOWS --- */
 
@@ -1583,6 +1628,8 @@ const CSS = `
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
   text-shadow: 0 0 5px #ff9933;
   backdrop-filter: blur(2px);
+  min-height: 0;
+  padding: 14px !important;
 }
 .lw-settings-modal.is-channel-1 .lw-paper:hover {
   border-color: #ffcc00 !important;
@@ -1725,6 +1772,18 @@ const CSS = `
   text-shadow: none !important;
 }
 
+.lw-settings-modal.is-channel-1 .lw-template-note .lw-textarea {
+  min-height: 128px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-director-notes-note .lw-textarea {
+  min-height: 118px;
+}
+
+.lw-settings-modal.is-channel-1 .lw-runs-note .lw-scrollbox {
+  max-height: 142px;
+}
+
 /* Channel 2: Ghibli Spirit Scrolls */
 .lw-settings-modal.is-channel-2 .lw-paper,
 .lw-settings-modal.is-channel-2 .lw-clock,
@@ -1742,6 +1801,8 @@ const CSS = `
   clip-path: none !important;
   text-shadow: none !important;
   backdrop-filter: blur(2px);
+  min-height: 0;
+  padding: 14px !important;
 }
 .lw-settings-modal.is-channel-2 .lw-paper:hover {
   border-color: #d4af37 !important;
@@ -1881,6 +1942,48 @@ const CSS = `
 .lw-settings-modal.is-channel-2 .lw-btn-danger {
   background: linear-gradient(to bottom, #d9534f, #c9302c) !important;
   border-color: #c9302c !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-templates-note .lw-textarea {
+  min-height: 116px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-schedule-strip {
+  flex-wrap: wrap;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-schedule-note .lw-slot {
+  flex: 1 1 118px;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-state-note .lw-scrollbox {
+  max-height: 118px;
+}
+
+@media (max-width: 1180px) {
+  .lw-settings-modal {
+    grid-template-columns: 1fr;
+  }
+  .lw-settings-modal .lw-modal-tabs,
+  .lw-settings-modal .lw-modal-actions,
+  .lw-settings-modal .lw-modal-grid {
+    grid-column: 1;
+  }
+  .lw-settings-modal .lw-modal-actions {
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  .lw-settings-modal.is-channel-1 .lw-modal-grid,
+  .lw-settings-modal.is-channel-2 .lw-modal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: none;
+  }
+  .lw-settings-modal.is-channel-1 .lw-modal-grid > *,
+  .lw-settings-modal.is-channel-2 .lw-modal-grid > * {
+    grid-area: auto;
+  }
 }
 `;
 
@@ -2219,7 +2322,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderTextareaControl(slot: HTMLElement, value: string, onChange: (value: string) => void, ariaLabel: string): void {
     const components = (ctx as any).components;
     if (components?.mountTextArea) {
-      const handle = components.mountTextArea(slot, { value, rows: 8, ariaLabel, onChange }) as MountedHandle;
+      const handle = components.mountTextArea(slot, { value, rows: 5, ariaLabel, onChange }) as MountedHandle;
       activeHandles.push(handle);
       return;
     }
@@ -2347,7 +2450,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderDirectorChannel(shell: HTMLElement, includeExtras = true): void {
     // Panel 1: Core Configuration
-    const paper1 = createElement("div", "lw-paper");
+    const paper1 = createElement("div", "lw-paper lw-director-core-note");
     const head1 = createElement("div", "lw-panel-head");
     head1.appendChild(createElement("h3", undefined, "Director Core"));
     const toggleSlot = createElement("div", "lw-switch-slot");
@@ -2394,7 +2497,7 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(paper1);
 
     // Panel 2: Model Parameters
-    const paper2 = createElement("div", "lw-paper");
+    const paper2 = createElement("div", "lw-paper lw-director-model-note");
     const head2 = createElement("div", "lw-panel-head");
     head2.appendChild(createElement("h3", undefined, "Model Parameters"));
     paper2.appendChild(head2);
@@ -2419,26 +2522,41 @@ export function setup(ctx: SpindleFrontendContext) {
     paper2.appendChild(form2);
     shell.appendChild(paper2);
 
-    // Panel 3: Context & Templates
-    const paper3 = createElement("div", "lw-paper");
-    const head3 = createElement("div", "lw-panel-head");
-    head3.appendChild(createElement("h3", undefined, "Context & Templates"));
-    paper3.appendChild(head3);
+    const appendCard = (title: string, className: string, ...children: HTMLElement[]) => {
+      const paper = createElement("div", `lw-paper ${className}`);
+      const head = createElement("div", "lw-panel-head");
+      head.appendChild(createElement("h3", undefined, title));
+      const form = createElement("div", "lw-form");
+      form.append(...children);
+      paper.append(head, form);
+      shell.appendChild(paper);
+    };
 
-    const form3 = createElement("div", "lw-form");
     const entriesHint = state?.permissions.worldBooks === false
       ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries."
       : "Fetch activated World Info entry content and send it to the controller.";
-    form3.append(
+    appendCard(
+      "Controller Context",
+      "lw-director-context-note",
       toggleField("Entries", draft.includeWorldInfoEntries, (checked) => updateDraft({ includeWorldInfoEntries: checked }), entriesHint),
       toggleField("User persona", draft.includeUserPersona, (checked) => updateDraft({ includeUserPersona: checked }), "Send the active user persona to the controller."),
-      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller."),
-      textareaField("Additional notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message."),
-      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}."),
+      toggleField("Character", draft.includeCharacter, (checked) => updateDraft({ includeCharacter: checked }), "Send the active character card to the controller.")
+    );
+    appendCard(
+      "Additional Notes",
+      "lw-director-notes-note",
+      textareaField("Notes", draft.additionalNotes, (value) => updateDraft({ additionalNotes: value }), "Always sent to the LumiWorld controller as a private system message.")
+    );
+    appendCard(
+      "System Template",
+      "lw-template-note lw-director-system-note",
+      textareaField("System template", draft.systemTemplate, (value) => updateDraft({ systemTemplate: value }), "Available variables: {{prompt}}, {{generationType}}, {{chatId}}, {{connectionId}}, {{timestamp}}, {{maxDirectiveChars}}, {{user}}, {{char}}.")
+    );
+    appendCard(
+      "User Template",
+      "lw-template-note lw-director-user-note",
       textareaField("User template", draft.userTemplate, (value) => updateDraft({ userTemplate: value }))
     );
-    paper3.appendChild(form3);
-    shell.appendChild(paper3);
 
     if (includeExtras) {
       renderRuns(shell, "director");
@@ -2449,7 +2567,7 @@ export function setup(ctx: SpindleFrontendContext) {
     renderWorldAgentClock(shell);
 
     // Panel 1: Agent Configuration
-    const paper1 = createElement("div", "lw-paper");
+    const paper1 = createElement("div", "lw-paper lw-world-config-note");
     const head1 = createElement("div", "lw-panel-head");
     head1.appendChild(createElement("h3", undefined, "Agent Configuration"));
     paper1.appendChild(head1);
@@ -2471,7 +2589,7 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(paper1);
 
     // Panel 2: Model Parameters
-    const paper2 = createElement("div", "lw-paper");
+    const paper2 = createElement("div", "lw-paper lw-world-params-note");
     const head2 = createElement("div", "lw-panel-head");
     head2.appendChild(createElement("h3", undefined, "Simulation Parameters"));
     paper2.appendChild(head2);
@@ -2492,7 +2610,7 @@ export function setup(ctx: SpindleFrontendContext) {
     shell.appendChild(paper2);
 
     // Panel 3: Prompt Templates
-    const paper3 = createElement("div", "lw-paper");
+    const paper3 = createElement("div", "lw-paper lw-world-templates-note");
     const head3 = createElement("div", "lw-panel-head");
     head3.appendChild(createElement("h3", undefined, "Prompt Templates"));
     paper3.appendChild(head3);
@@ -2513,7 +2631,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderWorldAgentClock(shell: HTMLElement): void {
-    const panel = createElement("div", "lw-clock");
+    const panel = createElement("div", "lw-clock lw-world-clock-note");
     const stateNow = state?.worldState ?? null;
     
     const top = createElement("div", "lw-clock-top");
@@ -2564,7 +2682,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderWorldAgentState(shell: HTMLElement): void {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", "lw-paper lw-world-state-note");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Current State"));
     if (state?.worldState?.updatedAt) head.appendChild(createElement("span", "lw-muted", `Updated ${formatTime(state.worldState.updatedAt)}`));
@@ -2611,7 +2729,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderWorldAgentSchedule(shell: HTMLElement): void {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", "lw-paper lw-world-schedule-note");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Daily Schedule"));
     head.appendChild(createElement("span", "lw-muted", state?.worldState?.scheduleDay ? `Day ${state.worldState.scheduleDay}` : "No day"));
@@ -2639,7 +2757,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderRuns(shell: HTMLElement, channel: LumiWorldChannel): void {
-    const paper = createElement("div", "lw-paper");
+    const paper = createElement("div", `lw-paper ${channel === "director" ? "lw-runs-note" : "lw-world-runs-note"}`);
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
     const clear = createElement("button", "lw-btn", "Clear");
@@ -2855,7 +2973,7 @@ export function setup(ctx: SpindleFrontendContext) {
       renderSettingsModal();
       return;
     }
-    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1500, maxHeight: 1040 });
+    settingsModal = ctx.ui.showModal({ title: "LumiWorld Settings", width: 1640, maxHeight: 1120 });
     settingsModal.onDismiss(() => {
       destroyHandles(modalHandles);
       settingsModal = null;
