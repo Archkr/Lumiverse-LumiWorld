@@ -1523,8 +1523,9 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 300px 330px 390px;
+  grid-template-rows: 350px 310px 320px;
   justify-content: center;
+  align-content: start;
   grid-template-areas:
     ". state state"
     "clock params schedule"
@@ -1954,7 +1955,7 @@ var CSS = `
   flex-wrap: wrap;
   align-content: flex-start;
   max-height: none;
-  height: auto;
+  height: calc(100% - 46px);
   overflow-y: auto;
 }
 
@@ -2015,8 +2016,8 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-params-note,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note {
   align-self: start;
-  height: auto !important;
-  max-height: none !important;
+  height: 100% !important;
+  max-height: 100% !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-clock-note .lw-clock-time {
