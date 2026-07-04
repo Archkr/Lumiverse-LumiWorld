@@ -418,7 +418,7 @@ export const PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
   "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":7,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":12,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":18,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"}]}",
 ].join("\n");
 
-export const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+export const PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
   "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
   "Advance {{char}}'s private world state by one simulated hour.",
   "",
@@ -428,6 +428,18 @@ export const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
   "",
   "Return compact JSON only:",
   "{\"location\":\"...\",\"mood\":\"...\",\"activity\":\"...\",\"thought\":\"...\",\"goal\":\"...\"}",
+].join("\n");
+
+export const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  "{\"location\":\"...\",\"activity\":\"...\",\"thought\":\"...\",\"goal\":\"...\"}",
 ].join("\n");
 
 export const DEFAULT_WORLD_AGENT_SETTINGS: WorldAgentSettings = {
@@ -505,6 +517,10 @@ export function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings 
     storedScheduleTemplate === PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE
       ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
       : storedScheduleTemplate;
+  const updateTemplate =
+    !storedUpdateTemplate || storedUpdateTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+      ? DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+      : storedUpdateTemplate;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -518,7 +534,7 @@ export function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings 
       ? obj.autoTickVisibleOnly
       : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
     scheduleTemplate,
-    updateTemplate: storedUpdateTemplate || DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+    updateTemplate,
   };
 }
 

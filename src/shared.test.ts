@@ -4,6 +4,7 @@ import {
   PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
   PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
@@ -179,6 +180,18 @@ describe("settings normalization", () => {
 
     expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
     expect(settings.worldAgent.scheduleTemplate).toContain("repeat the same location and activity for each hour");
+  });
+
+  test("migrates the mood-writing World Agent update template", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        updateTemplate: PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.updateTemplate).toBe(DEFAULT_SETTINGS.worldAgent.updateTemplate);
+    expect(settings.worldAgent.updateTemplate).toContain("location, activity, current thought");
+    expect(settings.worldAgent.updateTemplate).not.toContain("mood");
   });
 });
 
