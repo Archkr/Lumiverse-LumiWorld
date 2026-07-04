@@ -1281,6 +1281,25 @@ function normalizeScheduleHour(value: unknown, fallback: number): number {
   return integerInRange(value, fallback, 0, 23);
 }
 
+function parseLooseJsonObjectFragment(value: string): unknown | null {
+  const repaired = value
+    .replace(/,\s*}/g, "}")
+    .replace(/([{,]\s*)([A-Za-z_][\w-]*)(\s*:)/g, '$1"$2"$3');
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return null;
+  }
+}
+
+function extractLooseScheduleRecords(value: string): unknown[] {
+  const stripped = stripCodeFence(value);
+  const matches = stripped.match(/\{[^{}]*\b(?:hour|time|start_hour|startHour)\b[^{}]*\}/gi) ?? [];
+  return matches
+    .map(parseLooseJsonObjectFragment)
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+}
+
 function scheduleItemFromRecord(value: unknown, index: number): WorldAgentScheduleItem | null {
   if (typeof value === "string") {
     const activity = normalizeDirectiveText(value, 600);
@@ -1307,10 +1326,17 @@ function scheduleItemFromRecord(value: unknown, index: number): WorldAgentSchedu
 
 export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleItem[] {
   const raw = Array.isArray(value) ? value : [];
+  const expanded = raw.flatMap((item) => {
+    const record = asRecord(item);
+    const text = typeof item === "string" ? item : cleanString(record.activity ?? record.description ?? record.note ?? record.plan);
+    if (!text) return [item];
+    const looseRecords = extractLooseScheduleRecords(text);
+    return looseRecords.length > 1 ? looseRecords : [item];
+  });
   const seen = new Set<string>();
   const items: WorldAgentScheduleItem[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    const item = scheduleItemFromRecord(raw[index], index);
+  for (let index = 0; index < expanded.length; index += 1) {
+    const item = scheduleItemFromRecord(expanded[index], index);
     if (!item) continue;
     const key = `${item.hour}|${item.location || ""}|${item.activity}`;
     if (seen.has(key)) continue;
@@ -1325,16 +1351,17 @@ export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleI
 export function parseWorldAgentSchedule(raw: unknown): WorldAgentScheduleItem[] {
   const parsed = parseJsonishValue(raw);
   const obj = asRecord(parsed);
+  const scheduleValue = obj.schedule ?? obj.dailySchedule ?? obj.daily_schedule ?? obj.plan;
   const candidate =
     Array.isArray(parsed) ? parsed
-      : Array.isArray(obj.schedule) ? obj.schedule
-        : Array.isArray(obj.dailySchedule) ? obj.dailySchedule
-          : Array.isArray(obj.daily_schedule) ? obj.daily_schedule
-            : Array.isArray(obj.plan) ? obj.plan
+      : Array.isArray(scheduleValue) ? scheduleValue
+        : scheduleValue && typeof scheduleValue === "object" ? [scheduleValue]
               : [];
   const normalized = normalizeWorldAgentSchedule(candidate);
   if (normalized.length > 0) return normalized;
   if (typeof raw === "string") {
+    const loose = normalizeWorldAgentSchedule(extractLooseScheduleRecords(raw));
+    if (loose.length > 0) return loose;
     const fallback = normalizeDirectiveText(raw, 900);
     return fallback ? [{ hour: 0, activity: fallback }] : [];
   }

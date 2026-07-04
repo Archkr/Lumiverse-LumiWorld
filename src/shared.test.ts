@@ -455,6 +455,19 @@ describe("World Agent state and parsing", () => {
     expect(parseWorldAgentSchedule('{"schedule":[{"hour":9,"location":"Cafe","activity":"Write notes"}]}')).toEqual([
       { hour: 9, location: "Cafe", activity: "Write notes" },
     ]);
+    const messySchedule = [
+      "```json",
+      "{\"schedule\": {\"hour\": 0, \"location\": \"Residential Quarters\", \"activity\": \"Sleeping\", \"mood\": \"Peaceful\", \"goal\": \"Rest and recover\"},",
+      "{\"hour\": 7, \"location\": \"Kitchen\", \"activity\": \"Breakfast\", \"mood\": \"Affectionate\", \"goal\": \"Spend time\"},",
+      "{\"hour\": 9, \"location\": \"Training Facility\", \"activity\": \"Combat training\", \"mood\": \"Focused\", \"goal\": \"Improve\"}}",
+      "```",
+    ].join("\n");
+    expect(parseWorldAgentSchedule(messySchedule)).toEqual([
+      { hour: 0, location: "Residential Quarters", activity: "Sleeping", mood: "Peaceful", goal: "Rest and recover" },
+      { hour: 7, location: "Kitchen", activity: "Breakfast", mood: "Affectionate", goal: "Spend time" },
+      { hour: 9, location: "Training Facility", activity: "Combat training", mood: "Focused", goal: "Improve" },
+    ]);
+    expect(normalizeWorldAgentState({ schedule: [{ hour: 0, activity: messySchedule }] }, "chat-1").schedule).toHaveLength(3);
     expect(parseWorldAgentSchedule("A loose private day plan.")[0].activity).toBe("A loose private day plan.");
     expect(parseWorldAgentUpdate('{"location":"Library","mood":"focused","activity":"reading","thought":"The key is missing","goal":"find it"}')).toEqual({
       location: "Library",
