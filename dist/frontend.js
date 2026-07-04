@@ -186,8 +186,10 @@ var DEFAULT_SETTINGS = {
 };
 var CSS = `
 .lw-root {
-  min-height: 100%;
-  padding: 12px 8px 40px;
+  min-height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
+  width: calc(100% + 24px);
+  margin: -12px -12px 0;
+  padding: 12px 16px 40px;
   color: #e0d6c8;
   /* Realistic Running-Bond Brick Wall */
   background-color: #4a322a;
@@ -232,9 +234,10 @@ var CSS = `
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  margin: 0 auto;
+  margin: 0;
 }
 
 /* Shelf and LED Sign */
