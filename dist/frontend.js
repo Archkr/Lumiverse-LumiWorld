@@ -186,18 +186,15 @@ var DEFAULT_SETTINGS = {
 };
 var CSS = `
 .lw-root {
-  min-height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
-  width: calc(100% + 24px);
-  margin: -12px -12px 0;
-  padding: 14px 14px 40px;
+  min-height: 100%;
+  height: 100%;
   color: #e0d6c8;
-  /* Moody Room Background */
-  background: radial-gradient(circle at 80% 10%, rgba(255, 200, 100, 0.15), transparent 40%), radial-gradient(circle at 20% 90%, rgba(30, 30, 50, 0.5), transparent 50%), linear-gradient(to bottom, #1a1a2e, #16213e);
+  background: #1a1a2e;
   box-sizing: border-box;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
   line-height: 1.4;
-  overflow-x: hidden;
+  overflow: hidden;
   position: relative;
   
   /* Theme overrides for Spindle components to force the lofi aesthetic */
@@ -215,35 +212,110 @@ var CSS = `
   --lumiverse-radius: 2px;
   --lumiverse-radius-xl: 2px;
   --lumiverse-transition-fast: 0.1s linear;
-  
-  --lw-gold: #d8aa63;
-  --lw-rose: #cf7e7e;
 }
 .lw-root * { box-sizing: border-box; }
 .lw-root input, .lw-root textarea, .lw-root select { accent-color: #ff7e00; font-family: 'Courier New', monospace; }
 
-.lw-shell {
+/* Navigation */
+.lw-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+}
+.lw-nav-btn:hover { background: rgba(255, 126, 0, 0.6); border-color: #ff7e00; }
+.lw-nav-btn:disabled { opacity: 0.2; cursor: default; }
+.lw-nav-left { left: 8px; }
+.lw-nav-right { right: 8px; }
+
+.lw-nav-dots {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 100;
+}
+.lw-dot {
+  width: 6px; height: 6px;
+  background: rgba(255,255,255,0.3);
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+.lw-dot.is-active { background: #ff7e00; transform: scale(1.4); }
+
+/* Viewport and Room */
+.lw-viewport {
   width: 100%;
-  max-width: 390px;
-  min-width: 0;
-  margin: 0 auto;
+  height: 100%;
+  overflow: hidden;
   position: relative;
-  z-index: 1;
+}
+.lw-room-wrapper {
+  display: flex;
+  width: 400%;
+  height: 100%;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  background: linear-gradient(to bottom, #2c2a3d, #26243a 70%, #1a1825 100%);
+  background-image: 
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 40px, transparent 40px, transparent 80px),
+    linear-gradient(to bottom, #2c2a3d, #26243a 70%, #1a1825 100%);
 }
 
-/* Decorative Background Elements */
+.lw-panel {
+  width: 25%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 140px; /* Space for floor */
+}
+.lw-panel::-webkit-scrollbar { width: 0; background: transparent; }
+
+/* Continuous Floor */
+.lw-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  background: repeating-linear-gradient(90deg, #4a322a 0px, #4a322a 60px, #3e2a23 60px, #3e2a23 120px);
+  border-top: 4px solid #2a1a15;
+  box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* TV Panel (Panel 0) */
 .lw-window {
   position: absolute;
-  top: 10px; left: 10px;
-  width: 130px; height: 90px;
+  top: 20px; left: 20px;
+  width: 120px; height: 90px;
   background: linear-gradient(to bottom, #0f3460, #16213e);
   border: 6px solid #3a261f;
   border-radius: 2px;
   box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-  z-index: 0;
+  z-index: 2;
   overflow: hidden;
 }
 .lw-rain {
@@ -278,105 +350,53 @@ var CSS = `
   z-index: 1;
   opacity: 0.8;
 }
-.lw-window::after {
-  content: '';
+.lw-moon {
   position: absolute;
-  top: 50%; left: 0; width: 100%; height: 4px;
-  background: #3a261f;
-  transform: translateY(-50%);
-  z-index: 3;
-}
-.lw-window::before {
-  content: '';
-  position: absolute;
-  left: 50%; top: 0; width: 4px; height: 100%;
-  background: #3a261f;
-  transform: translateX(-50%);
-  z-index: 3;
-}
-
-.lw-bulb {
-  position: absolute;
-  top: 20px; right: 20px;
-  width: 2px; height: 50px;
-  background: #333;
-  z-index: 0;
-}
-.lw-bulb::after {
-  content: '';
-  position: absolute;
-  bottom: -15px; left: -7px;
+  top: 10px; right: 15px;
   width: 16px; height: 16px;
-  background: radial-gradient(#fffae0, #ff9e3d);
+  background: #fffae0;
   border-radius: 50%;
-  box-shadow: 0 0 25px 10px rgba(255, 158, 61, 0.4);
-  animation: lw-flicker 5s infinite alternate;
+  box-shadow: 0 0 12px #fffae0;
+  z-index: 1;
 }
+.lw-window::before, .lw-window::after {
+  content: '';
+  position: absolute;
+  background: #3a261f;
+  z-index: 3;
+}
+.lw-window::before { top: 50%; left: 0; width: 100%; height: 4px; transform: translateY(-50%); }
+.lw-window::after { left: 50%; top: 0; width: 4px; height: 100%; transform: translateX(-50%); }
 
-@keyframes lw-flicker {
-  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; filter: brightness(1.1); }
-  20%, 24%, 55% { opacity: 0.6; filter: brightness(0.8); }
-}
-
-/* Shelf and LED Sign */
-.lw-shelf-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: clamp(86px, 25vw, 102px);
-  margin-bottom: 14px;
-  width: 100%;
-}
 .lw-led-sign {
-  width: min(100%, 335px);
+  position: absolute;
+  top: 30px; right: 20px;
   background: #111;
   border: 3px solid #3a2e2a;
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-radius: 6px;
   box-shadow: 0 0 20px rgba(255, 126, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.9);
   color: #ff9e3d;
   text-shadow: 0 0 8px #ff9e3d, 0 0 15px #ff7e00, 0 0 25px #ff5500;
   font-weight: bold;
-  font-size: clamp(14px, 4vw, 17px);
-  letter-spacing: 1.2px;
+  font-size: 14px;
+  letter-spacing: 1px;
   animation: lw-flicker 4s infinite alternate;
   white-space: nowrap;
-  text-align: center;
-  margin-bottom: 4px;
+  z-index: 2;
 }
-.lw-shelf {
-  width: min(92%, 320px);
-  height: 10px;
-  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
-  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
-  border-radius: 2px;
-  box-shadow: 0 6px 8px rgba(0,0,0,0.6);
-  position: relative;
-}
-.lw-shelf::before, .lw-shelf::after {
-  content: '';
-  position: absolute;
-  bottom: -8px;
-  width: 6px;
-  height: 8px;
-  background: #3a261f;
-}
-.lw-shelf::before { left: 15%; }
-.lw-shelf::after { right: 15%; }
-
-/* TV and Desk Scene */
-.lw-scene {
-  position: relative;
-  width: min(100%, 340px);
-  min-height: 174px;
-  margin: 0 auto;
-  padding-top: 10px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
+@keyframes lw-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; filter: brightness(1.1); }
+  20%, 24%, 55% { opacity: 0.6; filter: brightness(0.8); }
 }
 
 /* Retro CRT TV */
+.lw-tv-container {
+  position: relative;
+  margin-top: auto;
+  margin-bottom: 80px;
+  z-index: 2;
+}
 .lw-tv {
   background: #e8e1d3;
   border-radius: 20px 20px 8px 8px;
@@ -387,10 +407,8 @@ var CSS = `
     inset 0 2px 4px rgba(255,255,255,0.6), 
     inset 0 -4px 8px rgba(0,0,0,0.1);
   position: relative;
-  width: 190px;
-  flex: 0 0 190px;
-  max-width: 58%;
-  z-index: 2;
+  width: 280px;
+  max-width: 90%;
 }
 .lw-tv::before { /* Vents */
   content: '';
@@ -423,10 +441,21 @@ var CSS = `
 }
 .lw-tv-knob:nth-child(2) { bottom: 40px; }
 
+.lw-tv-antenna {
+  position: absolute;
+  top: -60px; left: 50%;
+  width: 4px; height: 60px;
+  background: #8b7765;
+  transform-origin: bottom center;
+  z-index: 0;
+}
+.lw-tv-antenna.lw-left { transform: rotate(-35deg); }
+.lw-tv-antenna.lw-right { transform: rotate(35deg); }
+
 .lw-tv-screen {
   background: #000;
   border: 6px solid #2a2a2a;
-  border-radius: 20px / 15px; /* CRT Curve */
+  border-radius: 20px / 15px;
   padding: 0;
   position: relative;
   width: 100%;
@@ -451,8 +480,6 @@ var CSS = `
   pointer-events: none;
   z-index: 4;
 }
-
-/* TV Content (Cable Guide) */
 .lw-tv-content {
   position: absolute;
   inset: 0;
@@ -487,9 +514,7 @@ var CSS = `
   cursor: pointer;
   transition: background 0.1s;
 }
-.lw-tv-row:hover {
-  background: rgba(255, 158, 61, 0.1);
-}
+.lw-tv-row:hover { background: rgba(255, 158, 61, 0.1); }
 .lw-tv-row.is-active {
   background: #ff9e3d;
   color: #000;
@@ -508,127 +533,68 @@ var CSS = `
   padding-top: 4px;
 }
 
-/* Wooden Desk */
-.lw-desk {
-  flex: 1 1 0;
-  min-width: 118px;
-  width: auto;
-  margin-left: -10px;
-  height: 16px;
-  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
-  background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.1) 0px, rgba(0,0,0,0.1) 1px, transparent 1px, transparent 4px);
-  border-radius: 2px;
-  box-shadow: 0 10px 15px rgba(0,0,0,0.6);
-  position: relative;
-  z-index: 1;
-  margin-top: 0;
-  margin-bottom: 35px;
+.lw-plant {
+  position: absolute;
+  bottom: 0; left: 10px;
+  width: 40px; height: 50px;
+  z-index: 2;
 }
-
-/* Desk Items */
-.lw-desk-item { position: absolute; bottom: 16px; z-index: 3; }
-
-.lw-mug {
-  left: 15px;
-  width: 24px; height: 24px;
-  background: #ddd;
-  border-radius: 4px 4px 12px 12px;
+.lw-pot {
+  width: 100%; height: 30px;
+  background: linear-gradient(to right, #8b4513, #a0522d, #8b4513);
+  border-radius: 5px 5px 15px 15px;
+  position: absolute;
+  bottom: 0;
   box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
 }
-.lw-mug::before { /* Handle */
-  content: '';
+.lw-leaf {
   position: absolute;
-  right: -8px; top: 6px;
-  width: 8px; height: 10px;
-  border: 2px solid #ddd;
-  border-left: none;
-  border-radius: 0 6px 6px 0;
+  bottom: 25px;
+  width: 12px; height: 30px;
+  background: #2e8b57;
+  border-radius: 50% 50% 0 0;
+  transform-origin: bottom center;
 }
-.lw-mug::after { /* Coffee */
-  content: '';
-  position: absolute;
-  top: 2px; left: 2px; right: 2px;
-  height: 4px;
-  background: #4a2e24;
-  border-radius: 2px;
-}
-.lw-steam {
-  position: absolute;
-  top: -10px; left: 8px;
-  width: 4px; height: 15px;
-  background: rgba(255,255,255,0.15);
-  filter: blur(3px);
-  animation: lw-steam 3s infinite ease-in;
-}
-.lw-steam2 { left: 14px; animation-delay: 1s; }
-@keyframes lw-steam {
-  0% { transform: translateY(0) scale(1); opacity: 0.5; }
-  100% { transform: translateY(-15px) scale(1.5); opacity: 0; }
-}
+.lw-leaf:nth-child(1) { left: 10px; transform: rotate(-20deg); }
+.lw-leaf:nth-child(2) { left: 18px; transform: rotate(0deg); height: 35px; }
+.lw-leaf:nth-child(3) { left: 26px; transform: rotate(20deg); }
 
-.lw-books {
-  right: 20px;
-  width: 30px; height: 20px;
+/* Settings Panels (Paper Notes) */
+.lw-poster {
+  background: #fff;
+  color: #111;
+  padding: 10px 20px;
+  font-size: 18px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  box-shadow: 3px 5px 15px rgba(0,0,0,0.6);
+  transform: rotate(-2deg);
+  margin-top: 20px;
+  border: 4px solid #111;
+  z-index: 2;
 }
-.lw-book {
-  position: absolute;
-  width: 30px; height: 6px;
-  background: #cc7e00;
-  border: 1px solid #8b4513;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.3);
-}
-.lw-book:nth-child(1) { bottom: 0; }
-.lw-book:nth-child(2) { bottom: 7px; background: #6fb7a6; width: 28px; left: 2px; }
-.lw-book:nth-child(3) { bottom: 14px; background: #cf7e7e; width: 32px; left: -1px; }
+.lw-poster.lw-alt { transform: rotate(2deg); background: #ff9e3d; }
 
-.lw-lamp {
-  right: 60px;
-  width: 10px; height: 40px;
-}
-.lw-lamp-base { width: 20px; height: 4px; background: #333; position: absolute; bottom: 0; left: -5px; border-radius: 2px; }
-.lw-lamp-arm { width: 4px; height: 30px; background: #444; position: absolute; bottom: 4px; left: 3px; transform: rotate(20deg); transform-origin: bottom; }
-.lw-lamp-head { width: 20px; height: 12px; background: #555; border-radius: 10px 10px 2px 2px; position: absolute; top: -8px; left: 5px; transform: rotate(20deg); box-shadow: 1px 1px 3px rgba(0,0,0,0.5); }
-.lw-lamp-glow {
-  position: absolute;
-  top: 0; left: -30px;
-  width: 80px; height: 80px;
-  background: radial-gradient(circle, rgba(255, 200, 100, 0.2), transparent 70%);
-  pointer-events: none;
-}
-
-/* Settings Area (Paper Notes) */
-.lw-settings-area {
-  width: min(100%, 356px);
-  margin: 22px auto 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  position: relative;
-  z-index: 1;
-}
-
-/* Panels (Paper Notes) */
-.lw-panel {
-  border: none;
+.lw-paper {
+  width: 90%;
+  max-width: 320px;
   background-color: #fefae0;
   background-image: linear-gradient(#e6dcc3 1px, transparent 1px);
   background-size: 100% 20px;
   color: #2b201d;
   border-radius: 2px;
-  padding: 14px;
-  margin-bottom: 14px;
+  padding: 16px;
   box-shadow: 3px 5px 15px rgba(0,0,0,0.6);
   position: relative;
   transform: rotate(-1deg);
   transition: transform 0.3s;
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
+  z-index: 2;
 }
-.lw-panel:nth-child(even) { transform: rotate(1deg); background-color: #e0d8c8; }
-.lw-panel:nth-child(3n) { transform: rotate(-0.5deg); background-color: #f5f5dc; }
-.lw-panel:hover { transform: rotate(0deg) scale(1.01); z-index: 2; }
-.lw-panel::before {
+.lw-paper:nth-child(even) { transform: rotate(1deg); background-color: #e0d8c8; }
+.lw-paper:nth-child(3n) { transform: rotate(-0.5deg); background-color: #f5f5dc; }
+.lw-paper:hover { transform: rotate(0deg) scale(1.01); z-index: 10; }
+.lw-paper::before {
   content: '';
   position: absolute;
   top: -8px; left: 50%;
@@ -716,6 +682,9 @@ var CSS = `
   margin-bottom: 10px;
   font-size: 11.5px;
   overflow-wrap: anywhere;
+  width: 90%;
+  max-width: 320px;
+  text-align: center;
 }
 .lw-banner.warn { background: #d8aa63; }
 .lw-banner.error { background: #cf7e7e; color: #fff; }
@@ -725,7 +694,6 @@ var CSS = `
   border-radius: 2px;
   background: #e6dcc3;
   padding: 0;
-  margin-bottom: 14px;
   box-shadow: 2px 3px 0px rgba(0,0,0,0.3);
 }
 .lw-details summary { cursor: pointer; padding: 9px 11px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -749,8 +717,9 @@ var CSS = `
   color: #ff5500;
   box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 5px 10px rgba(0,0,0,0.5);
   text-align: center;
-  margin-bottom: 14px;
   min-width: 0;
+  width: 90%;
+  max-width: 320px;
 }
 .lw-clock-top {
   display: flex;
@@ -874,18 +843,127 @@ var CSS = `
 .lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
 .lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
 
-@media (max-width: 340px) {
-  .lw-root { padding: 10px 10px 30px; font-size: 11.5px; }
-  .lw-window { width: 100px; height: 70px; top: 5px; left: 5px; }
-  .lw-bulb { right: 10px; }
-  .lw-shelf-container { margin-top: 78px; }
-  .lw-led-sign { font-size: 13px; letter-spacing: 0.8px; padding-inline: 8px; }
-  .lw-scene { min-height: 160px; }
-  .lw-tv { width: 170px; flex-basis: 170px; max-width: 57%; padding: 12px; padding-bottom: 30px; }
-  .lw-desk { min-width: 92px; margin-bottom: 30px; }
-  .lw-settings-area { width: 100%; }
-  .lw-clock-time { font-size: 18px; letter-spacing: 0; }
+/* Desk Decorations (Panel 1) */
+.lw-desk-decor {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%;
+  height: 120px;
+  z-index: 1;
+  pointer-events: none;
 }
+.lw-mug {
+  position: absolute;
+  bottom: 20px; left: 20px;
+  width: 30px; height: 35px;
+  background: #eee;
+  border-radius: 5px 5px 15px 15px;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+}
+.lw-mug::after { /* Handle */
+  content: '';
+  position: absolute;
+  right: -10px; top: 8px;
+  width: 12px; height: 16px;
+  border: 3px solid #eee;
+  border-left: none;
+  border-radius: 0 10px 10px 0;
+}
+.lw-mug::before { /* Coffee */
+  content: '';
+  position: absolute;
+  top: 4px; left: 4px; right: 4px;
+  height: 6px;
+  background: #4a2e24;
+  border-radius: 2px;
+}
+.lw-steam {
+  position: absolute;
+  top: -15px; left: 10px;
+  width: 4px; height: 20px;
+  background: rgba(255,255,255,0.15);
+  filter: blur(3px);
+  animation: lw-steam 3s infinite ease-in;
+}
+.lw-steam2 { left: 18px; animation-delay: 1s; }
+@keyframes lw-steam {
+  0% { transform: translateY(0) scale(1); opacity: 0.5; }
+  100% { transform: translateY(-20px) scale(1.5); opacity: 0; }
+}
+.lw-lamp {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  width: 60px; height: 80px;
+}
+.lw-lamp-base { width: 30px; height: 6px; background: #333; position: absolute; bottom: 0; left: 15px; border-radius: 2px; }
+.lw-lamp-arm { width: 4px; height: 50px; background: #444; position: absolute; bottom: 6px; left: 28px; transform: rotate(15deg); transform-origin: bottom; }
+.lw-lamp-head { width: 30px; height: 20px; background: #555; border-radius: 15px 15px 2px 2px; position: absolute; top: -10px; left: 15px; transform: rotate(15deg); box-shadow: 1px 1px 3px rgba(0,0,0,0.5); }
+.lw-lamp-glow {
+  position: absolute;
+  top: 10px; left: -20px;
+  width: 100px; height: 100px;
+  background: radial-gradient(circle, rgba(255, 200, 100, 0.2), transparent 70%);
+  pointer-events: none;
+}
+
+/* Bed Decorations (Panel 2) */
+.lw-bed {
+  position: absolute;
+  bottom: 0; right: -50px;
+  width: 250px; height: 100px;
+  background: #6b5d4f;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
+  z-index: 1;
+}
+.lw-pillow {
+  position: absolute;
+  top: -15px; left: 20px;
+  width: 50px; height: 25px;
+  background: #ddd;
+  border-radius: 10px;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+}
+.lw-blanket {
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%; height: 60px;
+  background: #8b4513;
+  border-radius: 20px 20px 0 0;
+}
+
+/* Bookshelf Decorations (Panel 3) */
+.lw-shelf {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  width: 80px; height: 100px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 5px;
+  z-index: 1;
+}
+.lw-shelf-board {
+  height: 5px;
+  background: #5a3a2e;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+.lw-shelf-book {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+}
+.lw-book {
+  width: 8px;
+  background: #cc7e00;
+  border-radius: 2px 2px 0 0;
+}
+.lw-book:nth-child(2) { height: 25px; background: #6fb7a6; }
+.lw-book:nth-child(3) { height: 35px; background: #cf7e7e; }
+.lw-book:nth-child(4) { height: 20px; background: #d8aa63; }
+.lw-book:nth-child(5) { height: 30px; background: #fff; }
 `;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -1047,6 +1125,7 @@ function setup(ctx) {
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
   let activeChannel = "director";
+  let currentPanel = 0;
   let saveTimer = null;
   let localRevision = 0;
   let saveRevision = 0;
@@ -1262,13 +1341,13 @@ function setup(ctx) {
     slot.appendChild(input);
   }
   function renderDirectorChannel(shell) {
-    const panel = createElement("section", "lw-panel");
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Director Settings"));
     const toggleSlot = createElement("div", "lw-switch-slot");
     renderSwitchControl(toggleSlot, draft.enabled, (checked) => updateDraft({ enabled: checked }), "Enable Director Note");
     head.appendChild(toggleSlot);
-    panel.appendChild(head);
+    paper.appendChild(head);
     const form = createElement("div", "lw-form");
     const connSlot = createElement("div");
     renderConnectionControl(connSlot, draft.connectionId, (id) => updateDraft({ connectionId: id, modelOverride: "" }), "Director Note connection");
@@ -1315,13 +1394,13 @@ function setup(ctx) {
     }
     runsOnDiv.appendChild(chips);
     form.appendChild(runsOnDiv);
-    panel.appendChild(form);
-    shell.appendChild(panel);
+    paper.appendChild(form);
+    shell.appendChild(paper);
     renderDirectorAdvanced(shell);
     renderRuns(shell, "director");
   }
   function renderDirectorAdvanced(shell) {
-    const details = createElement("details", "lw-details");
+    const details = createElement("details", "lw-paper lw-details");
     const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lw-details-body");
     const entriesHint = state?.permissions.worldBooks === false ? "Grant World Books permission to fetch activated entry content. Without it, LumiWorld can only use tagged standalone prompt entries." : "Fetch activated World Info entry content and send it to the controller.";
@@ -1331,10 +1410,10 @@ function setup(ctx) {
   }
   function renderWorldAgentChannel(shell) {
     renderWorldAgentClock(shell);
-    const panel = createElement("section", "lw-panel");
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "World Agent Settings"));
-    panel.appendChild(head);
+    paper.appendChild(head);
     const form = createElement("div", "lw-form");
     form.append(toggleField("Enable Agent", draft.worldAgent.enabled, (checked) => updateWorldAgent({ enabled: checked }), "Per-chat simulation state."), toggleField("Inject State", draft.worldAgent.injectState, (checked) => updateWorldAgent({ injectState: checked }), "Add state to visible prompt."), toggleField("Visible-only Ticks", draft.worldAgent.autoTickVisibleOnly, (checked) => updateWorldAgent({ autoTickVisibleOnly: checked }), "Ticks run only when Lumiverse is visible."));
     form.appendChild(createElement("hr", "lw-divider"));
@@ -1350,15 +1429,15 @@ function setup(ctx) {
     const paramsGrid2 = createElement("div", "lw-two");
     paramsGrid2.append(numberField("Timeout", draft.worldAgent.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS, 1000, (v) => updateWorldAgent({ timeoutMs: v })), numberField("Hour Dur", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (v) => updateWorldAgent({ hourDurationMs: v })));
     form.appendChild(paramsGrid2);
-    panel.appendChild(form);
-    shell.appendChild(panel);
+    paper.appendChild(form);
+    shell.appendChild(paper);
     renderWorldAgentState(shell);
     renderWorldAgentSchedule(shell);
     renderWorldAgentAdvanced(shell);
     renderRuns(shell, "world_agent");
   }
   function renderWorldAgentClock(shell) {
-    const panel = createElement("section", "lw-clock");
+    const panel = createElement("div", "lw-clock");
     const stateNow = state?.worldState ?? null;
     const top = createElement("div", "lw-clock-top");
     top.append(createElement("div", "lw-clock-time", formatClock(stateNow)), createElement("span", "lw-clock-status", stateNow?.running ? "▶ Running" : "⏸ Paused"));
@@ -1401,12 +1480,12 @@ function setup(ctx) {
     shell.appendChild(panel);
   }
   function renderWorldAgentState(shell) {
-    const panel = createElement("section", "lw-panel");
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Current State"));
     if (state?.worldState?.updatedAt)
       head.appendChild(createElement("span", "lw-muted", `Updated ${formatTime(state.worldState.updatedAt)}`));
-    panel.appendChild(head);
+    paper.appendChild(head);
     const grid = createElement("div", "lw-meter-grid");
     const current = state?.worldState ?? null;
     const cards = [
@@ -1422,7 +1501,7 @@ function setup(ctx) {
       card.append(createElement("div", "lw-state-label", label), createElement("div", "lw-state-value", value));
       grid.appendChild(card);
     }
-    panel.appendChild(grid);
+    paper.appendChild(grid);
     const history = current?.history ?? [];
     const box = createElement("div", "lw-scrollbox");
     box.style.marginTop = "10px";
@@ -1444,19 +1523,19 @@ function setup(ctx) {
       }
       box.appendChild(list);
     }
-    panel.appendChild(box);
-    shell.appendChild(panel);
+    paper.appendChild(box);
+    shell.appendChild(paper);
   }
   function renderWorldAgentSchedule(shell) {
-    const panel = createElement("section", "lw-panel");
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, "Daily Schedule"));
     head.appendChild(createElement("span", "lw-muted", state?.worldState?.scheduleDay ? `Day ${state.worldState.scheduleDay}` : "No day"));
-    panel.appendChild(head);
+    paper.appendChild(head);
     const schedule = state?.worldState?.schedule ?? [];
     if (!schedule.length) {
-      panel.appendChild(createElement("div", "lw-empty", "No schedule generated."));
-      shell.appendChild(panel);
+      paper.appendChild(createElement("div", "lw-empty", "No schedule generated."));
+      shell.appendChild(paper);
       return;
     }
     const strip = createElement("div", "lw-schedule-strip");
@@ -1472,11 +1551,11 @@ function setup(ctx) {
         slot.appendChild(createElement("div", "lw-muted", `Goal: ${item.goal}`));
       strip.appendChild(slot);
     }
-    panel.appendChild(strip);
-    shell.appendChild(panel);
+    paper.appendChild(strip);
+    shell.appendChild(paper);
   }
   function renderWorldAgentAdvanced(shell) {
-    const details = createElement("details", "lw-details");
+    const details = createElement("details", "lw-paper lw-details");
     const summary = createElement("summary", undefined, "Advanced Settings");
     const body = createElement("div", "lw-details-body");
     body.append(textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (value) => updateWorldAgent({ scheduleTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."), textareaField("Update template", draft.worldAgent.updateTemplate, (value) => updateWorldAgent({ updateTemplate: value }), "Variables: {{chatId}}, {{user}}, {{char}}, {{day}}, {{hour}}, {{time}}, {{state}}, {{schedule}}, {{timestamp}}."));
@@ -1484,20 +1563,20 @@ function setup(ctx) {
     shell.appendChild(details);
   }
   function renderRuns(shell, channel) {
-    const panel = createElement("section", "lw-panel");
+    const paper = createElement("div", "lw-paper");
     const head = createElement("div", "lw-panel-head");
     head.appendChild(createElement("h3", undefined, channel === "director" ? "Recent Runs" : "Recent Activity"));
     const clear = createElement("button", "lw-btn", "Clear");
     clear.type = "button";
     clear.addEventListener("click", () => send(ctx, { type: "clear_runs" }));
     head.appendChild(clear);
-    panel.appendChild(head);
+    paper.appendChild(head);
     const runs = (state?.runs ?? []).filter((run) => (run.channel ?? "director") === channel);
     const scroll = createElement("div", "lw-scrollbox");
     if (!runs.length) {
       scroll.appendChild(createElement("div", "lw-empty", channel === "director" ? "No controller runs yet." : "No World Agent runs yet."));
-      panel.appendChild(scroll);
-      shell.appendChild(panel);
+      paper.appendChild(scroll);
+      shell.appendChild(paper);
       return;
     }
     const list = createElement("div", "lw-runs");
@@ -1527,8 +1606,8 @@ function setup(ctx) {
       list.appendChild(item);
     }
     scroll.appendChild(list);
-    panel.appendChild(scroll);
-    shell.appendChild(panel);
+    paper.appendChild(scroll);
+    shell.appendChild(paper);
   }
   function renderNotice(shell) {
     if (!notice)
@@ -1557,8 +1636,14 @@ function setup(ctx) {
     if (draft.worldAgent.enabled && !draft.worldAgent.connectionId)
       shell.appendChild(createElement("div", "lw-banner warn", "World Agent is enabled but no model connection is selected."));
   }
-  function renderTvGuide(shell) {
-    const scene = createElement("div", "lw-scene");
+  function renderTvPanel(shell) {
+    const window = createElement("div", "lw-window");
+    window.innerHTML = `<div class="lw-moon"></div><div class="lw-city"></div><div class="lw-city-lights"></div><div class="lw-rain"></div>`;
+    shell.appendChild(window);
+    shell.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
+    const tvContainer = createElement("div", "lw-tv-container");
+    tvContainer.appendChild(createElement("div", "lw-tv-antenna lw-left"));
+    tvContainer.appendChild(createElement("div", "lw-tv-antenna lw-right"));
     const tv = createElement("div", "lw-tv");
     const tvScreen = createElement("div", "lw-tv-screen");
     tvScreen.appendChild(createElement("div", "lw-tv-scanlines"));
@@ -1570,16 +1655,10 @@ function setup(ctx) {
     const list = createElement("div", "lw-tv-list");
     const ch1 = createElement("div", `lw-tv-row${activeChannel === "director" ? " is-active" : ""}`);
     ch1.innerHTML = `<span class="lw-tv-ch">CH 01</span><span class="lw-tv-name">DIRECTOR NOTE</span><span class="lw-tv-status">${draft.enabled ? "● LIVE" : "OFF"}</span>`;
-    ch1.addEventListener("click", () => {
-      activeChannel = "director";
-      render();
-    });
+    ch1.addEventListener("click", () => switchChannel("director", 1));
     const ch2 = createElement("div", `lw-tv-row${activeChannel === "world_agent" ? " is-active" : ""}`);
     ch2.innerHTML = `<span class="lw-tv-ch">CH 02</span><span class="lw-tv-name">WORLD AGENT</span><span class="lw-tv-status">${state?.worldState?.running ? "● RUN" : "PAUSE"}</span>`;
-    ch2.addEventListener("click", () => {
-      activeChannel = "world_agent";
-      render();
-    });
+    ch2.addEventListener("click", () => switchChannel("world_agent", 2));
     list.append(ch1, ch2);
     content.appendChild(list);
     const footer = createElement("div", "lw-tv-footer", "SELECT CHANNEL TO TUNE IN");
@@ -1588,45 +1667,124 @@ function setup(ctx) {
     tv.appendChild(createElement("div", "lw-tv-knob"));
     tv.appendChild(createElement("div", "lw-tv-knob"));
     tv.appendChild(tvScreen);
-    const desk = createElement("div", "lw-desk");
-    const mug = createElement("div", "lw-desk-item lw-mug");
+    tvContainer.appendChild(tv);
+    shell.appendChild(tvContainer);
+    const plant = createElement("div", "lw-plant");
+    plant.innerHTML = `<div class="lw-leaf"></div><div class="lw-leaf"></div><div class="lw-leaf"></div><div class="lw-pot"></div>`;
+    shell.appendChild(plant);
+  }
+  function renderDirectorPanel(shell) {
+    shell.appendChild(createElement("div", "lw-poster", "01 Director Note"));
+    renderBanners(shell);
+    renderDirectorChannel(shell);
+    const deskDecor = createElement("div", "lw-desk-decor");
+    const mug = createElement("div", "lw-mug");
     mug.innerHTML = `<div class="lw-steam"></div><div class="lw-steam lw-steam2"></div>`;
-    const books = createElement("div", "lw-desk-item lw-books");
-    books.innerHTML = `<div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div>`;
-    const lamp = createElement("div", "lw-desk-item lw-lamp");
+    const lamp = createElement("div", "lw-lamp");
     lamp.innerHTML = `<div class="lw-lamp-glow"></div><div class="lw-lamp-base"></div><div class="lw-lamp-arm"></div><div class="lw-lamp-head"></div>`;
-    desk.append(mug, books, lamp);
-    scene.append(tv, desk);
-    shell.appendChild(scene);
+    deskDecor.append(mug, lamp);
+    shell.appendChild(deskDecor);
+  }
+  function renderWorldAgentPanel(shell) {
+    shell.appendChild(createElement("div", "lw-poster lw-alt", "02 World Agent"));
+    renderWorldAgentChannel(shell);
+    const bed = createElement("div", "lw-bed");
+    bed.innerHTML = `<div class="lw-pillow"></div><div class="lw-blanket"></div>`;
+    shell.appendChild(bed);
+  }
+  function renderArchivesPanel(shell) {
+    shell.appendChild(createElement("div", "lw-poster", "03 Archives"));
+    if (activeChannel === "director") {
+      renderDirectorAdvanced(shell);
+      renderRuns(shell, "director");
+    } else {
+      renderWorldAgentAdvanced(shell);
+      renderRuns(shell, "world_agent");
+    }
+    const shelf = createElement("div", "lw-shelf");
+    shelf.innerHTML = `
+      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
+      <div class="lw-shelf-board"></div>
+      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
+      <div class="lw-shelf-board"></div>
+      <div class="lw-shelf-book"><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div></div>
+      <div class="lw-shelf-board"></div>
+    `;
+    shell.appendChild(shelf);
+  }
+  function switchChannel(channel, panelIndex) {
+    activeChannel = channel;
+    document.querySelectorAll(".lw-tv-row").forEach((el) => el.classList.remove("is-active"));
+    currentPanel = panelIndex;
+    render();
+  }
+  function navigateRoom(direction) {
+    const target = direction === "left" ? currentPanel - 1 : currentPanel + 1;
+    if (target >= 0 && target <= 3) {
+      currentPanel = target;
+      updateRoomPosition();
+    }
+  }
+  function updateRoomPosition() {
+    const wrapper = document.getElementById("lw-room-wrapper");
+    if (wrapper) {
+      wrapper.style.transform = `translateX(-${currentPanel * 25}%)`;
+    }
+    const leftBtn = document.getElementById("lw-nav-left");
+    const rightBtn = document.getElementById("lw-nav-right");
+    if (leftBtn)
+      leftBtn.disabled = currentPanel === 0;
+    if (rightBtn)
+      rightBtn.disabled = currentPanel === 3;
+    document.querySelectorAll(".lw-dot").forEach((dot, index) => {
+      dot.classList.toggle("is-active", index === currentPanel);
+    });
   }
   function render() {
     destroyComponents();
     tab.root.replaceChildren();
     const root = createElement("div", "lw-root");
-    const shell = createElement("div", "lw-shell");
-    root.appendChild(shell);
-    tab.root.appendChild(root);
-    const window = createElement("div", "lw-window");
-    window.innerHTML = `<div class="lw-city"></div><div class="lw-city-lights"></div><div class="lw-rain"></div>`;
-    shell.appendChild(window);
-    shell.appendChild(createElement("div", "lw-bulb"));
-    const shelfContainer = createElement("div", "lw-shelf-container");
-    shelfContainer.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
-    shelfContainer.appendChild(createElement("div", "lw-shelf"));
-    shell.appendChild(shelfContainer);
-    renderNotice(shell);
-    if (!state) {
-      shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
-      return;
+    const navLeft = createElement("button", "lw-nav-btn lw-nav-left", "‹");
+    navLeft.id = "lw-nav-left";
+    navLeft.type = "button";
+    navLeft.addEventListener("click", () => navigateRoom("left"));
+    const navRight = createElement("button", "lw-nav-btn lw-nav-right", "›");
+    navRight.id = "lw-nav-right";
+    navRight.type = "button";
+    navRight.addEventListener("click", () => navigateRoom("right"));
+    const navDots = createElement("div", "lw-nav-dots");
+    for (let i = 0;i < 4; i++) {
+      const dot = createElement("div", `lw-dot${i === currentPanel ? " is-active" : ""}`);
+      dot.addEventListener("click", () => {
+        currentPanel = i;
+        updateRoomPosition();
+      });
+      navDots.appendChild(dot);
     }
-    renderBanners(shell);
-    renderTvGuide(shell);
-    const settingsArea = createElement("div", "lw-settings-area");
-    if (activeChannel === "director")
-      renderDirectorChannel(settingsArea);
-    else
-      renderWorldAgentChannel(settingsArea);
-    shell.appendChild(settingsArea);
+    const viewport = createElement("div", "lw-viewport");
+    const roomWrapper = createElement("div", "lw-room-wrapper");
+    roomWrapper.id = "lw-room-wrapper";
+    roomWrapper.style.transform = `translateX(-${currentPanel * 25}%)`;
+    const tvPanel = createElement("div", "lw-panel");
+    if (!state) {
+      tvPanel.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
+    } else {
+      renderTvPanel(tvPanel);
+    }
+    const directorPanel = createElement("div", "lw-panel");
+    if (state)
+      renderDirectorPanel(directorPanel);
+    const worldAgentPanel = createElement("div", "lw-panel");
+    if (state)
+      renderWorldAgentPanel(worldAgentPanel);
+    const archivesPanel = createElement("div", "lw-panel");
+    if (state)
+      renderArchivesPanel(archivesPanel);
+    roomWrapper.append(tvPanel, directorPanel, worldAgentPanel, archivesPanel);
+    viewport.appendChild(roomWrapper);
+    root.append(navLeft, navRight, viewport, navDots);
+    tab.root.appendChild(root);
+    updateRoomPosition();
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
