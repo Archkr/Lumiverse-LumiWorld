@@ -186,8 +186,10 @@ var DEFAULT_SETTINGS = {
 };
 var CSS = `
 .lw-root {
-  min-height: 100%;
-  padding: 20px 12px 40px;
+  min-height: calc(var(--app-scaled-viewport-height, 100vh) - 48px);
+  width: calc(100% + 24px);
+  margin: -12px -12px 0;
+  padding: 14px 14px 40px;
   color: #e0d6c8;
   /* Moody Room Background */
   background: radial-gradient(circle at 80% 10%, rgba(255, 200, 100, 0.15), transparent 40%), radial-gradient(circle at 20% 90%, rgba(30, 30, 50, 0.5), transparent 50%), linear-gradient(to bottom, #1a1a2e, #16213e);
@@ -223,8 +225,9 @@ var CSS = `
 .lw-shell {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 100%;
+  gap: 14px;
+  width: 100%;
+  max-width: 390px;
   min-width: 0;
   margin: 0 auto;
   position: relative;
@@ -320,27 +323,29 @@ var CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 100px;
-  margin-bottom: 20px;
+  margin-top: clamp(86px, 25vw, 102px);
+  margin-bottom: 14px;
   width: 100%;
 }
 .lw-led-sign {
+  width: min(100%, 335px);
   background: #111;
   border: 3px solid #3a2e2a;
-  padding: 8px 18px;
+  padding: 8px 12px;
   border-radius: 6px;
   box-shadow: 0 0 20px rgba(255, 126, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.9);
   color: #ff9e3d;
   text-shadow: 0 0 8px #ff9e3d, 0 0 15px #ff7e00, 0 0 25px #ff5500;
   font-weight: bold;
-  font-size: 18px;
-  letter-spacing: 2px;
+  font-size: clamp(14px, 4vw, 17px);
+  letter-spacing: 1.2px;
   animation: lw-flicker 4s infinite alternate;
   white-space: nowrap;
+  text-align: center;
   margin-bottom: 4px;
 }
 .lw-shelf {
-  width: 90%;
+  width: min(92%, 320px);
   height: 10px;
   background: linear-gradient(to bottom, #5a3a2e, #3a261f);
   background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
@@ -362,11 +367,13 @@ var CSS = `
 /* TV and Desk Scene */
 .lw-scene {
   position: relative;
-  width: 100%;
+  width: min(100%, 340px);
+  min-height: 174px;
   margin: 0 auto;
-  padding-top: 20px;
+  padding-top: 10px;
   display: flex;
-  justify-content: center;
+  align-items: flex-end;
+  justify-content: flex-start;
 }
 
 /* Retro CRT TV */
@@ -380,8 +387,9 @@ var CSS = `
     inset 0 2px 4px rgba(255,255,255,0.6), 
     inset 0 -4px 8px rgba(0,0,0,0.1);
   position: relative;
-  width: 280px;
-  max-width: 90%;
+  width: 190px;
+  flex: 0 0 190px;
+  max-width: 58%;
   z-index: 2;
 }
 .lw-tv::before { /* Vents */
@@ -502,8 +510,10 @@ var CSS = `
 
 /* Wooden Desk */
 .lw-desk {
-  width: 110%;
-  margin-left: -5%;
+  flex: 1 1 0;
+  min-width: 118px;
+  width: auto;
+  margin-left: -10px;
   height: 16px;
   background: linear-gradient(to bottom, #5a3a2e, #3a261f);
   background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.1) 0px, rgba(0,0,0,0.1) 1px, transparent 1px, transparent 4px);
@@ -511,7 +521,8 @@ var CSS = `
   box-shadow: 0 10px 15px rgba(0,0,0,0.6);
   position: relative;
   z-index: 1;
-  margin-top: -8px;
+  margin-top: 0;
+  margin-bottom: 35px;
 }
 
 /* Desk Items */
@@ -587,7 +598,8 @@ var CSS = `
 
 /* Settings Area (Paper Notes) */
 .lw-settings-area {
-  margin-top: 30px;
+  width: min(100%, 356px);
+  margin: 22px auto 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -863,11 +875,15 @@ var CSS = `
 .lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
 
 @media (max-width: 340px) {
-  .lw-root { padding: 10px 6px 30px; font-size: 11.5px; }
+  .lw-root { padding: 10px 10px 30px; font-size: 11.5px; }
   .lw-window { width: 100px; height: 70px; top: 5px; left: 5px; }
   .lw-bulb { right: 10px; }
-  .lw-shelf-container { margin-top: 80px; }
-  .lw-tv { width: 100%; }
+  .lw-shelf-container { margin-top: 78px; }
+  .lw-led-sign { font-size: 13px; letter-spacing: 0.8px; padding-inline: 8px; }
+  .lw-scene { min-height: 160px; }
+  .lw-tv { width: 170px; flex-basis: 170px; max-width: 57%; padding: 12px; padding-bottom: 30px; }
+  .lw-desk { min-width: 92px; margin-bottom: 30px; }
+  .lw-settings-area { width: 100%; }
   .lw-clock-time { font-size: 18px; letter-spacing: 0; }
 }
 `;
