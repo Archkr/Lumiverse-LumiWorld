@@ -441,43 +441,56 @@ const CSS = `
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 18px 34px 128px;
+  padding: 24px 30px 170px; /* Increased bottom padding for larger floor */
   box-sizing: border-box;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 158, 61, 0.45) transparent;
 }
 .lw-panel::-webkit-scrollbar { width: 6px; background: transparent; }
 .lw-panel::-webkit-scrollbar-thumb { background: rgba(255, 158, 61, 0.45); border-radius: 999px; }
 
-/* Continuous Floor */
+/* Continuous Floor & Rug */
 .lw-panel::after {
   content: '';
   position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 120px;
+  bottom: 0; left: 0; width: 100%;
+  height: 140px; /* Taller floor */
   background: repeating-linear-gradient(90deg, #4a322a 0px, #4a322a 60px, #3e2a23 60px, #3e2a23 120px);
-  border-top: 4px solid #2a1a15;
-  box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
+  border-top: 6px solid #2a1a15;
+  box-shadow: 0 -8px 20px rgba(0,0,0,0.4);
   z-index: 0;
   pointer-events: none;
+}
+
+.lw-panel::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 80%; height: 140px;
+  background: repeating-linear-gradient(45deg, #5a3f30 0px, #5a3f30 15px, #4a322a 15px, #4a322a 30px);
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.6;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 -5px 15px rgba(0,0,0,0.2);
 }
 
 /* TV Panel (Panel 0) */
 .lw-window {
   position: absolute;
-  top: 18px; left: 18px;
-  width: clamp(96px, 31vw, 122px); height: clamp(72px, 23vw, 90px);
+  top: 30px; left: 30px;
+  width: clamp(160px, 25vw, 220px); 
+  height: clamp(110px, 18vw, 150px);
   background: linear-gradient(to bottom, #0f3460, #16213e);
-  border: 6px solid #3a261f;
-  border-radius: 2px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  border: 8px solid #3a261f;
+  border-radius: 4px;
+  box-shadow: 0 6px 15px rgba(0,0,0,0.5);
   z-index: 2;
   overflow: hidden;
 }
@@ -495,7 +508,7 @@ const CSS = `
 .lw-city {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  height: 40px;
+  height: 50%; /* Perfectly aligns with lights */
   background: #050a14;
   clip-path: polygon(0% 100%, 0% 60%, 10% 60%, 10% 40%, 20% 40%, 20% 70%, 30% 70%, 30% 30%, 40% 30%, 40% 50%, 50% 50%, 50% 20%, 60% 20%, 60% 60%, 70% 60%, 70% 40%, 80% 40%, 80% 80%, 90% 80%, 90% 50%, 100% 50%, 100% 100%);
   z-index: 1;
@@ -503,20 +516,20 @@ const CSS = `
 .lw-city-lights {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  height: 40px;
+  height: 50%; /* Perfectly aligns with buildings */
   background-image: 
     radial-gradient(circle, #ffcc00 1px, transparent 2px),
     radial-gradient(circle, #ff9e3d 1px, transparent 2px);
   background-size: 15px 15px, 25px 25px;
-  background-position: 5px 5px, 12px 10px;
+  background-position: 4px 4px, 12px 10px;
   animation: lw-flicker 4s infinite alternate;
   z-index: 1;
   opacity: 0.8;
 }
 .lw-moon {
   position: absolute;
-  top: 10px; right: 15px;
-  width: 16px; height: 16px;
+  top: 15px; right: 20px;
+  width: 24px; height: 24px;
   background: #fffae0;
   border-radius: 50%;
   box-shadow: 0 0 12px #fffae0;
@@ -528,23 +541,23 @@ const CSS = `
   background: #3a261f;
   z-index: 3;
 }
-.lw-window::before { top: 50%; left: 0; width: 100%; height: 4px; transform: translateY(-50%); }
-.lw-window::after { left: 50%; top: 0; width: 4px; height: 100%; transform: translateX(-50%); }
+.lw-window::before { top: 50%; left: 0; width: 100%; height: 6px; transform: translateY(-50%); }
+.lw-window::after { left: 50%; top: 0; width: 6px; height: 100%; transform: translateX(-50%); }
 
 .lw-led-sign {
   position: absolute;
-  top: 34px; right: 18px;
-  width: min(215px, calc(100% - 166px));
+  top: 36px; right: 30px;
+  width: min(240px, 40%);
   background: #111;
-  border: 3px solid #3a2e2a;
-  padding: 8px 10px;
+  border: 4px solid #3a2e2a;
+  padding: 10px 14px;
   border-radius: 6px;
   box-shadow: 0 0 20px rgba(255, 126, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.9);
   color: #ff9e3d;
   text-shadow: 0 0 8px #ff9e3d, 0 0 15px #ff7e00, 0 0 25px #ff5500;
   font-weight: bold;
-  font-size: clamp(11px, 3.3vw, 14px);
-  letter-spacing: 0.8px;
+  font-size: clamp(12px, 2.5vw, 16px);
+  letter-spacing: 1px;
   animation: lw-flicker 4s infinite alternate;
   white-space: nowrap;
   overflow: hidden;
@@ -560,16 +573,16 @@ const CSS = `
 /* Retro CRT TV */
 .lw-tv-container {
   position: relative;
-  width: min(100%, 288px);
-  margin-top: clamp(190px, 38vh, 280px);
-  margin-bottom: 78px;
+  width: min(100%, 360px);
+  margin-top: clamp(180px, 32vh, 260px);
+  margin-bottom: 20px;
   z-index: 2;
 }
 .lw-tv {
   background: #e8e1d3;
   border-radius: 20px 20px 8px 8px;
-  padding: 15px;
-  padding-bottom: 35px;
+  padding: 18px;
+  padding-bottom: 40px;
   box-shadow: 
     0 15px 30px rgba(0,0,0,0.6), 
     inset 0 2px 4px rgba(255,255,255,0.6), 
@@ -581,18 +594,18 @@ const CSS = `
 .lw-tv::before { /* Vents */
   content: '';
   position: absolute;
-  top: 8px; left: 50%;
+  top: 10px; left: 50%;
   transform: translateX(-50%);
-  width: 50%; height: 4px;
+  width: 50%; height: 5px;
   background: repeating-linear-gradient(90deg, #888 0px, #888 2px, #666 2px, #666 4px);
   border-radius: 2px;
 }
 .lw-tv::after { /* Brand */
   content: 'LumiVision';
   position: absolute;
-  bottom: 12px; left: 50%;
+  bottom: 14px; left: 50%;
   transform: translateX(-50%);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: bold;
   color: #888;
   letter-spacing: 2px;
@@ -600,25 +613,26 @@ const CSS = `
 }
 .lw-tv-knob {
   position: absolute;
-  right: -10px; bottom: 20px;
-  width: 16px; height: 16px;
+  right: -12px; bottom: 24px;
+  width: 18px; height: 18px;
   background: radial-gradient(#888, #333);
   border-radius: 50%;
   border: 2px solid #222;
   box-shadow: 1px 1px 3px rgba(0,0,0,0.8);
 }
-.lw-tv-knob:nth-child(2) { bottom: 40px; }
+.lw-tv-knob:nth-child(2) { bottom: 48px; }
 
 .lw-tv-antenna {
   position: absolute;
-  top: -60px; left: 50%;
-  width: 4px; height: 60px;
+  top: -80px; left: 50%;
+  width: 4px; height: 80px;
   background: #8b7765;
   transform-origin: bottom center;
   z-index: 0;
+  border-radius: 2px;
 }
-.lw-tv-antenna.lw-left { transform: rotate(-35deg); }
-.lw-tv-antenna.lw-right { transform: rotate(35deg); }
+.lw-tv-antenna.lw-left { transform: translateX(-20px) rotate(-35deg); }
+.lw-tv-antenna.lw-right { transform: translateX(20px) rotate(35deg); }
 
 .lw-tv-screen {
   background: #000;
@@ -651,13 +665,13 @@ const CSS = `
 .lw-tv-content {
   position: absolute;
   inset: 0;
-  padding: 12px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   color: #ff9e3d;
   text-shadow: 0 0 5px #ff5500;
   font-family: 'Courier New', monospace;
-  font-size: 11px;
+  font-size: 12px;
   z-index: 2;
 }
 .lw-tv-header {
@@ -703,12 +717,12 @@ const CSS = `
 
 .lw-plant {
   position: absolute;
-  bottom: 0; left: 10px;
-  width: 40px; height: 50px;
+  bottom: 130px; left: 40px;
+  width: 50px; height: 70px;
   z-index: 2;
 }
 .lw-pot {
-  width: 100%; height: 30px;
+  width: 100%; height: 40px;
   background: linear-gradient(to right, #8b4513, #a0522d, #8b4513);
   border-radius: 5px 5px 15px 15px;
   position: absolute;
@@ -717,23 +731,23 @@ const CSS = `
 }
 .lw-leaf {
   position: absolute;
-  bottom: 25px;
-  width: 12px; height: 30px;
+  bottom: 35px;
+  width: 15px; height: 40px;
   background: #2e8b57;
   border-radius: 50% 50% 0 0;
   transform-origin: bottom center;
 }
 .lw-leaf:nth-child(1) { left: 10px; transform: rotate(-20deg); }
-.lw-leaf:nth-child(2) { left: 18px; transform: rotate(0deg); height: 35px; }
-.lw-leaf:nth-child(3) { left: 26px; transform: rotate(20deg); }
+.lw-leaf:nth-child(2) { left: 22px; transform: rotate(0deg); height: 45px; }
+.lw-leaf:nth-child(3) { left: 34px; transform: rotate(20deg); }
 
 /* Settings Panels (Paper Notes) */
 .lw-poster {
   background: #fff;
   color: #111;
-  width: min(100%, 318px);
-  padding: 9px 14px;
-  font-size: clamp(13px, 4vw, 17px);
+  width: min(100%, 420px);
+  padding: 12px 16px;
+  font-size: clamp(14px, 4vw, 18px);
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 1.2px;
@@ -747,14 +761,14 @@ const CSS = `
 .lw-poster.lw-alt { transform: rotate(2deg); background: #ff9e3d; }
 
 .lw-paper {
-  width: min(100%, 328px);
-  max-width: 328px;
+  width: min(100%, 420px);
+  max-width: 420px;
   background-color: #fefae0;
   background-image: linear-gradient(#e6dcc3 1px, transparent 1px);
   background-size: 100% 20px;
   color: #2b201d;
   border-radius: 2px;
-  padding: 16px;
+  padding: 20px;
   box-shadow: 3px 5px 15px rgba(0,0,0,0.6);
   position: relative;
   transform: rotate(-1deg);
@@ -767,8 +781,8 @@ const CSS = `
 .lw-paper::before {
   content: '';
   position: absolute;
-  top: -8px; left: 50%;
-  width: 50px; height: 16px;
+  top: -10px; left: 50%;
+  width: 60px; height: 18px;
   background: rgba(255, 255, 255, 0.3);
   border: 1px dashed rgba(0,0,0,0.1);
   transform: translateX(-50%) rotate(-2deg);
@@ -782,7 +796,7 @@ const CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   border-bottom: 2px dashed #8b7765;
   padding-bottom: 6px;
   flex-wrap: wrap;
@@ -801,7 +815,7 @@ const CSS = `
   background: #fff;
   color: #2b201d;
   font: inherit;
-  padding: 7px 8px;
+  padding: 8px 9px;
   box-shadow: inset 1px 1px 4px rgba(0,0,0,0.1);
   min-width: 0;
 }
@@ -844,7 +858,7 @@ const CSS = `
 .lw-banner {
   border: 1px solid #111;
   border-radius: 2px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   background: #ff9e3d;
   color: #111;
   font-weight: bold;
@@ -852,8 +866,8 @@ const CSS = `
   margin-bottom: 10px;
   font-size: 11.5px;
   overflow-wrap: anywhere;
-  width: min(100%, 328px);
-  max-width: 328px;
+  width: min(100%, 420px);
+  max-width: 420px;
   text-align: center;
 }
 .lw-banner.warn { background: #d8aa63; }
@@ -866,8 +880,8 @@ const CSS = `
   padding: 0;
   box-shadow: 2px 3px 0px rgba(0,0,0,0.3);
 }
-.lw-details summary { cursor: pointer; padding: 9px 11px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-.lw-details-body { padding: 0 11px 11px; display: grid; gap: 10px; }
+.lw-details summary { cursor: pointer; padding: 10px 12px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.lw-details-body { padding: 0 12px 12px; display: grid; gap: 10px; }
 
 .lw-divider {
   border: 0;
@@ -880,7 +894,7 @@ const CSS = `
 .lw-clock {
   display: grid;
   gap: 8px;
-  padding: 12px;
+  padding: 14px;
   border: 2px solid #111;
   border-radius: 4px;
   background: #111;
@@ -888,8 +902,8 @@ const CSS = `
   box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 5px 10px rgba(0,0,0,0.5);
   text-align: center;
   min-width: 0;
-  width: min(100%, 328px);
-  max-width: 328px;
+  width: min(100%, 420px);
+  max-width: 420px;
 }
 .lw-clock-top {
   display: flex;
@@ -900,7 +914,7 @@ const CSS = `
   gap: 8px;
 }
 .lw-clock-time {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 10px #ff5500;
@@ -917,7 +931,7 @@ const CSS = `
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
-  padding: 8px;
+  padding: 10px;
   min-height: 50px;
   display: grid;
   align-content: start;
@@ -938,7 +952,7 @@ const CSS = `
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #f5f5dc;
-  padding: 8px;
+  padding: 10px;
   display: grid;
   gap: 4px;
   box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
@@ -954,7 +968,7 @@ const CSS = `
 .lw-run {
   display: grid;
   gap: 4px;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid #8b7765;
   border-radius: 2px;
   background: #fff;
@@ -993,7 +1007,7 @@ const CSS = `
   background: linear-gradient(to bottom, #e6dcc3, #c4b89a);
   color: #2b201d;
   border-radius: 3px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   font: inherit;
   font-weight: bold;
   cursor: pointer;
@@ -1016,16 +1030,20 @@ const CSS = `
 /* Desk Decorations (Panel 1) */
 .lw-desk-decor {
   position: absolute;
-  bottom: 0; left: 0;
+  bottom: 130px; left: 0;
   width: 100%;
-  height: 120px;
+  height: 80px;
   z-index: 1;
   pointer-events: none;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 15%;
+  box-sizing: border-box;
 }
 .lw-mug {
-  position: absolute;
-  bottom: 18px; left: 26px;
-  width: 30px; height: 35px;
+  position: relative;
+  bottom: 0; left: 0;
+  width: 36px; height: 42px;
   background: #eee;
   border-radius: 5px 5px 15px 15px;
   box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
@@ -1033,8 +1051,8 @@ const CSS = `
 .lw-mug::after { /* Handle */
   content: '';
   position: absolute;
-  right: -10px; top: 8px;
-  width: 12px; height: 16px;
+  right: -12px; top: 10px;
+  width: 14px; height: 18px;
   border: 3px solid #eee;
   border-left: none;
   border-radius: 0 10px 10px 0;
@@ -1042,63 +1060,63 @@ const CSS = `
 .lw-mug::before { /* Coffee */
   content: '';
   position: absolute;
-  top: 4px; left: 4px; right: 4px;
-  height: 6px;
+  top: 5px; left: 5px; right: 5px;
+  height: 7px;
   background: #4a2e24;
   border-radius: 2px;
 }
 .lw-steam {
   position: absolute;
-  top: -15px; left: 10px;
-  width: 4px; height: 20px;
+  top: -20px; left: 12px;
+  width: 5px; height: 25px;
   background: rgba(255,255,255,0.15);
   filter: blur(3px);
   animation: lw-steam 3s infinite ease-in;
 }
-.lw-steam2 { left: 18px; animation-delay: 1s; }
+.lw-steam2 { left: 22px; animation-delay: 1s; }
 @keyframes lw-steam {
   0% { transform: translateY(0) scale(1); opacity: 0.5; }
   100% { transform: translateY(-20px) scale(1.5); opacity: 0; }
 }
 .lw-lamp {
-  position: absolute;
-  bottom: 18px; right: 26px;
+  position: relative;
+  bottom: 0; right: 0;
   width: 60px; height: 80px;
 }
-.lw-lamp-base { width: 30px; height: 6px; background: #333; position: absolute; bottom: 0; left: 15px; border-radius: 2px; }
-.lw-lamp-arm { width: 4px; height: 50px; background: #444; position: absolute; bottom: 6px; left: 28px; transform: rotate(15deg); transform-origin: bottom; }
-.lw-lamp-head { width: 30px; height: 20px; background: #555; border-radius: 15px 15px 2px 2px; position: absolute; top: -10px; left: 15px; transform: rotate(15deg); box-shadow: 1px 1px 3px rgba(0,0,0,0.5); }
+.lw-lamp-base { width: 40px; height: 8px; background: #333; position: absolute; bottom: 0; left: 10px; border-radius: 2px; }
+.lw-lamp-arm { width: 4px; height: 50px; background: #444; position: absolute; bottom: 8px; left: 28px; transform: rotate(15deg); transform-origin: bottom center; }
+.lw-lamp-head { width: 36px; height: 20px; background: #555; border-radius: 18px 18px 2px 2px; position: absolute; bottom: 52px; left: 12px; transform: rotate(15deg); box-shadow: 1px 1px 3px rgba(0,0,0,0.5); }
 .lw-lamp-glow {
   position: absolute;
-  top: 10px; left: -20px;
-  width: 100px; height: 100px;
-  background: radial-gradient(circle, rgba(255, 200, 100, 0.2), transparent 70%);
+  bottom: 30px; left: -30px;
+  width: 140px; height: 140px;
+  background: radial-gradient(circle, rgba(255, 200, 100, 0.15), transparent 70%);
   pointer-events: none;
 }
 
 /* Bed Decorations (Panel 2) */
 .lw-bed {
   position: absolute;
-  bottom: 0; right: -34px;
-  width: 210px; height: 86px;
+  bottom: 130px; right: 20px;
+  width: 260px; height: 110px;
   background: #6b5d4f;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
   z-index: 1;
-  opacity: 0.72;
+  opacity: 0.82;
 }
 .lw-pillow {
   position: absolute;
-  top: -15px; left: 20px;
-  width: 50px; height: 25px;
+  top: -20px; left: 30px;
+  width: 60px; height: 30px;
   background: #ddd;
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
 }
 .lw-blanket {
   position: absolute;
   bottom: 0; left: 0;
-  width: 100%; height: 60px;
+  width: 100%; height: 70px;
   background: #8b4513;
   border-radius: 20px 20px 0 0;
 }
@@ -1106,59 +1124,58 @@ const CSS = `
 /* Bookshelf Decorations (Panel 3) */
 .lw-shelf {
   position: absolute;
-  bottom: 18px; right: 22px;
-  width: 72px; height: 92px;
+  bottom: 130px; right: 40px;
+  width: 100px; height: 140px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 5px;
+  gap: 6px;
   z-index: 1;
 }
 .lw-shelf-board {
-  height: 5px;
+  height: 6px;
   background: #5a3a2e;
   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 .lw-shelf-book {
   width: 100%;
-  height: 30px;
+  height: 40px;
   display: flex;
-  gap: 3px;
+  gap: 4px;
   align-items: flex-end;
 }
 .lw-book {
-  width: 8px;
+  width: 10px;
   background: #cc7e00;
   border-radius: 2px 2px 0 0;
 }
-.lw-book:nth-child(2) { height: 25px; background: #6fb7a6; }
-.lw-book:nth-child(3) { height: 35px; background: #cf7e7e; }
-.lw-book:nth-child(4) { height: 20px; background: #d8aa63; }
-.lw-book:nth-child(5) { height: 30px; background: #fff; }
+.lw-book:nth-child(2) { height: 35px; background: #6fb7a6; }
+.lw-book:nth-child(3) { height: 45px; background: #cf7e7e; }
+.lw-book:nth-child(4) { height: 30px; background: #d8aa63; }
+.lw-book:nth-child(5) { height: 40px; background: #fff; }
 
 @media (max-width: 360px) {
-  .lw-panel { padding: 16px 28px 118px; gap: 12px; }
+  .lw-panel { padding: 20px 30px 160px; gap: 14px; }
   .lw-nav-left { left: 4px; }
   .lw-nav-right { right: 4px; }
-  .lw-window { top: 14px; left: 14px; width: 96px; height: 72px; border-width: 5px; }
+  .lw-window { top: 20px; left: 20px; width: 140px; height: 100px; border-width: 6px; }
   .lw-led-sign {
-    top: 102px;
-    left: 50%;
-    right: auto;
-    width: min(88%, 260px);
-    transform: translateX(-50%);
+    top: 24px; right: 20px;
+    width: min(160px, 35%);
     font-size: 12px;
+    padding: 8px 10px;
   }
-  .lw-tv-container { width: min(100%, 246px); margin-top: 172px; margin-bottom: 72px; }
-  .lw-tv { padding: 12px; padding-bottom: 30px; border-radius: 16px 16px 8px 8px; }
-  .lw-tv-content { padding: 9px; font-size: 10px; }
+  .lw-tv-container { width: min(100%, 280px); margin-top: 180px; margin-bottom: 20px; }
+  .lw-tv { padding: 14px; padding-bottom: 34px; border-radius: 16px 16px 8px 8px; }
+  .lw-tv-content { padding: 12px; font-size: 11px; }
   .lw-tv-row { grid-template-columns: 34px 1fr; gap: 2px 5px; padding: 3px 4px; }
   .lw-tv-status { grid-column: 2; justify-self: start; font-size: 8px; }
   .lw-two { grid-template-columns: 1fr; }
   .lw-clock-actions { grid-template-columns: 1fr; }
   .lw-meter-grid { grid-template-columns: 1fr; }
-  .lw-poster, .lw-paper, .lw-banner, .lw-clock { max-width: 100%; }
-  .lw-bed { width: 178px; height: 76px; right: -46px; }
+  .lw-poster, .lw-paper, .lw-banner, .lw-clock { max-width: 100%; width: 100%; }
+  .lw-bed { width: 200px; height: 90px; right: 0; }
+  .lw-desk-decor { padding: 0 5%; }
 }
 `;
 
