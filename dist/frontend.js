@@ -1020,12 +1020,13 @@ var CSS = `
 
 .lw-float-root {
   width: 260px;
-  min-height: 308px;
+  min-height: 352px;
   color: #2b201d;
   font-family: 'Courier New', Courier, monospace;
   font-size: 11px;
   line-height: 1.35;
   position: relative;
+  padding-top: 44px;
   user-select: none;
 }
 .lw-float-root * { box-sizing: border-box; }
@@ -1035,10 +1036,25 @@ var CSS = `
   padding: 14px 14px 32px;
   border-radius: 20px 20px 10px 10px;
   background: linear-gradient(145deg, #efe6d1, #c8baa0);
-  border: 2px solid rgba(58, 38, 31, 0.55);
-  box-shadow: 0 14px 24px rgba(0,0,0,0.45), inset 0 2px 4px rgba(255,255,255,0.75), inset 0 -5px 10px rgba(0,0,0,0.16);
+  border: 5px solid #8b7765;
+  outline: 2px solid #3a261f;
+  box-shadow: 0 14px 24px rgba(0,0,0,0.45), inset 0 0 0 2px rgba(255,255,255,0.28), inset 0 2px 4px rgba(255,255,255,0.75), inset 0 -5px 10px rgba(0,0,0,0.16);
   position: relative;
 }
+.lw-monitor-antenna {
+  position: absolute;
+  top: -48px;
+  left: 50%;
+  width: 4px;
+  height: 58px;
+  border-radius: 999px;
+  background: linear-gradient(to bottom, #b9ab92, #756653);
+  box-shadow: 0 0 2px rgba(0,0,0,0.65);
+  transform-origin: bottom center;
+  z-index: -1;
+}
+.lw-monitor-antenna.left { transform: translateX(-18px) rotate(-34deg); }
+.lw-monitor-antenna.right { transform: translateX(18px) rotate(34deg); }
 .lw-monitor::before {
   content: '';
   position: absolute;
@@ -1126,7 +1142,7 @@ var CSS = `
 .lw-monitor-knob.two { bottom: 48px; }
 .lw-widget-note {
   width: 232px;
-  margin: -2px auto 0;
+  margin: 6px auto 0;
   padding: 12px 14px 14px;
   background: #fff6c9;
   background-image: linear-gradient(#eadfae 1px, transparent 1px);
@@ -1430,7 +1446,7 @@ function setup(ctx) {
       return;
     widget = ctx.ui.createFloatWidget({
       width: 260,
-      height: 308,
+      height: 352,
       initialPosition: { x: 24, y: 160 },
       snapToEdge: true,
       tooltip: "LumiWorld",
@@ -2012,7 +2028,7 @@ function setup(ctx) {
     screen.appendChild(head);
     renderWidgetChannel(screen, "director", "DIRECTOR", "CH1");
     renderWidgetChannel(screen, "world_agent", "WORLD", "CH2");
-    monitor.append(screen, createElement("div", "lw-monitor-knob one"), createElement("div", "lw-monitor-knob two"));
+    monitor.append(createElement("div", "lw-monitor-antenna left"), createElement("div", "lw-monitor-antenna right"), screen, createElement("div", "lw-monitor-knob one"), createElement("div", "lw-monitor-knob two"));
     const note = createElement("div", "lw-widget-note");
     const noteHead = createElement("div", "lw-note-head");
     noteHead.append(createElement("span", undefined, activeChannel === "director" ? "Director Note" : "World Agent"), createElement("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
