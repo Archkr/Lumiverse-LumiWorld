@@ -344,24 +344,16 @@ const DEFAULT_SETTINGS: LumiWorldSettings = {
 const CSS = `
 .lw-root {
   min-height: 100%;
-  padding: 12px 8px 40px;
+  padding: 20px 12px 40px;
   color: #e0d6c8;
-  /* Realistic Running-Bond Brick Wall */
-  background-color: #4a322a;
-  background-image:
-    linear-gradient(335deg, #3a261f 23px, transparent 23px),
-    linear-gradient(155deg, #3a261f 23px, transparent 23px),
-    linear-gradient(335deg, #3a261f 23px, transparent 23px),
-    linear-gradient(155deg, #3a261f 23px, transparent 23px),
-    linear-gradient(90deg, #3a261f 4px, transparent 4px),
-    linear-gradient(90deg, #3a261f 4px, transparent 4px);
-  background-size: 58px 29px, 58px 29px, 58px 29px, 58px 29px, 29px 29px, 29px 29px;
-  background-position: 0px 0px, 0px 0px, 29px 14.5px, 29px 14.5px, 0px 0px, 29px 29px;
+  /* Moody Room Background */
+  background: radial-gradient(circle at 80% 10%, rgba(255, 200, 100, 0.15), transparent 40%), radial-gradient(circle at 20% 90%, rgba(30, 30, 50, 0.5), transparent 50%), linear-gradient(to bottom, #1a1a2e, #16213e);
   box-sizing: border-box;
   font-family: 'Courier New', Courier, monospace;
   font-size: 12px;
   line-height: 1.4;
   overflow-x: hidden;
+  position: relative;
   
   /* Theme overrides for Spindle components to force the lofi aesthetic */
   --lumiverse-fill: #fff9e6;
@@ -388,242 +380,208 @@ const CSS = `
 .lw-shell {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   max-width: 100%;
   min-width: 0;
   margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* Decorative Background Elements */
+.lw-window {
+  position: absolute;
+  top: 10px; left: 10px;
+  width: 130px; height: 90px;
+  background: linear-gradient(to bottom, #0f3460, #16213e);
+  border: 6px solid #3a261f;
+  border-radius: 2px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  z-index: 0;
+  overflow: hidden;
+}
+.lw-rain {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(170deg, transparent 0, transparent 3px, rgba(255,255,255,0.1) 3px, rgba(255,255,255,0.1) 4px);
+  animation: lw-rain 0.3s linear infinite;
+  z-index: 2;
+}
+@keyframes lw-rain {
+  from { background-position: 0 0; }
+  to { background-position: -20px 40px; }
+}
+.lw-city {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 40px;
+  background: #050a14;
+  clip-path: polygon(0% 100%, 0% 60%, 10% 60%, 10% 40%, 20% 40%, 20% 70%, 30% 70%, 30% 30%, 40% 30%, 40% 50%, 50% 50%, 50% 20%, 60% 20%, 60% 60%, 70% 60%, 70% 40%, 80% 40%, 80% 80%, 90% 80%, 90% 50%, 100% 50%, 100% 100%);
+  z-index: 1;
+}
+.lw-city-lights {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 40px;
+  background-image: 
+    radial-gradient(circle, #ffcc00 1px, transparent 2px),
+    radial-gradient(circle, #ff9e3d 1px, transparent 2px);
+  background-size: 15px 15px, 25px 25px;
+  background-position: 5px 5px, 12px 10px;
+  animation: lw-flicker 4s infinite alternate;
+  z-index: 1;
+  opacity: 0.8;
+}
+.lw-window::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 0; width: 100%; height: 4px;
+  background: #3a261f;
+  transform: translateY(-50%);
+  z-index: 3;
+}
+.lw-window::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 0; width: 4px; height: 100%;
+  background: #3a261f;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.lw-bulb {
+  position: absolute;
+  top: 20px; right: 20px;
+  width: 2px; height: 50px;
+  background: #333;
+  z-index: 0;
+}
+.lw-bulb::after {
+  content: '';
+  position: absolute;
+  bottom: -15px; left: -7px;
+  width: 16px; height: 16px;
+  background: radial-gradient(#fffae0, #ff9e3d);
+  border-radius: 50%;
+  box-shadow: 0 0 25px 10px rgba(255, 158, 61, 0.4);
+  animation: lw-flicker 5s infinite alternate;
+}
+
+@keyframes lw-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; filter: brightness(1.1); }
+  20%, 24%, 55% { opacity: 0.6; filter: brightness(0.8); }
 }
 
 /* Shelf and LED Sign */
 .lw-shelf-container {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  margin-bottom: 12px;
+  align-items: center;
+  margin-top: 100px;
+  margin-bottom: 20px;
   width: 100%;
 }
 .lw-led-sign {
-  margin-left: 15px;
-  margin-bottom: 2px;
   background: #111;
-  border: 2px solid #3a2e2a;
-  padding: 6px 12px;
-  border-radius: 4px;
-  box-shadow: 0 0 12px rgba(255, 126, 0, 0.35), inset 0 0 8px rgba(0,0,0,0.9);
+  border: 3px solid #3a2e2a;
+  padding: 8px 18px;
+  border-radius: 6px;
+  box-shadow: 0 0 20px rgba(255, 126, 0, 0.5), inset 0 0 10px rgba(0,0,0,0.9);
   color: #ff9e3d;
-  text-shadow: 0 0 5px #ff9e3d, 0 0 10px #ff7e00, 0 0 20px #ff5500;
+  text-shadow: 0 0 8px #ff9e3d, 0 0 15px #ff7e00, 0 0 25px #ff5500;
   font-weight: bold;
-  font-size: 12px;
-  letter-spacing: 1px;
+  font-size: 18px;
+  letter-spacing: 2px;
   animation: lw-flicker 4s infinite alternate;
   white-space: nowrap;
-}
-@keyframes lw-flicker {
-  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; text-shadow: 0 0 5px #ff9e3d, 0 0 10px #ff7e00, 0 0 20px #ff5500; }
-  20%, 24%, 55% { opacity: 0.8; text-shadow: none; }
+  margin-bottom: 4px;
 }
 .lw-shelf {
-  width: 100%;
-  height: 8px;
+  width: 90%;
+  height: 10px;
   background: linear-gradient(to bottom, #5a3a2e, #3a261f);
   background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
   border-radius: 2px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+  box-shadow: 0 6px 8px rgba(0,0,0,0.6);
   position: relative;
 }
 .lw-shelf::before, .lw-shelf::after {
   content: '';
   position: absolute;
-  bottom: -6px;
-  width: 4px;
-  height: 6px;
+  bottom: -8px;
+  width: 6px;
+  height: 8px;
   background: #3a261f;
 }
 .lw-shelf::before { left: 15%; }
 .lw-shelf::after { right: 15%; }
 
-/* Window */
-.lw-window-container {
+/* TV and Desk Scene */
+.lw-scene {
+  position: relative;
   width: 100%;
-  max-width: 220px;
   margin: 0 auto;
-}
-.lw-window-frame {
-  padding: 6px;
-  background: #4a332d;
-  background-image: repeating-linear-gradient(90deg, #3a261f 0px, #4a332d 2px, #3a261f 4px);
-  border-radius: 4px;
-  box-shadow: 0 5px 10px rgba(0,0,0,0.5);
-}
-.lw-window {
-  width: 100%;
-  height: 70px;
-  background: linear-gradient(to bottom, #1a2a3a, #3d5a80);
-  position: relative;
-  overflow: hidden;
-  border: 2px solid #3a261f;
-}
-.lw-window::before, .lw-window::after {
-  content: '';
-  position: absolute;
-  background: #4a332d;
-  z-index: 2;
-}
-.lw-window::before { top: 0; left: 50%; width: 4px; height: 100%; transform: translateX(-50%); }
-.lw-window::after { left: 0; top: 50%; width: 100%; height: 4px; transform: translateY(-50%); }
-.lw-moon {
-  position: absolute;
-  top: 10px; right: 15px;
-  width: 12px; height: 12px;
-  background: #fffae0;
-  border-radius: 50%;
-  box-shadow: 0 0 10px #fffae0;
-}
-.lw-stars {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-image: 
-    radial-gradient(1px 1px at 20px 30px, #fff, transparent),
-    radial-gradient(1px 1px at 40px 70px, #fff, transparent),
-    radial-gradient(1px 1px at 50px 160px, #fff, transparent),
-    radial-gradient(1px 1px at 90px 40px, #fff, transparent),
-    radial-gradient(1px 1px at 130px 80px, #fff, transparent);
-  background-size: 200px 200px;
-  background-repeat: repeat;
-  animation: lw-twinkle 4s infinite alternate;
-  opacity: 0.8;
-}
-@keyframes lw-twinkle { 0% {opacity: 0.4;} 100% {opacity: 1;} }
-.lw-window-sill {
-  height: 10px;
-  background: linear-gradient(to bottom, #5a3a2e, #3a261f);
-  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
-  margin: 6px -6px -6px -6px;
-  border-radius: 2px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.4);
-}
-
-/* Toolbar */
-.lw-toolbar {
+  padding-top: 20px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 9px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 2px dashed #6b5d4f;
-  border-radius: 4px;
-  margin-top: 8px;
+  justify-content: center;
 }
-.lw-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; color: #e0d6c8; }
-.lw-mark {
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: #ff9e3d;
-  filter: drop-shadow(0 0 4px rgba(255, 126, 0, 0.6));
-}
-.lw-heading { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
-.lw-muted { color: #a8a095; font-size: 11px; font-style: italic; }
-.lw-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 
-/* Buttons */
-.lw-btn {
-  appearance: none;
-  border: 1px solid #111;
-  background: linear-gradient(to bottom, #e6dcc3, #c4b89a);
-  color: #2b201d;
-  border-radius: 3px;
-  padding: 6px 8px;
-  font: inherit;
-  font-weight: bold;
-  cursor: pointer;
-  min-height: 30px;
-  box-shadow: 0 3px 0 #5a4a3f, 0 4px 6px rgba(0,0,0,0.3);
-  transition: transform 0.1s, box-shadow 0.1s;
-  text-transform: uppercase;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.lw-btn:hover { background: linear-gradient(to bottom, #f0e6cd, #d4c8aa); }
-.lw-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #5a4a3f, 0 2px 4px rgba(0,0,0,0.3); }
-.lw-btn:disabled { cursor: default; opacity: 0.55; box-shadow: 0 4px 0 #5a4a3f; }
-.lw-btn-primary { background: linear-gradient(to bottom, #ff9e3d, #cc7e00); color: #111; border-color: #5a3000; box-shadow: 0 3px 0 #5a3000, 0 4px 6px rgba(0,0,0,0.3); }
-.lw-btn-primary:active { box-shadow: 0 1px 0 #5a3000; }
-.lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
-.lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
-
-/* TV Stand and Table */
-.lw-tv-stand {
-  width: 100%;
-  margin: 20px auto 0;
-  position: relative;
-  padding-bottom: 40px; /* space for legs */
-}
+/* Retro CRT TV */
 .lw-tv {
-  background: #d4c5a9;
-  border: 8px solid #8b7765;
-  border-radius: 16px;
-  padding: 10px;
+  background: #e8e1d3;
+  border-radius: 20px 20px 8px 8px;
+  padding: 15px;
+  padding-bottom: 35px;
   box-shadow: 
-    0 10px 26px rgba(0,0,0,0.55), 
-    inset 0 0 20px rgba(0,0,0,0.1),
-    inset 0 0 0 2px #6b4f3c;
+    0 15px 30px rgba(0,0,0,0.6), 
+    inset 0 2px 4px rgba(255,255,255,0.6), 
+    inset 0 -4px 8px rgba(0,0,0,0.1);
   position: relative;
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  box-sizing: border-box;
+  width: 280px;
+  max-width: 90%;
   z-index: 2;
 }
-.lw-tv::before, .lw-tv::after {
+.lw-tv::before { /* Vents */
   content: '';
   position: absolute;
-  top: -36px; 
-  width: 3px; height: 44px;
-  background: #8b7765;
+  top: 8px; left: 50%;
+  transform: translateX(-50%);
+  width: 50%; height: 4px;
+  background: repeating-linear-gradient(90deg, #888 0px, #888 2px, #666 2px, #666 4px);
   border-radius: 2px;
-  box-shadow: 0 0 2px rgba(0,0,0,0.5);
 }
-.lw-tv::before { left: 30%; transform: rotate(-35deg); transform-origin: bottom center; }
-.lw-tv::after { right: 30%; transform: rotate(35deg); transform-origin: bottom center; }
+.lw-tv::after { /* Brand */
+  content: 'LumiVision';
+  position: absolute;
+  bottom: 12px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: bold;
+  color: #888;
+  letter-spacing: 2px;
+  font-family: sans-serif;
+}
+.lw-tv-knob {
+  position: absolute;
+  right: -10px; bottom: 20px;
+  width: 16px; height: 16px;
+  background: radial-gradient(#888, #333);
+  border-radius: 50%;
+  border: 2px solid #222;
+  box-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+}
+.lw-tv-knob:nth-child(2) { bottom: 40px; }
 
 .lw-tv-screen {
-  background: #111;
+  background: #000;
   border: 6px solid #2a2a2a;
-  border-radius: 12px;
+  border-radius: 20px / 15px; /* CRT Curve */
   padding: 0;
   position: relative;
   width: 100%;
   aspect-ratio: 4 / 3;
   overflow: hidden;
-  box-shadow: inset 0 0 40px rgba(0,0,0,0.9);
-}
-.lw-tv-screen::after {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%);
-  pointer-events: none;
-  z-index: 3;
-}
-
-/* CRT Screen Elements */
-.lw-tv-static {
-  position: absolute;
-  top: -10%; left: -10%; width: 120%; height: 120%;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
-  background-size: 100px 100px;
-  animation: lw-tv-static 0.2s steps(4) infinite;
-  opacity: 0.4;
-  z-index: 1;
-}
-@keyframes lw-tv-static {
-  0% { transform: translate(0,0); }
-  25% { transform: translate(-2%, 1%); }
-  50% { transform: translate(1%, -1%); }
-  75% { transform: translate(-1%, 2%); }
-  100% { transform: translate(2%, 0%); }
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.9), inset 0 0 10px rgba(255,255,255,0.1);
 }
 .lw-tv-scanlines {
   position: absolute;
@@ -631,88 +589,167 @@ const CSS = `
   background: linear-gradient(rgba(255,255,255,0) 50%, rgba(0,0,0,0.25) 50%);
   background-size: 100% 4px;
   pointer-events: none;
-  z-index: 2;
+  z-index: 3;
 }
+.lw-tv-glare {
+  position: absolute;
+  top: -20%; left: -20%;
+  width: 50%; height: 150%;
+  background: linear-gradient(115deg, rgba(255,255,255,0.05) 0%, transparent 50%);
+  transform: rotate(20deg);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* TV Content (Cable Guide) */
 .lw-tv-content {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 2;
+  inset: 0;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  padding: 12px;
+  color: #ff9e3d;
+  text-shadow: 0 0 5px #ff5500;
   font-family: 'Courier New', monospace;
-  color: #fff;
-  text-shadow: 0 0 5px rgba(255,255,255,0.4);
+  font-size: 11px;
+  z-index: 2;
 }
 .lw-tv-header {
-  font-size: 10px;
-  letter-spacing: 1px;
-  border-bottom: 1px solid rgba(255,255,255,0.3);
-  padding-bottom: 4px;
-  margin-bottom: 8px;
   display: flex;
   justify-content: space-between;
+  border-bottom: 1px solid #ff9e3d;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+  font-weight: bold;
 }
-.lw-tv-channels {
+.lw-tv-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.lw-tv-channel {
-  display: flex;
+.lw-tv-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
   align-items: center;
-  gap: 8px;
-  background: rgba(255,255,255,0.1);
-  border: 1px solid rgba(255,255,255,0.2);
-  padding: 8px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
   cursor: pointer;
-  text-align: left;
-  color: #fff;
-  font-family: 'Courier New', monospace;
   transition: background 0.1s;
 }
-.lw-tv-channel:hover { background: rgba(255,255,255,0.2); }
-.lw-tv-channel.is-active {
-  background: #ff9e3d;
-  color: #111;
-  border-color: #ff9e3d;
-  box-shadow: 0 0 8px rgba(255, 126, 0, 0.5);
-  text-shadow: none;
+.lw-tv-row:hover {
+  background: rgba(255, 158, 61, 0.1);
 }
-.ch-num { font-size: 16px; font-weight: bold; }
-.ch-name { font-size: 12px; flex: 1; font-weight: bold; }
-.ch-status { font-size: 10px; opacity: 0.8; }
+.lw-tv-row.is-active {
+  background: #ff9e3d;
+  color: #000;
+  text-shadow: none;
+  border-color: #fff;
+  box-shadow: 0 0 8px rgba(255, 126, 0, 0.5);
+}
+.lw-tv-ch { font-weight: bold; }
+.lw-tv-status { font-size: 9px; opacity: 0.9; text-transform: uppercase; }
+.lw-tv-footer {
+  margin-top: auto;
+  font-size: 9px;
+  text-align: center;
+  opacity: 0.7;
+  border-top: 1px dashed #ff9e3d;
+  padding-top: 4px;
+}
 
-/* TV Table */
-.lw-tv-table {
+/* Wooden Desk */
+.lw-desk {
   width: 110%;
   margin-left: -5%;
-  height: 12px;
+  height: 16px;
   background: linear-gradient(to bottom, #5a3a2e, #3a261f);
-  background-image: repeating-linear-gradient(90deg, #4a2e24 0px, #5a3a2e 2px, #4a2e24 4px);
+  background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.1) 0px, rgba(0,0,0,0.1) 1px, transparent 1px, transparent 4px);
   border-radius: 2px;
-  box-shadow: 0 8px 12px rgba(0,0,0,0.6);
+  box-shadow: 0 10px 15px rgba(0,0,0,0.6);
   position: relative;
   z-index: 1;
+  margin-top: -8px;
 }
-.lw-tv-table::before, .lw-tv-table::after {
+
+/* Desk Items */
+.lw-desk-item { position: absolute; bottom: 16px; z-index: 3; }
+
+.lw-mug {
+  left: 15px;
+  width: 24px; height: 24px;
+  background: #ddd;
+  border-radius: 4px 4px 12px 12px;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+}
+.lw-mug::before { /* Handle */
   content: '';
   position: absolute;
-  top: 12px;
-  width: 12px;
-  height: 40px;
-  background: linear-gradient(to right, #3a261f, #5a3a2e, #3a261f);
-  z-index: 0;
+  right: -8px; top: 6px;
+  width: 8px; height: 10px;
+  border: 2px solid #ddd;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
 }
-.lw-tv-table::before { left: 15%; }
-.lw-tv-table::after { right: 15%; }
+.lw-mug::after { /* Coffee */
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px; right: 2px;
+  height: 4px;
+  background: #4a2e24;
+  border-radius: 2px;
+}
+.lw-steam {
+  position: absolute;
+  top: -10px; left: 8px;
+  width: 4px; height: 15px;
+  background: rgba(255,255,255,0.15);
+  filter: blur(3px);
+  animation: lw-steam 3s infinite ease-in;
+}
+.lw-steam2 { left: 14px; animation-delay: 1s; }
+@keyframes lw-steam {
+  0% { transform: translateY(0) scale(1); opacity: 0.5; }
+  100% { transform: translateY(-15px) scale(1.5); opacity: 0; }
+}
 
-/* Settings Area (Paper Notes on Wall) */
+.lw-books {
+  right: 20px;
+  width: 30px; height: 20px;
+}
+.lw-book {
+  position: absolute;
+  width: 30px; height: 6px;
+  background: #cc7e00;
+  border: 1px solid #8b4513;
+  box-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+}
+.lw-book:nth-child(1) { bottom: 0; }
+.lw-book:nth-child(2) { bottom: 7px; background: #6fb7a6; width: 28px; left: 2px; }
+.lw-book:nth-child(3) { bottom: 14px; background: #cf7e7e; width: 32px; left: -1px; }
+
+.lw-lamp {
+  right: 60px;
+  width: 10px; height: 40px;
+}
+.lw-lamp-base { width: 20px; height: 4px; background: #333; position: absolute; bottom: 0; left: -5px; border-radius: 2px; }
+.lw-lamp-arm { width: 4px; height: 30px; background: #444; position: absolute; bottom: 4px; left: 3px; transform: rotate(20deg); transform-origin: bottom; }
+.lw-lamp-head { width: 20px; height: 12px; background: #555; border-radius: 10px 10px 2px 2px; position: absolute; top: -8px; left: 5px; transform: rotate(20deg); box-shadow: 1px 1px 3px rgba(0,0,0,0.5); }
+.lw-lamp-glow {
+  position: absolute;
+  top: 0; left: -30px;
+  width: 80px; height: 80px;
+  background: radial-gradient(circle, rgba(255, 200, 100, 0.2), transparent 70%);
+  pointer-events: none;
+}
+
+/* Settings Area (Paper Notes) */
 .lw-settings-area {
-  margin-top: 16px;
+  margin-top: 30px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
 }
 
 /* Panels (Paper Notes) */
@@ -723,29 +760,30 @@ const CSS = `
   background-size: 100% 20px;
   color: #2b201d;
   border-radius: 2px;
-  padding: 12px;
-  margin-bottom: 12px;
-  box-shadow: 2px 4px 10px rgba(0,0,0,0.55);
+  padding: 14px;
+  margin-bottom: 14px;
+  box-shadow: 3px 5px 15px rgba(0,0,0,0.6);
   position: relative;
-  transform: rotate(-0.25deg);
+  transform: rotate(-1deg);
   transition: transform 0.3s;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
 }
-.lw-panel:nth-child(even) { transform: rotate(0.25deg); background-color: #f5f5dc; }
-.lw-panel:nth-child(3n) { transform: rotate(-0.1deg); }
-.lw-panel:hover { transform: rotate(0deg); z-index: 2; }
+.lw-panel:nth-child(even) { transform: rotate(1deg); background-color: #e0d8c8; }
+.lw-panel:nth-child(3n) { transform: rotate(-0.5deg); background-color: #f5f5dc; }
+.lw-panel:hover { transform: rotate(0deg) scale(1.01); z-index: 2; }
 .lw-panel::before {
   content: '';
   position: absolute;
-  top: -6px; left: 50%;
-  width: 60px; height: 14px;
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(0,0,0,0.1);
-  transform: translateX(-50%) rotate(2deg);
+  top: -8px; left: 50%;
+  width: 50px; height: 16px;
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px dashed rgba(0,0,0,0.1);
+  transform: translateX(-50%) rotate(-2deg);
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   z-index: 10;
+  backdrop-filter: blur(2px);
 }
 
 .lw-panel-head {
@@ -753,17 +791,17 @@ const CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   border-bottom: 2px dashed #8b7765;
   padding-bottom: 6px;
   flex-wrap: wrap;
 }
-.lw-panel-head h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
+.lw-panel-head h3 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; text-shadow: 1px 1px 0px rgba(0,0,0,0.1); }
 
-.lw-form { display: grid; gap: 8px; }
+.lw-form { display: grid; gap: 10px; }
 .lw-field { display: grid; gap: 4px; min-width: 0; }
-.lw-field label, .lw-toggle-label { font-size: 10px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
-.lw-hint { color: #6b5d4f; font-size: 10px; font-style: italic; overflow-wrap: anywhere; }
+.lw-field label, .lw-toggle-label { font-size: 11px; font-weight: 700; color: #2b201d; text-transform: uppercase; letter-spacing: 0.5px; }
+.lw-hint { color: #6b5d4f; font-size: 10.5px; font-style: italic; overflow-wrap: anywhere; }
 
 .lw-input, .lw-select, .lw-textarea {
   width: 100%;
@@ -772,7 +810,7 @@ const CSS = `
   background: #fff;
   color: #2b201d;
   font: inherit;
-  padding: 6px 8px;
+  padding: 7px 8px;
   box-shadow: inset 1px 1px 4px rgba(0,0,0,0.1);
   min-width: 0;
 }
@@ -785,14 +823,13 @@ const CSS = `
   font-size: 11px;
 }
 
-.lw-two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: end; }
-.lw-three { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-items: end; }
+.lw-two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-items: end; }
 
 .lw-setting-row {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 4px 0;
+  padding: 6px 0;
   border-bottom: 1px dashed rgba(0,0,0,0.1);
 }
 .lw-setting-row.is-disabled { opacity: 0.55; }
@@ -816,13 +853,13 @@ const CSS = `
 .lw-banner {
   border: 1px solid #111;
   border-radius: 2px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   background: #ff9e3d;
   color: #111;
   font-weight: bold;
-  box-shadow: 2px 3px 0px rgba(0,0,0,0.3);
-  margin-bottom: 8px;
-  font-size: 11px;
+  box-shadow: 3px 4px 0px rgba(0,0,0,0.4);
+  margin-bottom: 10px;
+  font-size: 11.5px;
   overflow-wrap: anywhere;
 }
 .lw-banner.warn { background: #d8aa63; }
@@ -833,11 +870,11 @@ const CSS = `
   border-radius: 2px;
   background: #e6dcc3;
   padding: 0;
-  margin-bottom: 12px;
-  box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+  margin-bottom: 14px;
+  box-shadow: 2px 3px 0px rgba(0,0,0,0.3);
 }
-.lw-details summary { cursor: pointer; padding: 8px 10px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-.lw-details-body { padding: 0 10px 10px; display: grid; gap: 8px; }
+.lw-details summary { cursor: pointer; padding: 9px 11px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.lw-details-body { padding: 0 11px 11px; display: grid; gap: 10px; }
 
 .lw-divider {
   border: 0;
@@ -850,14 +887,14 @@ const CSS = `
 .lw-clock {
   display: grid;
   gap: 8px;
-  padding: 10px;
+  padding: 12px;
   border: 2px solid #111;
   border-radius: 4px;
   background: #111;
   color: #ff5500;
   box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 5px 10px rgba(0,0,0,0.5);
   text-align: center;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   min-width: 0;
 }
 .lw-clock-top {
@@ -869,7 +906,7 @@ const CSS = `
   gap: 8px;
 }
 .lw-clock-time {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 1px;
   text-shadow: 0 0 10px #ff5500;
@@ -955,14 +992,40 @@ const CSS = `
   font-size: 11px;
 }
 
+/* Buttons */
+.lw-btn {
+  appearance: none;
+  border: 1px solid #111;
+  background: linear-gradient(to bottom, #e6dcc3, #c4b89a);
+  color: #2b201d;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  min-height: 30px;
+  box-shadow: 0 3px 0 #5a4a3f, 0 4px 6px rgba(0,0,0,0.3);
+  transition: transform 0.1s, box-shadow 0.1s;
+  text-transform: uppercase;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.lw-btn:hover { background: linear-gradient(to bottom, #f0e6cd, #d4c8aa); }
+.lw-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #5a4a3f, 0 2px 4px rgba(0,0,0,0.3); }
+.lw-btn:disabled { cursor: default; opacity: 0.55; box-shadow: 0 4px 0 #5a4a3f; }
+.lw-btn-primary { background: linear-gradient(to bottom, #ff9e3d, #cc7e00); color: #111; border-color: #5a3000; box-shadow: 0 3px 0 #5a3000, 0 4px 6px rgba(0,0,0,0.3); }
+.lw-btn-primary:active { box-shadow: 0 1px 0 #5a3000; }
+.lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
+.lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
+
 @media (max-width: 340px) {
-  .lw-root { padding: 8px 6px 30px; font-size: 11.5px; }
-  .lw-shell { gap: 10px; }
-  .lw-toolbar { flex-direction: column; align-items: stretch; }
-  .lw-actions { width: 100%; justify-content: stretch; }
-  .lw-actions .lw-btn { flex: 1; }
-  .lw-tv { border-width: 7px; border-radius: 14px; padding: 8px; }
-  .lw-clock-time { font-size: 16px; letter-spacing: 0; }
+  .lw-root { padding: 10px 6px 30px; font-size: 11.5px; }
+  .lw-window { width: 100px; height: 70px; top: 5px; left: 5px; }
+  .lw-bulb { right: 10px; }
+  .lw-shelf-container { margin-top: 80px; }
+  .lw-tv { width: 100%; }
+  .lw-clock-time { font-size: 18px; letter-spacing: 0; }
 }
 `;
 
@@ -1746,84 +1809,64 @@ export function setup(ctx: SpindleFrontendContext) {
     if (draft.worldAgent.enabled && !draft.worldAgent.connectionId) shell.appendChild(createElement("div", "lw-banner warn", "World Agent is enabled but no model connection is selected."));
   }
 
-  function renderToolbar(shell: HTMLElement): void {
-    // 1. Shelf and LED Sign
-    const shelfContainer = createElement("div", "lw-shelf-container");
-    shelfContainer.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
-    shelfContainer.appendChild(createElement("div", "lw-shelf"));
-    shell.appendChild(shelfContainer);
-
-    // 2. Window on the brick wall
-    const windowContainer = createElement("div", "lw-window-container");
-    const windowFrame = createElement("div", "lw-window-frame");
-    const windowEl = createElement("div", "lw-window");
-    windowEl.appendChild(createElement("div", "lw-stars"));
-    windowEl.appendChild(createElement("div", "lw-moon"));
-    windowFrame.appendChild(windowEl);
-    windowFrame.appendChild(createElement("div", "lw-window-sill"));
-    windowContainer.appendChild(windowFrame);
-    shell.appendChild(windowContainer);
-
-    // 3. Original Toolbar setup, stylized to fit the room
-    const toolbar = createElement("div", "lw-toolbar");
-    const title = createElement("div", "lw-title");
-    const mark = createElement("span", "lw-mark");
-    mark.innerHTML = LUMIWORLD_ICON;
-    const text = createElement("div");
-    text.append(createElement("h2", "lw-heading", "Control Deck"), createElement("div", "lw-muted", "Lofi world simulation deck"));
-    title.append(mark, text);
-
-    const actions = createElement("div", "lw-actions");
-    const refresh = createElement("button", "lw-btn", "Refresh");
-    refresh.type = "button";
-    refresh.addEventListener("click", () => send(ctx, { type: "refresh_state" }));
-    const test = createElement("button", "lw-btn", "Test");
-    test.type = "button";
-    test.addEventListener("click", () => {
-      notice = { tone: "info", text: "Running controller test..." };
-      render();
-      send(ctx, { type: "test_controller", settings: draft });
-    });
-    actions.append(refresh, test);
-    toolbar.append(title, actions);
-    shell.appendChild(toolbar);
-  }
-
   function renderTvGuide(shell: HTMLElement): void {
-    const tvStand = createElement("div", "lw-tv-stand");
+    const scene = createElement("div", "lw-scene");
+    
+    // TV
     const tv = createElement("div", "lw-tv");
     const tvScreen = createElement("div", "lw-tv-screen");
     
-    // CRT Effects
-    tvScreen.appendChild(createElement("div", "lw-tv-static"));
+    // Screen Effects
     tvScreen.appendChild(createElement("div", "lw-tv-scanlines"));
-    
+    tvScreen.appendChild(createElement("div", "lw-tv-glare"));
+
+    // Content
     const content = createElement("div", "lw-tv-content");
     
     const header = createElement("div", "lw-tv-header");
-    header.append(createElement("span", undefined, "LUMI-VISION GUIDE"), createElement("span", undefined, formatClock(state?.worldState)));
+    header.append(createElement("span", undefined, "◆ LUMI-VISION"), createElement("span", undefined, formatClock(state?.worldState)));
     content.appendChild(header);
 
-    const channels = createElement("div", "lw-tv-channels");
+    const list = createElement("div", "lw-tv-list");
 
-    const ch1 = createElement("button", `lw-tv-channel${activeChannel === "director" ? " is-active" : ""}`);
-    ch1.type = "button";
-    ch1.innerHTML = `<span class="ch-num">01</span><span class="ch-name">DIRECTOR NOTE</span><span class="ch-status">${draft.enabled ? "ENABLED" : "DISABLED"}</span>`;
+    const ch1 = createElement("div", `lw-tv-row${activeChannel === "director" ? " is-active" : ""}`);
+    ch1.innerHTML = `<span class="lw-tv-ch">CH 01</span><span class="lw-tv-name">DIRECTOR NOTE</span><span class="lw-tv-status">${draft.enabled ? "● LIVE" : "OFF"}</span>`;
     ch1.addEventListener("click", () => { activeChannel = "director"; render(); });
 
-    const ch2 = createElement("button", `lw-tv-channel${activeChannel === "world_agent" ? " is-active" : ""}`);
-    ch2.type = "button";
-    ch2.innerHTML = `<span class="ch-num">02</span><span class="ch-name">WORLD AGENT</span><span class="ch-status">${state?.worldState?.running ? "RUNNING" : "PAUSED"}</span>`;
+    const ch2 = createElement("div", `lw-tv-row${activeChannel === "world_agent" ? " is-active" : ""}`);
+    ch2.innerHTML = `<span class="lw-tv-ch">CH 02</span><span class="lw-tv-name">WORLD AGENT</span><span class="lw-tv-status">${state?.worldState?.running ? "● RUN" : "PAUSE"}</span>`;
     ch2.addEventListener("click", () => { activeChannel = "world_agent"; render(); });
 
-    channels.append(ch1, ch2);
-    content.appendChild(channels);
+    list.append(ch1, ch2);
+    content.appendChild(list);
+
+    const footer = createElement("div", "lw-tv-footer", "SELECT CHANNEL TO TUNE IN");
+    content.appendChild(footer);
     
     tvScreen.appendChild(content);
+    
+    // TV Knobs
+    tv.appendChild(createElement("div", "lw-tv-knob"));
+    tv.appendChild(createElement("div", "lw-tv-knob"));
+    
     tv.appendChild(tvScreen);
-    tvStand.appendChild(tv);
-    tvStand.appendChild(createElement("div", "lw-tv-table"));
-    shell.appendChild(tvStand);
+    
+    // Desk
+    const desk = createElement("div", "lw-desk");
+    
+    // Desk Items
+    const mug = createElement("div", "lw-desk-item lw-mug");
+    mug.innerHTML = `<div class="lw-steam"></div><div class="lw-steam lw-steam2"></div>`;
+    
+    const books = createElement("div", "lw-desk-item lw-books");
+    books.innerHTML = `<div class="lw-book"></div><div class="lw-book"></div><div class="lw-book"></div>`;
+    
+    const lamp = createElement("div", "lw-desk-item lw-lamp");
+    lamp.innerHTML = `<div class="lw-lamp-glow"></div><div class="lw-lamp-base"></div><div class="lw-lamp-arm"></div><div class="lw-lamp-head"></div>`;
+
+    desk.append(mug, books, lamp);
+    scene.append(tv, desk);
+    shell.appendChild(scene);
   }
 
   function render(): void {
@@ -1835,7 +1878,18 @@ export function setup(ctx: SpindleFrontendContext) {
     root.appendChild(shell);
     tab.root.appendChild(root);
 
-    renderToolbar(shell);
+    // Decorative Window and Lightbulb
+    const window = createElement("div", "lw-window");
+    window.innerHTML = `<div class="lw-city"></div><div class="lw-city-lights"></div><div class="lw-rain"></div>`;
+    shell.appendChild(window);
+    shell.appendChild(createElement("div", "lw-bulb"));
+
+    // Shelf and LED Sign
+    const shelfContainer = createElement("div", "lw-shelf-container");
+    shelfContainer.appendChild(createElement("div", "lw-led-sign", `${EXTENSION_NAME} ${EXTENSION_VERSION}`));
+    shelfContainer.appendChild(createElement("div", "lw-shelf"));
+    shell.appendChild(shelfContainer);
+
     renderNotice(shell);
 
     if (!state) {
@@ -1846,7 +1900,7 @@ export function setup(ctx: SpindleFrontendContext) {
     renderBanners(shell);
     renderTvGuide(shell);
 
-    // Settings pinned to the wall below the TV
+    // Settings pinned to the wall below the desk
     const settingsArea = createElement("div", "lw-settings-area");
     if (activeChannel === "director") renderDirectorChannel(settingsArea);
     else renderWorldAgentChannel(settingsArea);
