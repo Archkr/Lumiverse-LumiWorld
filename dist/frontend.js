@@ -2635,6 +2635,52 @@ function setup(ctx) {
   function renderConnectionControl(slot, value, onChange, ariaLabel) {
     slot.classList.add("lw-control-slot", "lw-connection-slot");
     const connections = state?.connections ?? [];
+    const components = ctx.components;
+    const options = connections.map((connection) => ({
+      value: connection.id,
+      label: connection.name || connection.id,
+      sublabel: [
+        connection.provider || null,
+        connection.model || null,
+        connection.hasApiKey ? null : "no API key",
+        connection.isDefault ? "default" : null
+      ].filter(Boolean).join(" / "),
+      group: connection.provider || "Connections",
+      leading: {
+        type: "initial",
+        text: (connection.provider || connection.name || "?").slice(0, 1).toUpperCase()
+      }
+    }));
+    if (value && !options.some((option) => option.value === value)) {
+      options.unshift({
+        value,
+        label: "Saved connection not found",
+        sublabel: value,
+        group: "Unavailable",
+        leading: { type: "initial", text: "!" }
+      });
+    }
+    if (components?.mountSelect) {
+      const handle = components.mountSelect(slot, {
+        value: value ?? "",
+        options,
+        placeholder: "Select connection...",
+        searchPlaceholder: "Search LLM connections...",
+        emptyMessage: state?.connectionError || "No LLM connection profiles found.",
+        noResultsMessage: "No matching LLM connection profiles.",
+        clearable: true,
+        clearLabel: "No connection",
+        ariaLabel,
+        portal: true,
+        maxHeight: 320,
+        onChange: (next) => {
+          onChange(next || null);
+          render();
+        }
+      });
+      activeHandles.push(handle);
+      return;
+    }
     const select = createElement("select", "lw-select");
     select.setAttribute("aria-label", ariaLabel);
     select.appendChild(new Option("Select connection...", ""));
