@@ -2774,6 +2774,19 @@ function setup(ctx) {
   function renderModelControl(slot, connectionId, value, onChange) {
     slot.classList.add("lw-control-slot", "lw-model-slot");
     const selected = selectedConnection(connectionId);
+    const components = ctx.components;
+    if (selected && components?.mountModelCombobox) {
+      const handle = components.mountModelCombobox(slot, {
+        value,
+        connection: { kind: "llm", id: selected.id },
+        appearance: "standard",
+        placeholder: selected.model || "model id",
+        browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
+        onChange
+      });
+      activeHandles.push(handle);
+      return;
+    }
     const input = createElement("input", "lw-input");
     input.type = "text";
     input.placeholder = selected?.model || "model id";

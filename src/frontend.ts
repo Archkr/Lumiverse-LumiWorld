@@ -3008,6 +3008,21 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderModelControl(slot: HTMLElement, connectionId: string | null, value: string, onChange: (model: string) => void): void {
     slot.classList.add("lw-control-slot", "lw-model-slot");
     const selected = selectedConnection(connectionId);
+    const components = (ctx as any).components;
+
+    if (selected && components?.mountModelCombobox) {
+      const handle = components.mountModelCombobox(slot, {
+        value,
+        connection: { kind: "llm", id: selected.id },
+        appearance: "standard",
+        placeholder: selected.model || "model id",
+        browseHint: selected.model ? `Connection default: ${selected.model}` : "No connection default model is configured.",
+        onChange,
+      }) as MountedHandle;
+      activeHandles.push(handle);
+      return;
+    }
+
     const input = createElement("input", "lw-input") as HTMLInputElement;
     input.type = "text";
     input.placeholder = selected?.model || "model id";
