@@ -1114,20 +1114,20 @@ var CSS = `
 
 .lw-float-root {
   width: 260px;
-  min-height: 268px;
+  min-height: 258px;
   color: #2b201d;
   font-family: 'Courier New', Courier, monospace;
   font-size: 11px;
   line-height: 1.35;
   position: relative;
-  padding-top: 44px;
+  padding-top: 42px;
   user-select: none;
 }
 .lw-float-root * { box-sizing: border-box; }
 .lw-monitor {
-  width: 220px;
+  width: 236px;
   margin: 0 auto;
-  padding: 14px 14px 32px;
+  padding: 12px 12px 30px;
   border-radius: 20px 20px 10px 10px;
   background: linear-gradient(145deg, #efe6d1, #c8baa0);
   border: 5px solid #8b7765;
@@ -1178,7 +1178,7 @@ var CSS = `
   border-radius: 18px / 14px;
   background: radial-gradient(circle at 55% 40%, rgba(255,126,0,0.16), transparent 42%), #080807;
   color: #ff9e3d;
-  padding: 10px 10px 26px;
+  padding: 8px 8px 24px;
   box-shadow: inset 0 0 28px rgba(0,0,0,0.95), inset 0 0 10px rgba(255,158,61,0.1);
   overflow: hidden;
   position: relative;
@@ -1197,8 +1197,8 @@ var CSS = `
   justify-content: space-between;
   gap: 6px;
   border-bottom: 1px solid #ff7e00;
-  padding-bottom: 4px;
-  margin-bottom: 6px;
+  padding-bottom: 3px;
+  margin-bottom: 4px;
   font-size: 10px;
   font-weight: 700;
 }
@@ -1207,14 +1207,14 @@ var CSS = `
   justify-content: space-between;
   gap: 8px;
   align-items: center;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
 }
 .lw-monitor-lines {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   position: relative;
   z-index: 1;
 }
@@ -1230,7 +1230,7 @@ var CSS = `
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: 9px;
+  bottom: 8px;
   z-index: 1;
 }
 .lw-monitor-action {
@@ -2237,7 +2237,7 @@ function setup(ctx) {
       return;
     widget = ctx.ui.createFloatWidget({
       width: 260,
-      height: 352,
+      height: 258,
       initialPosition: { x: 24, y: 160 },
       snapToEdge: true,
       tooltip: "LumiWorld",
@@ -2661,7 +2661,7 @@ function setup(ctx) {
       return [
         draft.enabled ? "Director: enabled" : "Director: disabled",
         connection ? `Model: ${connection.name}` : "No controller connection",
-        run ? `Last: ${formatStatus(run.status)}${run.durationMs != null ? ` / ${Math.round(run.durationMs)} ms` : ""}` : "No director runs yet"
+        run ? `Last Run: ${formatStatus(run.status)}` : "No director runs yet"
       ];
     }
     const world = state.worldState ?? null;
