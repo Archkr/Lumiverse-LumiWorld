@@ -1,4 +1,5 @@
 // src/frontend.ts
+var EXTENSION_NAME = "LumiWorld";
 var VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"];
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_CONTROLLER_TIMEOUT_MS = 2147483647;
@@ -6,6 +7,7 @@ var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
 var DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
+var LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/><path d="M8.3 10.2h3.8"/><path d="M8.2 15.8h4.5"/></svg>`;
 var LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
@@ -960,6 +962,238 @@ var CSS = `
 .lw-btn-primary:active { box-shadow: 0 1px 0 #5a3000; }
 .lw-btn-danger { background: linear-gradient(to bottom, #cf7e7e, #a04040); color: #fff; border-color: #400000; box-shadow: 0 3px 0 #400000, 0 4px 6px rgba(0,0,0,0.3); }
 .lw-btn-danger:active { box-shadow: 0 1px 0 #400000; }
+
+/* Drawer tab: compact host-themed fallback for narrow/mobile layouts. */
+.lw-drawer-root {
+  min-height: 100%;
+  padding: 12px;
+  color: var(--lumiverse-text);
+  background: transparent;
+  box-sizing: border-box;
+  font-family: var(--lumiverse-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: calc(13px * var(--lumiverse-font-scale, 1));
+  line-height: 1.45;
+}
+.lw-drawer-root * { box-sizing: border-box; }
+.lw-drawer-root input,
+.lw-drawer-root textarea,
+.lw-drawer-root select {
+  accent-color: var(--lumiverse-primary, var(--lumiverse-accent));
+  font-family: inherit;
+}
+.lw-drawer-shell {
+  display: grid;
+  gap: 12px;
+}
+.lw-drawer-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--lumiverse-border);
+}
+.lw-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.lw-drawer-mark {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lumiverse-primary-text, var(--lumiverse-accent));
+  flex: 0 0 auto;
+}
+.lw-drawer-heading {
+  margin: 0;
+  color: var(--lumiverse-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+.lw-drawer-subtle {
+  color: var(--lumiverse-text-dim);
+  font-size: 12px;
+}
+.lw-drawer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.lw-drawer-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.lw-drawer-tab {
+  appearance: none;
+  border: 1px solid var(--lumiverse-border);
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  border-radius: var(--lumiverse-radius);
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.lw-drawer-tab.is-active {
+  background: var(--lumiverse-primary, var(--lumiverse-accent));
+  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
+  color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
+}
+.lw-drawer-root .lw-paper,
+.lw-drawer-root .lw-clock {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  transform: none;
+  background: var(--lumiverse-fill-subtle);
+  background-image: none;
+  color: var(--lumiverse-text);
+  border: 1px solid var(--lumiverse-border);
+  border-radius: var(--lumiverse-radius);
+  box-shadow: none;
+  padding: 12px;
+}
+.lw-drawer-root .lw-paper:nth-child(even),
+.lw-drawer-root .lw-paper:nth-child(3n),
+.lw-drawer-root .lw-paper:hover {
+  transform: none;
+  background-color: var(--lumiverse-fill-subtle);
+}
+.lw-drawer-root .lw-paper::before { display: none; }
+.lw-drawer-root .lw-panel-head {
+  border-bottom: 1px solid var(--lumiverse-border);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.lw-drawer-root .lw-panel-head h3,
+.lw-drawer-root .lw-field label,
+.lw-drawer-root .lw-toggle-label {
+  color: var(--lumiverse-text);
+  text-shadow: none;
+}
+.lw-drawer-root .lw-hint,
+.lw-drawer-root .lw-muted {
+  color: var(--lumiverse-text-dim);
+}
+.lw-drawer-root .lw-input,
+.lw-drawer-root .lw-select,
+.lw-drawer-root .lw-textarea {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: var(--lumiverse-radius);
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  box-shadow: none;
+  font-family: inherit;
+}
+.lw-drawer-root .lw-textarea {
+  min-height: 132px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.lw-drawer-root .lw-btn {
+  border: 1px solid var(--lumiverse-border);
+  border-radius: var(--lumiverse-radius);
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  box-shadow: none;
+  text-shadow: none;
+  font-family: inherit;
+  text-transform: none;
+}
+.lw-drawer-root .lw-btn:hover {
+  background: var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle));
+}
+.lw-drawer-root .lw-btn:active {
+  transform: none;
+  box-shadow: none;
+}
+.lw-drawer-root .lw-btn-primary {
+  background: var(--lumiverse-primary, var(--lumiverse-accent));
+  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
+  color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg, CanvasText));
+}
+.lw-drawer-root .lw-btn-danger {
+  color: var(--lumiverse-danger, currentColor);
+}
+.lw-drawer-root .lw-banner {
+  width: 100%;
+  max-width: none;
+  background: var(--lumiverse-primary-010, var(--lumiverse-fill-subtle));
+  color: var(--lumiverse-text);
+  border: 1px solid var(--lumiverse-border);
+  border-radius: var(--lumiverse-radius);
+  box-shadow: none;
+  text-align: left;
+  margin: 0;
+}
+.lw-drawer-root .lw-banner.warn {
+  border-color: var(--lumiverse-warning-050, var(--lumiverse-border));
+  background: var(--lumiverse-warning-015, var(--lumiverse-fill-subtle));
+}
+.lw-drawer-root .lw-banner.error {
+  border-color: var(--lumiverse-danger, var(--lumiverse-border));
+  background: var(--lumiverse-danger-015, var(--lumiverse-fill-subtle));
+  color: var(--lumiverse-text);
+}
+.lw-drawer-root .lw-empty {
+  background: var(--lumiverse-fill-subtle);
+  color: var(--lumiverse-text-dim);
+  border-color: var(--lumiverse-border);
+}
+.lw-drawer-root .lw-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.lw-drawer-root .lw-clock {
+  background: var(--lumiverse-fill-subtle);
+  text-align: left;
+}
+.lw-drawer-root .lw-clock-top {
+  border-bottom: 1px solid var(--lumiverse-border);
+}
+.lw-drawer-root .lw-clock-time,
+.lw-drawer-root .lw-clock-status {
+  color: var(--lumiverse-text);
+  text-shadow: none;
+}
+.lw-drawer-root .lw-state-card,
+.lw-drawer-root .lw-slot,
+.lw-drawer-root .lw-chip-compact {
+  background: var(--lumiverse-fill);
+  color: var(--lumiverse-text);
+  border-color: var(--lumiverse-border);
+  box-shadow: none;
+}
+.lw-drawer-root .lw-state-label {
+  color: var(--lumiverse-text-dim);
+}
+@media (max-width: 520px) {
+  .lw-drawer-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .lw-drawer-actions {
+    justify-content: stretch;
+  }
+  .lw-drawer-actions .lw-btn {
+    flex: 1 1 0;
+  }
+  .lw-drawer-root .lw-two,
+  .lw-drawer-root .lw-meter-grid,
+  .lw-drawer-root .lw-clock-actions,
+  .lw-drawer-root .lw-clock-set {
+    grid-template-columns: 1fr;
+  }
+  .lw-drawer-root .lw-clock-set .lw-btn {
+    grid-column: auto;
+  }
+}
 
 /* Desk Decorations (Panel 1) */
 .lw-desk-decor {
@@ -2204,6 +2438,7 @@ function setup(ctx) {
   const cleanups = [];
   const widgetHandles = [];
   const modalHandles = [];
+  const drawerHandles = [];
   let activeHandles = widgetHandles;
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
@@ -2218,6 +2453,16 @@ function setup(ctx) {
   let notice = null;
   let noticeTimer = null;
   cleanups.push(ctx.dom.addStyle(CSS));
+  const drawerTab = ctx.ui.registerDrawerTab({
+    id: "lumi-world",
+    title: EXTENSION_NAME,
+    shortName: "World",
+    headerTitle: "LumiWorld",
+    description: "World-simulation channels and prompt controls",
+    keywords: ["lumiworld", "director", "interceptor", "world", "agent"],
+    iconSvg: LUMIWORLD_ICON
+  });
+  cleanups.push(() => drawerTab.destroy());
   function setNotice(next, ttlMs = 9000) {
     if (noticeTimer) {
       clearTimeout(noticeTimer);
@@ -2256,7 +2501,7 @@ function setup(ctx) {
       }
       try {
         await ctx.permissions.request(["ui_panels"], {
-          reason: "LumiWorld uses a floating CRT monitor widget instead of a drawer tab."
+          reason: "LumiWorld uses a floating CRT monitor widget for quick desktop access."
         });
         createWidget();
         render();
@@ -2278,6 +2523,7 @@ function setup(ctx) {
     if (saveTimer)
       clearTimeout(saveTimer);
     saveState = "saving";
+    drawerTab.setBadge("Saving");
     renderWidget();
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -2652,6 +2898,71 @@ function setup(ctx) {
     activeChannel = channel;
     render();
   }
+  function renderDrawerToolbar(shell) {
+    const toolbar = createElement("div", "lw-drawer-toolbar");
+    const title = createElement("div", "lw-drawer-title");
+    const mark = createElement("span", "lw-drawer-mark");
+    mark.innerHTML = LUMIWORLD_ICON;
+    const text = createElement("div");
+    text.append(createElement("h2", "lw-drawer-heading", EXTENSION_NAME), createElement("div", "lw-drawer-subtle", "World-simulation channels"));
+    title.append(mark, text);
+    const actions = createElement("div", "lw-drawer-actions");
+    const refresh = createElement("button", "lw-btn", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => {
+      setNotice(null);
+      render();
+      send(ctx, { type: "refresh_state" });
+      send(ctx, { type: "refresh_world_state" });
+    });
+    const test = createElement("button", "lw-btn lw-btn-primary", "Test");
+    test.type = "button";
+    test.addEventListener("click", () => {
+      setNotice({ tone: "info", text: "Testing Director Note controller..." });
+      send(ctx, { type: "test_controller", settings: draft });
+      render();
+    });
+    actions.append(refresh, test);
+    toolbar.append(title, actions);
+    shell.appendChild(toolbar);
+  }
+  function renderDrawerTabs(shell) {
+    const tabs = createElement("div", "lw-drawer-tabs");
+    const director = createElement("button", `lw-drawer-tab${activeChannel === "director" ? " is-active" : ""}`, "CH 1: Director");
+    director.type = "button";
+    director.addEventListener("click", () => setActiveChannel("director"));
+    const world = createElement("button", `lw-drawer-tab${activeChannel === "world_agent" ? " is-active" : ""}`, "CH 2: World");
+    world.type = "button";
+    world.addEventListener("click", () => setActiveChannel("world_agent"));
+    tabs.append(director, world);
+    shell.appendChild(tabs);
+  }
+  function renderDrawer() {
+    destroyHandles(drawerHandles);
+    const previousHandles = activeHandles;
+    activeHandles = drawerHandles;
+    try {
+      drawerTab.root.replaceChildren();
+      const root = createElement("div", "lw-drawer-root");
+      const shell = createElement("div", "lw-drawer-shell");
+      root.appendChild(shell);
+      drawerTab.root.appendChild(root);
+      renderDrawerToolbar(shell);
+      renderDrawerTabs(shell);
+      renderNotice(shell);
+      if (!state) {
+        shell.appendChild(createElement("div", "lw-empty", "Loading LumiWorld settings..."));
+        return;
+      }
+      renderBanners(shell);
+      if (activeChannel === "director")
+        renderDirectorChannel(shell);
+      else
+        renderWorldAgentChannel(shell);
+    } finally {
+      activeHandles = previousHandles;
+    }
+  }
   function widgetNoteLines() {
     if (!state)
       return ["Loading LumiWorld...", "Waiting for extension state.", "Open settings after load."];
@@ -2784,6 +3095,7 @@ function setup(ctx) {
   }
   function render() {
     renderWidget();
+    renderDrawer();
     if (settingsModal)
       renderSettingsModal();
   }
@@ -2813,6 +3125,7 @@ function setup(ctx) {
           draft = cloneSettings(message.settings);
           if (state)
             state = { ...state, settings: message.settings };
+          drawerTab.setBadge(null);
           render();
         } else if (!saveTimer) {
           scheduleAutoSave();
@@ -2842,8 +3155,10 @@ function setup(ctx) {
         break;
       case "error":
         saveInFlight = false;
-        if (!saveTimer && localRevision === saveRevision)
+        if (!saveTimer && localRevision === saveRevision) {
           saveState = "error";
+          drawerTab.setBadge("Error");
+        }
         setNotice({ tone: "error", text: message.message }, 12000);
         render();
         break;
@@ -2859,6 +3174,7 @@ function setup(ctx) {
   }));
   const initial = activeChat(ctx);
   send(ctx, { type: "ready", chatId: initial.chatId, characterId: initial.characterId });
+  render();
   ensureWidget();
   return () => {
     if (saveTimer) {
@@ -2871,6 +3187,7 @@ function setup(ctx) {
     }
     destroyHandles(widgetHandles);
     destroyHandles(modalHandles);
+    destroyHandles(drawerHandles);
     settingsModal?.dismiss();
     for (const cleanup of cleanups.reverse()) {
       try {
