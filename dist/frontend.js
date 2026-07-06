@@ -1186,6 +1186,16 @@ var CSS = `
 .lw-drawer-root .lw-state-label {
   color: var(--lumiverse-text-dim);
 }
+.lw-drawer-root .lw-connection-slot,
+.lw-drawer-root .lw-model-slot {
+  position: relative;
+  z-index: 5;
+}
+.lw-drawer-root .lw-connection-slot *,
+.lw-drawer-root .lw-model-slot * {
+  opacity: 1;
+  text-shadow: none;
+}
 @media (max-width: 520px) {
   .lw-drawer-toolbar {
     align-items: stretch;
@@ -2064,6 +2074,43 @@ var CSS = `
   box-shadow: inset 1px 1px 4px rgba(139, 69, 19, 0.1) !important;
   font-family: Georgia, serif !important;
 }
+.lw-settings-modal.is-channel-2 .lw-connection-slot,
+.lw-settings-modal.is-channel-2 .lw-model-slot {
+  --lumiverse-fill: rgba(255, 255, 255, 0.96);
+  --lumiverse-fill-subtle: #fffacd;
+  --lumiverse-text: #5a3a2e;
+  --lumiverse-text-dim: #8b4513;
+  --lumiverse-border: #8b4513;
+  --lumiverse-border-hover: #d4af37;
+  --lumiverse-primary: #d4af37;
+  --lumiverse-primary-contrast: #111;
+  --lumiverse-radius: 6px;
+  position: relative;
+  z-index: 100;
+  color: #5a3a2e !important;
+}
+.lw-settings-modal.is-channel-2 .lw-connection-slot *,
+.lw-settings-modal.is-channel-2 .lw-model-slot * {
+  color: #5a3a2e !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+.lw-settings-modal.is-channel-2 .lw-connection-slot > *,
+.lw-settings-modal.is-channel-2 .lw-connection-slot button,
+.lw-settings-modal.is-channel-2 .lw-connection-slot input,
+.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"] {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: #8b4513 !important;
+  border-radius: 6px !important;
+  box-shadow: inset 1px 1px 4px rgba(139, 69, 19, 0.12) !important;
+}
+.lw-settings-modal.is-channel-2 .lw-connection-slot button:hover,
+.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"]:hover,
+.lw-settings-modal.is-channel-2 .lw-connection-slot button:focus-visible,
+.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"]:focus-visible {
+  border-color: #d4af37 !important;
+  box-shadow: 0 0 8px rgba(212, 175, 55, 0.45) !important;
+}
 .lw-settings-modal.is-channel-2 .lw-input:focus,
 .lw-settings-modal.is-channel-2 .lw-select:focus,
 .lw-settings-modal.is-channel-2 .lw-textarea:focus {
@@ -2256,6 +2303,7 @@ var CSS = `
   align-self: start;
   height: 320px !important;
   max-height: 320px !important;
+  z-index: 80;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note {
