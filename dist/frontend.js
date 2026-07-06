@@ -1743,7 +1743,7 @@ var CSS = `
   align-items: stretch;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   z-index: 20;
 }
@@ -1793,6 +1793,22 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-world-params-note { grid-area: params; }
 .lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note { grid-area: schedule; }
+
+.lw-settings-modal .lw-director-core-note,
+.lw-settings-modal .lw-world-config-note {
+  overflow: visible !important;
+  clip-path: none !important;
+  z-index: 200 !important;
+}
+
+.lw-settings-modal .lw-director-core-note .lw-form,
+.lw-settings-modal .lw-world-config-note .lw-form,
+.lw-settings-modal .lw-connection-slot,
+.lw-settings-modal .lw-model-slot {
+  overflow: visible !important;
+  position: relative;
+  z-index: 201;
+}
 
 .lw-settings-modal .lw-modal-grid > .lw-paper,
 .lw-settings-modal .lw-modal-grid > .lw-clock {
@@ -2098,7 +2114,11 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-connection-slot > *,
 .lw-settings-modal.is-channel-2 .lw-connection-slot button,
 .lw-settings-modal.is-channel-2 .lw-connection-slot input,
-.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"] {
+.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"],
+.lw-settings-modal.is-channel-2 .lw-model-slot > *,
+.lw-settings-modal.is-channel-2 .lw-model-slot button,
+.lw-settings-modal.is-channel-2 .lw-model-slot input,
+.lw-settings-modal.is-channel-2 .lw-model-slot [role="combobox"] {
   background: rgba(255, 255, 255, 0.96) !important;
   border-color: #8b4513 !important;
   border-radius: 6px !important;
@@ -2107,7 +2127,11 @@ var CSS = `
 .lw-settings-modal.is-channel-2 .lw-connection-slot button:hover,
 .lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"]:hover,
 .lw-settings-modal.is-channel-2 .lw-connection-slot button:focus-visible,
-.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"]:focus-visible {
+.lw-settings-modal.is-channel-2 .lw-connection-slot [role="combobox"]:focus-visible,
+.lw-settings-modal.is-channel-2 .lw-model-slot button:hover,
+.lw-settings-modal.is-channel-2 .lw-model-slot [role="combobox"]:hover,
+.lw-settings-modal.is-channel-2 .lw-model-slot button:focus-visible,
+.lw-settings-modal.is-channel-2 .lw-model-slot [role="combobox"]:focus-visible {
   border-color: #d4af37 !important;
   box-shadow: 0 0 8px rgba(212, 175, 55, 0.45) !important;
 }
@@ -2748,7 +2772,7 @@ function setup(ctx) {
         clearable: true,
         clearLabel: "No connection",
         ariaLabel,
-        portal: true,
+        portal: false,
         maxHeight: 320,
         onChange: (next) => {
           onChange(next || null);
