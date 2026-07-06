@@ -841,6 +841,10 @@ var CSS = `
   width: min(100%, 420px);
   max-width: 420px;
 }
+.lw-clock:hover {
+  border-color: #ff9e3d;
+  box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 0 12px rgba(255, 126, 0, 0.45), 0 5px 10px rgba(0,0,0,0.5);
+}
 .lw-clock-top {
   display: flex;
   justify-content: space-between;
@@ -892,6 +896,10 @@ var CSS = `
   display: grid;
   gap: 4px;
   box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+}
+.lw-slot:hover {
+  border-color: #ff9e3d;
+  box-shadow: 3px 3px 0px rgba(255, 126, 0, 0.45);
 }
 .lw-slot.is-now { border-color: #ff5500; box-shadow: 3px 3px 0px #ff5500; background: #fff9e6; }
 
@@ -1156,6 +1164,11 @@ var CSS = `
 }
 .lw-drawer-root .lw-clock-top {
   border-bottom: 1px solid var(--lumiverse-border);
+}
+.lw-drawer-root .lw-clock:hover,
+.lw-drawer-root .lw-slot:hover {
+  border-color: var(--lumiverse-primary, var(--lumiverse-accent));
+  box-shadow: none;
 }
 .lw-drawer-root .lw-clock-time,
 .lw-drawer-root .lw-clock-status {
@@ -2013,6 +2026,11 @@ var CSS = `
   border-color: #d4af37 !important;
   box-shadow: 4px 4px 0px rgba(212, 175, 55, 0.3), 0 5px 20px rgba(0,0,0,0.15) !important;
 }
+.lw-settings-modal.is-channel-2 .lw-clock:hover,
+.lw-settings-modal.is-channel-2 .lw-slot:hover {
+  border-color: #d4af37 !important;
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.55), 3px 3px 0px rgba(212, 175, 55, 0.3) !important;
+}
 
 .lw-settings-modal.is-channel-2 .lw-paper::before,
 .lw-settings-modal.is-channel-2 .lw-paper::after { display: none; }
@@ -2201,6 +2219,14 @@ var CSS = `
   overflow-y: auto !important;
   scrollbar-width: thin;
   scrollbar-color: rgba(139, 69, 19, 0.55) rgba(255, 250, 205, 0.28);
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note {
+  overflow: visible !important;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-config-note .lw-form {
+  overflow: visible;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar,
@@ -2552,6 +2578,9 @@ function setup(ctx) {
       return null;
     return state.connections.find((connection) => connection.id === connectionId) ?? null;
   }
+  function renderSoon() {
+    queueMicrotask(() => render());
+  }
   function field(label, control, hint) {
     const wrap = createElement("div", "lw-field");
     wrap.appendChild(createElement("label", undefined, label));
@@ -2675,7 +2704,7 @@ function setup(ctx) {
         maxHeight: 320,
         onChange: (next) => {
           onChange(next || null);
-          render();
+          renderSoon();
         }
       });
       activeHandles.push(handle);
@@ -2690,7 +2719,7 @@ function setup(ctx) {
     select.value = value ?? "";
     select.addEventListener("change", () => {
       onChange(select.value || null);
-      render();
+      renderSoon();
     });
     slot.appendChild(select);
   }
@@ -3100,7 +3129,7 @@ function setup(ctx) {
         send(ctx, { type: "refresh_state" });
         send(ctx, { type: "refresh_world_state" });
       });
-      const test = createElement("button", "lw-btn lw-btn-primary", "Test Director");
+      const test = createElement("button", "lw-btn lw-btn-primary", "Test");
       test.type = "button";
       test.addEventListener("click", () => {
         setNotice({ tone: "info", text: "Testing Director Note controller..." });
