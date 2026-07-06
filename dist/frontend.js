@@ -1114,7 +1114,7 @@ var CSS = `
 
 .lw-float-root {
   width: 260px;
-  min-height: 352px;
+  min-height: 268px;
   color: #2b201d;
   font-family: 'Courier New', Courier, monospace;
   font-size: 11px;
@@ -1178,7 +1178,7 @@ var CSS = `
   border-radius: 18px / 14px;
   background: radial-gradient(circle at 55% 40%, rgba(255,126,0,0.16), transparent 42%), #080807;
   color: #ff9e3d;
-  padding: 10px;
+  padding: 10px 10px 26px;
   box-shadow: inset 0 0 28px rgba(0,0,0,0.95), inset 0 0 10px rgba(255,158,61,0.1);
   overflow: hidden;
   position: relative;
@@ -1202,29 +1202,30 @@ var CSS = `
   font-size: 10px;
   font-weight: 700;
 }
-.lw-monitor-channel {
-  display: grid;
-  grid-template-columns: 32px 1fr auto;
+.lw-monitor-note-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   align-items: center;
-  gap: 5px;
-  padding: 4px 5px;
-  border: 1px solid transparent;
-  cursor: pointer;
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.lw-monitor-lines {
+  display: grid;
+  gap: 2px;
   position: relative;
   z-index: 1;
 }
-.lw-monitor-channel:hover { background: rgba(255, 158, 61, 0.12); }
-.lw-monitor-channel.is-active {
-  background: #ff9e3d;
-  color: #080807;
-  text-shadow: none;
-  box-shadow: 0 0 10px rgba(255,126,0,0.4);
+.lw-monitor-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.lw-monitor-channel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lw-monitor-status { font-size: 8px; text-transform: uppercase; }
 .lw-monitor-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
   position: absolute;
   left: 10px;
@@ -1251,6 +1252,8 @@ var CSS = `
   text-decoration: underline;
 }
 .lw-monitor-knob {
+  appearance: none;
+  padding: 0;
   position: absolute;
   right: -10px;
   width: 17px;
@@ -1259,52 +1262,15 @@ var CSS = `
   border: 2px solid #24211f;
   background: radial-gradient(circle at 35% 30%, #aaa, #333);
   box-shadow: 1px 2px 4px rgba(0,0,0,0.55);
+  cursor: pointer;
 }
-.lw-monitor-knob.one { bottom: 24px; }
-.lw-monitor-knob.two { bottom: 48px; }
-.lw-widget-note {
-  width: 232px;
-  margin: 6px auto 0;
-  padding: 12px 14px 14px;
-  background: #fff6c9;
-  background-image: linear-gradient(#eadfae 1px, transparent 1px);
-  background-size: 100% 20px;
-  color: #352924;
-  box-shadow: 0 10px 18px rgba(0,0,0,0.32);
-  transform: rotate(-1deg);
-  position: relative;
+.lw-monitor-knob:hover,
+.lw-monitor-knob:focus-visible {
+  filter: brightness(1.25);
+  outline: none;
 }
-.lw-widget-note::before {
-  content: '';
-  position: absolute;
-  top: -7px;
-  left: 50%;
-  width: 56px;
-  height: 15px;
-  transform: translateX(-50%) rotate(2deg);
-  background: rgba(255,255,255,0.45);
-  border: 1px dashed rgba(0,0,0,0.12);
-}
-.lw-note-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.lw-note-lines {
-  display: grid;
-  gap: 3px;
-  min-height: 54px;
-}
-.lw-note-line {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.lw-monitor-knob.channel { bottom: 24px; }
+.lw-monitor-knob.settings { bottom: 48px; }
 .lw-save-dot {
   color: #6b5d4f;
   font-size: 9px;
@@ -2706,12 +2672,6 @@ function setup(ctx) {
       `Goal: ${worldStateCardValue(world?.goal, "Unset")}`
     ];
   }
-  function renderWidgetChannel(parent, channel, label, ch) {
-    const row = createElement("div", `lw-monitor-channel${activeChannel === channel ? " is-active" : ""}`);
-    row.append(createElement("span", undefined, ch), createElement("span", undefined, label), createElement("span", "lw-monitor-status", channelStatus(channel)));
-    row.addEventListener("click", () => setActiveChannel(channel));
-    parent.appendChild(row);
-  }
   function renderWidget() {
     if (!widget)
       return;
@@ -2724,8 +2684,12 @@ function setup(ctx) {
     const head = createElement("div", "lw-monitor-head");
     head.append(createElement("span", undefined, "LumiWorld"), createElement("span", undefined, formatClock(state?.worldState)));
     screen.appendChild(head);
-    renderWidgetChannel(screen, "director", "DIRECTOR", "CH1");
-    renderWidgetChannel(screen, "world_agent", "WORLD", "CH2");
+    const noteHead = createElement("div", "lw-monitor-note-head");
+    noteHead.append(createElement("span", undefined, activeChannel === "director" ? "Director Note" : "World"), createElement("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
+    const lines = createElement("div", "lw-monitor-lines");
+    for (const line of widgetNoteLines())
+      lines.appendChild(createElement("div", "lw-monitor-line", line));
+    screen.append(noteHead, lines);
     const screenActions = createElement("div", "lw-monitor-actions");
     const refresh = createElement("button", "lw-monitor-action", "Refresh");
     refresh.type = "button";
@@ -2733,20 +2697,20 @@ function setup(ctx) {
       send(ctx, { type: "refresh_state" });
       send(ctx, { type: "refresh_world_state" });
     });
-    const open = createElement("button", "lw-monitor-action", "Settings");
-    open.type = "button";
-    open.addEventListener("click", () => openSettingsModal());
-    screenActions.append(refresh, open);
+    screenActions.append(refresh);
     screen.appendChild(screenActions);
-    monitor.append(createElement("div", "lw-monitor-antenna left"), createElement("div", "lw-monitor-antenna right"), screen, createElement("div", "lw-monitor-knob one"), createElement("div", "lw-monitor-knob two"));
-    const note = createElement("div", "lw-widget-note");
-    const noteHead = createElement("div", "lw-note-head");
-    noteHead.append(createElement("span", undefined, activeChannel === "director" ? "Director Note" : "World Agent"), createElement("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
-    const lines = createElement("div", "lw-note-lines");
-    for (const line of widgetNoteLines())
-      lines.appendChild(createElement("div", "lw-note-line", line));
-    note.append(noteHead, lines);
-    root.append(monitor, note);
+    const settingsKnob = createElement("button", "lw-monitor-knob settings");
+    settingsKnob.type = "button";
+    settingsKnob.title = "Open LumiWorld settings";
+    settingsKnob.setAttribute("aria-label", "Open LumiWorld settings");
+    settingsKnob.addEventListener("click", () => openSettingsModal());
+    const channelKnob = createElement("button", "lw-monitor-knob channel");
+    channelKnob.type = "button";
+    channelKnob.title = "Switch LumiWorld channel";
+    channelKnob.setAttribute("aria-label", "Switch LumiWorld channel");
+    channelKnob.addEventListener("click", () => setActiveChannel(activeChannel === "director" ? "world_agent" : "director"));
+    monitor.append(createElement("div", "lw-monitor-antenna left"), createElement("div", "lw-monitor-antenna right"), screen, settingsKnob, channelKnob);
+    root.append(monitor);
     widget.root.appendChild(root);
   }
   function renderModalTabs(shell) {
