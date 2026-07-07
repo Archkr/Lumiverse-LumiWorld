@@ -153,12 +153,19 @@ type BackendToFrontend =
   | { type: "state"; state: FrontendState }
   | { type: "settings_saved"; settings: LumiWorldSettings }
   | { type: "world_state"; state: WorldAgentState | null }
-  | { type: "world_agent_result"; ok: true; message?: string; state?: WorldAgentState | null }
-  | { type: "world_agent_result"; ok: false; error: string; state?: WorldAgentState | null }
+  | { type: "world_agent_result"; ok: true; message?: string; state?: WorldAgentState | null; rawOutput?: string | null }
+  | { type: "world_agent_result"; ok: false; error: string; state?: WorldAgentState | null; rawOutput?: string | null }
   | { type: "run_logged"; run: RunLogEntry }
   | { type: "test_result"; ok: true; directive: string; durationMs: number; model: string; connectionName: string }
   | { type: "test_result"; ok: false; error: string }
   | { type: "error"; message: string };
+
+type NoticeState = {
+  tone: "info" | "warn" | "error" | "success";
+  text: string;
+  copyText?: string | null;
+  copyLabel?: string;
+};
 
 const LUMIWORLD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/><path d="M8.3 10.2h3.8"/><path d="M8.2 15.8h4.5"/></svg>`;
 
@@ -953,6 +960,29 @@ const CSS = `
   max-width: 420px;
   text-align: center;
 }
+.lw-banner.has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+.lw-banner-text { min-width: 0; }
+.lw-banner-copy {
+  appearance: none;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+.lw-banner-copy:hover { filter: brightness(1.12); }
 .lw-banner.info { background: #d8aa63; color: #111; }
 .lw-banner.success { background: #8fbd88; color: #102610; }
 .lw-banner.warn { background: #d8aa63; }
@@ -2761,7 +2791,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let saveState: "idle" | "saving" | "error" = "idle";
   let settingsModal: ReturnType<SpindleFrontendContext["ui"]["showModal"]> | null = null;
   let widget: ReturnType<SpindleFrontendContext["ui"]["createFloatWidget"]> | null = null;
-  let notice: { tone: "info" | "warn" | "error" | "success"; text: string } | null = null;
+  let notice: NoticeState | null = null;
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -2777,7 +2807,7 @@ export function setup(ctx: SpindleFrontendContext) {
   });
   cleanups.push(() => drawerTab.destroy());
 
-  function setNotice(next: typeof notice, ttlMs = 9000): void {
+  function setNotice(next: NoticeState | null, ttlMs = 9000): void {
     if (noticeTimer) {
       clearTimeout(noticeTimer);
       noticeTimer = null;
@@ -2789,6 +2819,34 @@ export function setup(ctx: SpindleFrontendContext) {
         noticeTimer = null;
         render();
       }, ttlMs);
+    }
+  }
+
+  async function copyTextToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fall back below for hosts that deny navigator.clipboard in extension UI.
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
     }
   }
 
@@ -3329,7 +3387,19 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderNotice(shell: HTMLElement): void {
     if (!notice) return;
-    const div = createElement("div", `lw-banner ${notice.tone}`, notice.text);
+    const copyText = typeof notice.copyText === "string" && notice.copyText.length > 0 ? notice.copyText : null;
+    const div = createElement("div", `lw-banner ${notice.tone}${copyText ? " has-copy" : ""}`);
+    div.appendChild(createElement("span", "lw-banner-text", notice.text));
+    if (copyText) {
+      const button = createElement("button", "lw-banner-copy", notice.copyLabel || "Copy output");
+      button.type = "button";
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.textContent = await copyTextToClipboard(copyText) ? "Copied" : "Copy failed";
+      });
+      div.appendChild(button);
+    }
     shell.appendChild(div);
   }
 
@@ -3629,8 +3699,8 @@ export function setup(ctx: SpindleFrontendContext) {
       case "world_agent_result":
         setNotice(
           message.ok
-            ? { tone: "success", text: message.message || "World Agent updated." }
-            : { tone: "error", text: message.error },
+            ? { tone: "success", text: message.message || "World Agent updated.", copyText: message.rawOutput || null, copyLabel: "Copy output" }
+            : { tone: "error", text: message.error, copyText: message.rawOutput || null, copyLabel: "Copy output" },
           message.ok ? 7000 : 12000,
         );
         if (message.state && state) state = { ...state, worldState: message.state };

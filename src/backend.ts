@@ -139,6 +139,28 @@ function send(message: BackendToFrontend, userId = lastFrontendUserId ?? undefin
   (spindle.sendToFrontend as unknown as (payload: unknown, targetUserId?: string) => void)(message, userId);
 }
 
+function stringifyForCopy(value: unknown): string {
+  if (typeof value === "string") return value;
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, nested) => {
+      if (nested && typeof nested === "object") {
+        if (seen.has(nested)) return "[Circular]";
+        seen.add(nested);
+      }
+      return nested;
+    }, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function makeGenerationOutputForCopy(response: unknown, finalText: string | null): string {
+  const text = finalText?.trim();
+  if (text) return text;
+  return stringifyForCopy(response).trim();
+}
+
 function permissionHas(permission: keyof PermissionState): boolean {
   const permissions = permissionsApi();
   if (!permissions || typeof permissions.has !== "function") return true;
@@ -661,6 +683,7 @@ async function callWorldAgentModel(
   settings: WorldAgentSettings,
   target: ControllerTarget,
   messages: LlmMessageLike[],
+  onRawOutput?: (output: string) => void,
 ): Promise<{ text: string; durationMs: number }> {
   if (!userId) {
     throw new Error("LumiWorld could not resolve the active Lumiverse user for the World Agent call.");
@@ -689,6 +712,14 @@ async function callWorldAgentModel(
       signal: controller.signal,
     });
     const text = extractControllerResponseText(response);
+    const rawOutput = makeGenerationOutputForCopy(response, text);
+    if (rawOutput) {
+      try {
+        onRawOutput?.(rawOutput);
+      } catch {
+        // Copy diagnostics are UI-only and should not affect generation.
+      }
+    }
     if (!text) {
       throw new EmptyWorldAgentContentError(response);
     }
@@ -725,6 +756,7 @@ async function ensureWorldAgentSchedule(options: {
   contextMessages: LlmMessageLike[];
   identity: IdentityMacroValues;
   force?: boolean;
+  onRawOutput?: (output: string) => void;
 }): Promise<WorldAgentState> {
   const worldSettings = options.settings.worldAgent;
   if (!worldSettings.enabled) return options.state;
@@ -760,7 +792,7 @@ async function ensureWorldAgentSchedule(options: {
       contextMessages: options.contextMessages,
       mode: "schedule",
     });
-    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages, options.onRawOutput);
     const schedule = parseWorldAgentSchedule(text);
     const next = appendWorldAgentHistory(
       {
@@ -1393,6 +1425,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        let rawOutput: string | null = null;
         const state = await ensureWorldAgentSchedule({
           userId,
           settings: bundle.settings,
@@ -1400,9 +1433,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
           contextMessages: bundle.contextMessages,
           identity: bundle.identity,
           force: true,
+          onRawOutput(output) {
+            rawOutput = output;
+          },
         });
         const saved = await saveWorldAgentState(state, userId);
-        send({ type: "world_agent_result", ok: true, message: "Regenerated the daily schedule.", state: saved }, userId);
+        send({ type: "world_agent_result", ok: true, message: "Regenerated the daily schedule.", state: saved, rawOutput }, userId);
         await pushState(userId, chatId, readCharacterIdFromMessage(message));
         break;
       }

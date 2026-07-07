@@ -1356,6 +1356,29 @@ var PERMISSION_IDS = {
 function send(message, userId = lastFrontendUserId ?? undefined) {
   spindle.sendToFrontend(message, userId);
 }
+function stringifyForCopy(value) {
+  if (typeof value === "string")
+    return value;
+  const seen = new WeakSet;
+  try {
+    return JSON.stringify(value, (_key, nested) => {
+      if (nested && typeof nested === "object") {
+        if (seen.has(nested))
+          return "[Circular]";
+        seen.add(nested);
+      }
+      return nested;
+    }, 2);
+  } catch {
+    return String(value);
+  }
+}
+function makeGenerationOutputForCopy(response, finalText) {
+  const text = finalText?.trim();
+  if (text)
+    return text;
+  return stringifyForCopy(response).trim();
+}
 function permissionHas(permission) {
   const permissions = permissionsApi();
   if (!permissions || typeof permissions.has !== "function")
@@ -1806,7 +1829,7 @@ function buildWorldAgentMessages(options) {
     }
   ];
 }
-async function callWorldAgentModel(userId, settings, target, messages) {
+async function callWorldAgentModel(userId, settings, target, messages, onRawOutput) {
   if (!userId) {
     throw new Error("LumiWorld could not resolve the active Lumiverse user for the World Agent call.");
   }
@@ -1832,6 +1855,12 @@ async function callWorldAgentModel(userId, settings, target, messages) {
       signal: controller.signal
     });
     const text = extractControllerResponseText(response);
+    const rawOutput = makeGenerationOutputForCopy(response, text);
+    if (rawOutput) {
+      try {
+        onRawOutput?.(rawOutput);
+      } catch {}
+    }
     if (!text) {
       throw new EmptyWorldAgentContentError(response);
     }
@@ -1886,7 +1915,7 @@ async function ensureWorldAgentSchedule(options) {
       contextMessages: options.contextMessages,
       mode: "schedule"
     });
-    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const { text, durationMs } = await callWorldAgentModel(options.userId, worldSettings, target, messages, options.onRawOutput);
     const schedule = parseWorldAgentSchedule(text);
     const next = appendWorldAgentHistory({
       ...options.state,
@@ -2400,16 +2429,20 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        let rawOutput = null;
         const state = await ensureWorldAgentSchedule({
           userId,
           settings: bundle.settings,
           state: { ...bundle.state, schedule: [], scheduleDay: null, updatedAt: Date.now() },
           contextMessages: bundle.contextMessages,
           identity: bundle.identity,
-          force: true
+          force: true,
+          onRawOutput(output) {
+            rawOutput = output;
+          }
         });
         const saved = await saveWorldAgentState(state, userId);
-        send({ type: "world_agent_result", ok: true, message: "Regenerated the daily schedule.", state: saved }, userId);
+        send({ type: "world_agent_result", ok: true, message: "Regenerated the daily schedule.", state: saved, rawOutput }, userId);
         await pushState(userId, chatId, readCharacterIdFromMessage(message));
         break;
       }

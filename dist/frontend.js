@@ -797,6 +797,29 @@ var CSS = `
   max-width: 420px;
   text-align: center;
 }
+.lw-banner.has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+.lw-banner-text { min-width: 0; }
+.lw-banner-copy {
+  appearance: none;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+.lw-banner-copy:hover { filter: brightness(1.12); }
 .lw-banner.info { background: #d8aa63; color: #111; }
 .lw-banner.success { background: #8fbd88; color: #102610; }
 .lw-banner.warn { background: #d8aa63; }
@@ -2575,6 +2598,30 @@ function setup(ctx) {
       }, ttlMs);
     }
   }
+  async function copyTextToClipboard(text) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {}
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+    }
+  }
   function createWidget() {
     if (widget)
       return;
@@ -3020,7 +3067,19 @@ function setup(ctx) {
   function renderNotice(shell) {
     if (!notice)
       return;
-    const div = createElement("div", `lw-banner ${notice.tone}`, notice.text);
+    const copyText = typeof notice.copyText === "string" && notice.copyText.length > 0 ? notice.copyText : null;
+    const div = createElement("div", `lw-banner ${notice.tone}${copyText ? " has-copy" : ""}`);
+    div.appendChild(createElement("span", "lw-banner-text", notice.text));
+    if (copyText) {
+      const button = createElement("button", "lw-banner-copy", notice.copyLabel || "Copy output");
+      button.type = "button";
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.textContent = await copyTextToClipboard(copyText) ? "Copied" : "Copy failed";
+      });
+      div.appendChild(button);
+    }
     shell.appendChild(div);
   }
   function renderBanners(shell) {
@@ -3298,7 +3357,7 @@ function setup(ctx) {
         }
         break;
       case "world_agent_result":
-        setNotice(message.ok ? { tone: "success", text: message.message || "World Agent updated." } : { tone: "error", text: message.error }, message.ok ? 7000 : 12000);
+        setNotice(message.ok ? { tone: "success", text: message.message || "World Agent updated.", copyText: message.rawOutput || null, copyLabel: "Copy output" } : { tone: "error", text: message.error, copyText: message.rawOutput || null, copyLabel: "Copy output" }, message.ok ? 7000 : 12000);
         if (message.state && state)
           state = { ...state, worldState: message.state };
         render();
