@@ -238,6 +238,9 @@ var DEFAULT_WORLD_AGENT_SETTINGS = {
   maxTokens: 700,
   timeoutMs: 60000,
   hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeUserPersona: true,
+  includeCharacter: true,
   injectState: true,
   autoTickVisibleOnly: true,
   scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
@@ -301,6 +304,9 @@ function normalizeWorldAgentSettings(value) {
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_WORLD_AGENT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_WORLD_AGENT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_WORLD_AGENT_SETTINGS.includeCharacter,
     injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
     autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
     scheduleTemplate,
@@ -1286,10 +1292,11 @@ var SETTINGS_PATH = "global/settings.json";
 var RUNS_PATH = "global/runs.json";
 var WORLD_AGENT_DIR = "world-agent/chats";
 var INTERCEPTOR_PRIORITY = 150;
-var WORLD_AGENT_TICK_INTERVAL_MS = 15000;
+var WORLD_AGENT_TICK_INTERVAL_MS = 1000;
 var lastFrontendUserId = null;
 var chatUserIds = new Map;
 var activeChats = new Map;
+var worldAgentHistoryCache = new Map;
 var worldAgentBusy = new Set;
 var interceptorRegistered = false;
 var controllerBusy = false;
@@ -1471,6 +1478,17 @@ function worldAgentStatePath(chatId) {
 }
 function worldAgentBusyKey(userId, chatId) {
   return `${userId || "user"}:${chatId}`;
+}
+function cacheWorldAgentChatHistory(userId, chatId, messages, limit) {
+  if (!chatId)
+    return;
+  const selected = selectChatHistoryMessagesForController(messages, limit);
+  if (selected.length > 0) {
+    worldAgentHistoryCache.set(worldAgentBusyKey(userId, chatId), selected);
+  }
+}
+function getCachedWorldAgentChatHistory(userId, chatId, limit) {
+  return selectChatHistoryMessagesForController(worldAgentHistoryCache.get(worldAgentBusyKey(userId, chatId)) ?? [], limit);
 }
 function toConnectionOption(connection) {
   return {
@@ -1876,9 +1894,14 @@ async function callWorldAgentModel(userId, settings, target, messages, onRawOutp
 }
 async function resolveWorldAgentContext(settings, chatId, userId, characterId) {
   const context = { chatId, characterId: characterId || undefined };
-  const resolved = await resolveControllerContextMessages(settings, context, chatId, userId);
+  const resolved = await resolveControllerContextMessages({
+    ...settings,
+    includeUserPersona: settings.worldAgent.includeUserPersona,
+    includeCharacter: settings.worldAgent.includeCharacter
+  }, context, chatId, userId);
+  const historyMessages = getCachedWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
   return {
-    contextMessages: resolved.messages,
+    contextMessages: [...resolved.messages, ...historyMessages],
     identity: resolved.identity,
     stateIdentity: { characterId: resolved.characterId, personaId: resolved.personaId }
   };
@@ -2093,7 +2116,10 @@ async function checkWorldAgentTimers() {
       }
       if (!due.due)
         continue;
-      await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+      const updated = await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+      if (updated) {
+        send({ type: "world_state", state: updated }, userId);
+      }
     } catch (error) {
       spindle.log.warn(`LumiWorld World Agent timer skipped: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -2128,6 +2154,10 @@ async function handleInterceptor(messages, context) {
   const settings = await loadSettings(userId);
   const directorDecision = shouldInterceptGeneration(settings, generationType);
   const visibleGeneration = VISIBLE_GENERATION_TYPES.includes(generationType);
+  const promptMessages = messages;
+  if (visibleGeneration && settings.worldAgent.enabled && chatId) {
+    cacheWorldAgentChatHistory(userId, chatId, promptMessages, settings.worldAgent.historyMessageLimit);
+  }
   const shouldInjectWorldAgent = visibleGeneration && settings.worldAgent.enabled && settings.worldAgent.injectState && !!chatId;
   if (!directorDecision.intercept && !shouldInjectWorldAgent)
     return messages;
@@ -2143,7 +2173,6 @@ async function handleInterceptor(messages, context) {
   }
   const injectedMessages = [];
   const breakdown = [];
-  const promptMessages = messages;
   const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
   const worldAgentState = shouldInjectWorldAgent ? await loadExistingWorldAgentState(chatId, userId, {
     characterId: controllerContext.characterId ?? contextCharacterId,

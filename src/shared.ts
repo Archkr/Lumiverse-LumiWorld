@@ -57,6 +57,9 @@ export interface WorldAgentSettings {
   maxTokens: number;
   timeoutMs: number;
   hourDurationMs: number;
+  historyMessageLimit: number;
+  includeUserPersona: boolean;
+  includeCharacter: boolean;
   injectState: boolean;
   autoTickVisibleOnly: boolean;
   scheduleTemplate: string;
@@ -450,6 +453,9 @@ export const DEFAULT_WORLD_AGENT_SETTINGS: WorldAgentSettings = {
   maxTokens: 700,
   timeoutMs: 60000,
   hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeUserPersona: true,
+  includeCharacter: true,
   injectState: true,
   autoTickVisibleOnly: true,
   scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
@@ -529,6 +535,9 @@ export function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings 
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_WORLD_AGENT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_WORLD_AGENT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_WORLD_AGENT_SETTINGS.includeCharacter,
     injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
     autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean"
       ? obj.autoTickVisibleOnly

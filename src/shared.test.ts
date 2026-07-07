@@ -137,6 +137,9 @@ describe("settings normalization", () => {
       maxTokens: 32000,
       timeoutMs: 180000,
       hourDurationMs: 120000,
+      historyMessageLimit: DEFAULT_SETTINGS.worldAgent.historyMessageLimit,
+      includeUserPersona: true,
+      includeCharacter: true,
       injectState: false,
       autoTickVisibleOnly: false,
       scheduleTemplate: "schedule {{char}}",
@@ -144,6 +147,22 @@ describe("settings normalization", () => {
     });
 
     expect(normalizeSettings({}).worldAgent.enabled).toBe(false);
+  });
+
+  test("normalizes World Agent context settings independently", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        historyMessageLimit: -3,
+        includeUserPersona: false,
+        includeCharacter: false,
+      },
+    });
+
+    expect(settings.worldAgent.historyMessageLimit).toBe(0);
+    expect(settings.worldAgent.includeUserPersona).toBe(false);
+    expect(settings.worldAgent.includeCharacter).toBe(false);
+    expect(settings.includeUserPersona).toBe(true);
+    expect(settings.includeCharacter).toBe(true);
   });
 
   test("migrates the previous stock World Agent schedule template to the full-day version", () => {

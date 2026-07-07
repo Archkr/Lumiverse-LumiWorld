@@ -36,6 +36,7 @@ import {
   resolveIdentityMacros,
   resolveWorldAgentTarget,
   resolveWorldInfoContextMessages,
+  selectChatHistoryMessagesForController,
   selectControllerMessagesForController,
   shouldInterceptGeneration,
   type IdentityMacroValues,
@@ -55,13 +56,14 @@ const SETTINGS_PATH = "global/settings.json";
 const RUNS_PATH = "global/runs.json";
 const WORLD_AGENT_DIR = "world-agent/chats";
 const INTERCEPTOR_PRIORITY = 150;
-const WORLD_AGENT_TICK_INTERVAL_MS = 15000;
+const WORLD_AGENT_TICK_INTERVAL_MS = 1000;
 
 let lastFrontendUserId: string | null = null;
 // Routing metadata from free frontend events plus read-only interceptor context.
 // Chat reads are used only when the character context source is enabled.
 const chatUserIds = new Map<string, string>();
 const activeChats = new Map<string, { chatId: string; characterId: string | null; lastSeenAt: number }>();
+const worldAgentHistoryCache = new Map<string, LlmMessageLike[]>();
 const worldAgentBusy = new Set<string>();
 let interceptorRegistered = false;
 let controllerBusy = false;
@@ -261,6 +263,27 @@ function worldAgentStatePath(chatId: string): string {
 
 function worldAgentBusyKey(userId: string | null | undefined, chatId: string): string {
   return `${userId || "user"}:${chatId}`;
+}
+
+function cacheWorldAgentChatHistory(
+  userId: string | null | undefined,
+  chatId: string | null | undefined,
+  messages: LlmMessageLike[],
+  limit: number,
+): void {
+  if (!chatId) return;
+  const selected = selectChatHistoryMessagesForController(messages, limit);
+  if (selected.length > 0) {
+    worldAgentHistoryCache.set(worldAgentBusyKey(userId, chatId), selected);
+  }
+}
+
+function getCachedWorldAgentChatHistory(
+  userId: string | null | undefined,
+  chatId: string,
+  limit: number,
+): LlmMessageLike[] {
+  return selectChatHistoryMessagesForController(worldAgentHistoryCache.get(worldAgentBusyKey(userId, chatId)) ?? [], limit);
 }
 
 function toConnectionOption(connection: ConnectionProfileDTO | any): ConnectionOption {
@@ -741,9 +764,19 @@ async function resolveWorldAgentContext(
   characterId?: string | null,
 ): Promise<{ contextMessages: LlmMessageLike[]; identity: IdentityMacroValues; stateIdentity: { characterId: string | null; personaId: string | null } }> {
   const context = { chatId, characterId: characterId || undefined };
-  const resolved = await resolveControllerContextMessages(settings, context, chatId, userId);
+  const resolved = await resolveControllerContextMessages(
+    {
+      ...settings,
+      includeUserPersona: settings.worldAgent.includeUserPersona,
+      includeCharacter: settings.worldAgent.includeCharacter,
+    },
+    context,
+    chatId,
+    userId,
+  );
+  const historyMessages = getCachedWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
   return {
-    contextMessages: resolved.messages,
+    contextMessages: [...resolved.messages, ...historyMessages],
     identity: resolved.identity,
     stateIdentity: { characterId: resolved.characterId, personaId: resolved.personaId },
   };
@@ -1020,7 +1053,10 @@ async function checkWorldAgentTimers(): Promise<void> {
         continue;
       }
       if (!due.due) continue;
-      await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+      const updated = await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+      if (updated) {
+        send({ type: "world_state", state: updated }, userId);
+      }
     } catch (error) {
       spindle.log.warn(`LumiWorld World Agent timer skipped: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1061,6 +1097,10 @@ async function handleInterceptor(
   const settings = await loadSettings(userId);
   const directorDecision = shouldInterceptGeneration(settings, generationType);
   const visibleGeneration = VISIBLE_GENERATION_TYPES.includes(generationType as any);
+  const promptMessages = messages as LlmMessageLike[];
+  if (visibleGeneration && settings.worldAgent.enabled && chatId) {
+    cacheWorldAgentChatHistory(userId, chatId, promptMessages, settings.worldAgent.historyMessageLimit);
+  }
   const shouldInjectWorldAgent = visibleGeneration && settings.worldAgent.enabled && settings.worldAgent.injectState && !!chatId;
   if (!directorDecision.intercept && !shouldInjectWorldAgent) return messages;
 
@@ -1081,7 +1121,6 @@ async function handleInterceptor(
 
   const injectedMessages: LlmMessageDTO[] = [];
   const breakdown: InterceptorResultDTO["breakdown"] = [];
-  const promptMessages = messages as LlmMessageLike[];
   const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
   const worldAgentState = shouldInjectWorldAgent
     ? await loadExistingWorldAgentState(chatId, userId, {

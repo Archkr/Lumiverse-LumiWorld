@@ -228,6 +228,9 @@ var DEFAULT_WORLD_AGENT_SETTINGS = {
   maxTokens: 700,
   timeoutMs: 60000,
   hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeUserPersona: true,
+  includeCharacter: true,
   injectState: true,
   autoTickVisibleOnly: true,
   scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
@@ -1803,15 +1806,17 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 350px 310px 320px;
+  grid-template-rows: 350px 270px 170px 270px;
   justify-content: center;
   align-content: start;
   grid-template-areas:
     "state state state"
     "clock params schedule"
+    "context params schedule"
     "config params schedule";
 }
 .lw-settings-modal.is-channel-2 .lw-world-clock-note { grid-area: clock; }
+.lw-settings-modal.is-channel-2 .lw-world-context-note { grid-area: context; }
 .lw-settings-modal.is-channel-2 .lw-world-config-note { grid-area: config; }
 .lw-settings-modal.is-channel-2 .lw-world-params-note { grid-area: params; }
 .lw-settings-modal.is-channel-2 .lw-world-state-note { grid-area: state; }
@@ -2306,6 +2311,7 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note,
+.lw-settings-modal.is-channel-2 .lw-world-context-note,
 .lw-settings-modal.is-channel-2 .lw-world-params-note,
 .lw-settings-modal.is-channel-2 .lw-world-state-note,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note {
@@ -2324,6 +2330,7 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar,
+.lw-settings-modal.is-channel-2 .lw-world-context-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar {
@@ -2331,6 +2338,7 @@ var CSS = `
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note::-webkit-scrollbar-thumb,
+.lw-settings-modal.is-channel-2 .lw-world-context-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-params-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-state-note::-webkit-scrollbar-thumb,
 .lw-settings-modal.is-channel-2 .lw-world-schedule-note::-webkit-scrollbar-thumb {
@@ -2348,9 +2356,15 @@ var CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note {
   align-self: start;
-  height: 320px !important;
-  max-height: 320px !important;
+  height: 270px !important;
+  max-height: 270px !important;
   z-index: 80;
+}
+
+.lw-settings-modal.is-channel-2 .lw-world-context-note {
+  align-self: start;
+  height: 170px !important;
+  max-height: 170px !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note {
@@ -2440,6 +2454,9 @@ function normalizeWorldAgentSettings(value) {
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
     hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_WORLD_AGENT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_WORLD_AGENT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_WORLD_AGENT_SETTINGS.includeCharacter,
     injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
     autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
     scheduleTemplate,
@@ -2527,15 +2544,23 @@ function formatTime(timestamp) {
 function formatClock(state, hourDurationMs = DEFAULT_WORLD_AGENT_HOUR_DURATION_MS, now = Date.now()) {
   if (!state)
     return "Day 1, 8:00:00am";
+  let day = state.day;
+  let hour = state.hour;
   let minute = 0;
   let second = 0;
   if (state.running && state.lastTickAt != null && hourDurationMs > 0) {
-    const elapsed = Math.max(0, Math.min(hourDurationMs - 1, now - state.lastTickAt));
-    const simulatedSeconds = Math.floor(elapsed / hourDurationMs * 3600);
-    minute = Math.floor(simulatedSeconds / 60);
-    second = simulatedSeconds % 60;
+    const elapsed = Math.max(0, now - state.lastTickAt);
+    if (elapsed >= hourDurationMs) {
+      const nextHour = (hour + 1) % 24;
+      day += nextHour === 0 ? 1 : 0;
+      hour = nextHour;
+    } else {
+      const simulatedSeconds = Math.floor(elapsed / hourDurationMs * 3600);
+      minute = Math.floor(simulatedSeconds / 60);
+      second = simulatedSeconds % 60;
+    }
   }
-  return `Day ${state.day}, ${formatTimeLabel(state.hour, minute, second)}`;
+  return `Day ${day}, ${formatTimeLabel(hour, minute, second)}`;
 }
 function formatHourLabel(hour) {
   return formatTimeLabel(hour, 0, 0, false);
@@ -2999,6 +3024,14 @@ function setup(ctx) {
     form1.append(field("Connection", connSlot), field("Model Override", modelSlot));
     paper1.appendChild(form1);
     shell.appendChild(paper1);
+    const contextPaper = createElement("div", "lw-paper lw-world-context-note");
+    const contextHead = createElement("div", "lw-panel-head");
+    contextHead.appendChild(createElement("h3", undefined, "Agent Context"));
+    contextPaper.appendChild(contextHead);
+    const contextForm = createElement("div", "lw-form");
+    contextForm.append(toggleField("User persona", draft.worldAgent.includeUserPersona, (checked) => updateWorldAgent({ includeUserPersona: checked }), "Send the active user persona to the World Agent."), toggleField("Character", draft.worldAgent.includeCharacter, (checked) => updateWorldAgent({ includeCharacter: checked }), "Send the active character card to the World Agent."), numberField("History", draft.worldAgent.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES, 1, (v) => updateWorldAgent({ historyMessageLimit: v })));
+    contextPaper.appendChild(contextForm);
+    shell.appendChild(contextPaper);
     const paper2 = createElement("div", "lw-paper lw-world-params-note");
     const head2 = createElement("div", "lw-panel-head");
     head2.appendChild(createElement("h3", undefined, "Simulation Parameters"));
@@ -3130,9 +3163,9 @@ function setup(ctx) {
     const missingPermissions = [
       !state.permissions.interceptor ? "Interceptor" : null,
       !state.permissions.generation ? "Generation" : null,
-      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.chats ? "Chats" : null,
-      (draft.includeCharacter || draft.worldAgent.enabled) && !state.permissions.characters ? "Characters" : null,
-      (draft.includeUserPersona || draft.worldAgent.enabled) && !state.permissions.personas ? "Personas" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled && draft.worldAgent.includeCharacter) && !state.permissions.chats ? "Chats" : null,
+      (draft.includeCharacter || draft.worldAgent.enabled && draft.worldAgent.includeCharacter) && !state.permissions.characters ? "Characters" : null,
+      (draft.includeUserPersona || draft.worldAgent.enabled && draft.worldAgent.includeUserPersona) && !state.permissions.personas ? "Personas" : null,
       draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null
     ].filter(Boolean);
     if (missingPermissions.length) {
