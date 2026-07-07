@@ -1972,7 +1972,7 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-modal-grid {
   grid-template-columns: 600px 390px 500px;
-  grid-template-rows: 350px 270px 170px 270px;
+  grid-template-rows: 350px 310px 200px 300px;
   justify-content: center;
   align-content: start;
   grid-template-areas:
@@ -2522,15 +2522,15 @@ const CSS = `
 
 .lw-settings-modal.is-channel-2 .lw-world-config-note {
   align-self: start;
-  height: 270px !important;
-  max-height: 270px !important;
+  height: 300px !important;
+  max-height: 300px !important;
   z-index: 80;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-context-note {
   align-self: start;
-  height: 170px !important;
-  max-height: 170px !important;
+  height: 200px !important;
+  max-height: 200px !important;
 }
 
 .lw-settings-modal.is-channel-2 .lw-world-state-note {
