@@ -1927,17 +1927,38 @@ const CSS = `
   z-index: 20;
 }
 
-.lw-settings-modal .lw-modal-grid {
-  display: grid;
+.lw-settings-modal .lw-modal-scrollbox {
   grid-column: 1 / -1;
   grid-row: 2;
-  gap: 10px;
-  align-items: stretch;
   min-height: 0;
   height: 100%;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 8px 10px 0;
   position: relative;
   z-index: 20;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 69, 19, 0.55) rgba(255, 250, 205, 0.2);
+}
+.lw-settings-modal .lw-modal-scrollbox::-webkit-scrollbar { width: 10px; }
+.lw-settings-modal .lw-modal-scrollbox::-webkit-scrollbar-thumb {
+  background: rgba(139, 69, 19, 0.55);
+  border-radius: 8px;
+}
+.lw-settings-modal .lw-modal-scrollbox::-webkit-scrollbar-track {
+  background: rgba(255, 250, 205, 0.18);
+  border-radius: 8px;
+}
+
+.lw-settings-modal .lw-modal-grid {
+  display: grid;
+  gap: 10px;
+  align-items: stretch;
+  min-height: 100%;
+  height: auto;
+  overflow: visible;
+  position: relative;
+  z-index: 1;
 }
 .lw-settings-modal > .lw-banner,
 .lw-settings-modal > .lw-empty {
@@ -3725,10 +3746,12 @@ export function setup(ctx: SpindleFrontendContext) {
       }
 
       renderBanners(shell);
+      const scrollbox = createElement("div", "lw-modal-scrollbox");
       const grid = createElement("div", "lw-modal-grid");
       if (activeChannel === "director") renderDirectorChannel(grid);
       else renderWorldAgentChannel(grid);
-      shell.appendChild(grid);
+      scrollbox.appendChild(grid);
+      shell.appendChild(scrollbox);
       settingsModal.root.appendChild(shell);
     } finally {
       activeHandles = previousHandles;
