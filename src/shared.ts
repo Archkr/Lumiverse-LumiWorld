@@ -1018,6 +1018,18 @@ function stripCodeFence(value: string): string {
   return (match ? match[1] : trimmed).trim();
 }
 
+function extractFirstCodeFence(value: string): string | null {
+  const match = value.match(/```(?:json|text)?\s*([\s\S]*?)\s*```/i);
+  return match ? match[1].trim() : null;
+}
+
+function looksLikeStructuredScheduleText(value: string): boolean {
+  const stripped = stripCodeFence(value);
+  if (!stripped) return false;
+  if (/^\s*[\[{]/.test(stripped)) return true;
+  return /"schedule"\s*:|["']hour["']\s*:|```(?:json|text)?/i.test(value);
+}
+
 function findJsonObject(value: string): unknown | null {
   const stripped = stripCodeFence(value);
   try {
@@ -1318,6 +1330,14 @@ function parseJsonishValue(value: unknown): unknown | null {
   try {
     return JSON.parse(stripped);
   } catch {
+    const fenced = extractFirstCodeFence(value);
+    if (fenced && fenced !== stripped) {
+      try {
+        return JSON.parse(fenced);
+      } catch {
+        // fall through to loose extraction
+      }
+    }
     const arrayMatch = stripped.match(/\[[\s\S]*\]/);
     if (arrayMatch) {
       try {
@@ -1359,6 +1379,7 @@ function extractLooseScheduleRecords(value: string): unknown[] {
 
 function scheduleItemFromRecord(value: unknown, index: number): WorldAgentScheduleItem | null {
   if (typeof value === "string") {
+    if (looksLikeStructuredScheduleText(value)) return null;
     const activity = normalizeDirectiveText(value, 600);
     return activity ? { hour: index % 24, activity } : null;
   }
@@ -1368,6 +1389,7 @@ function scheduleItemFromRecord(value: unknown, index: number): WorldAgentSchedu
   );
   const location = cleanString(obj.location ?? obj.place ?? obj.where);
   const label = cleanString(obj.label ?? obj.title ?? obj.time);
+  if (activity && looksLikeStructuredScheduleText(activity) && !location) return null;
   if (!activity && !location) return null;
   return {
     hour: normalizeScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour, index % 24),
@@ -1400,7 +1422,7 @@ export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleI
     const text = typeof item === "string" ? item : cleanString(record.activity ?? record.description ?? record.note ?? record.plan);
     if (!text) return [item];
     const looseRecords = extractLooseScheduleRecords(text);
-    return looseRecords.length > 1 ? looseRecords : [item];
+    return looseRecords.length > 0 ? looseRecords : [item];
   });
   const seen = new Set<string>();
   const items: WorldAgentScheduleItem[] = [];
@@ -1429,6 +1451,7 @@ export function parseWorldAgentSchedule(raw: unknown): WorldAgentScheduleItem[] 
   if (typeof raw === "string") {
     const loose = normalizeWorldAgentSchedule(extractLooseScheduleRecords(raw));
     if (loose.length > 0) return loose;
+    if (looksLikeStructuredScheduleText(raw)) return [];
     const fallback = normalizeDirectiveText(raw, 900);
     return fallback ? normalizeWorldAgentSchedule([{ hour: 0, activity: fallback }]) : [];
   }

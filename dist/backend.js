@@ -721,6 +721,18 @@ function stripCodeFence(value) {
   const match = trimmed.match(/^```(?:json|text)?\s*([\s\S]*?)\s*```$/i);
   return (match ? match[1] : trimmed).trim();
 }
+function extractFirstCodeFence(value) {
+  const match = value.match(/```(?:json|text)?\s*([\s\S]*?)\s*```/i);
+  return match ? match[1].trim() : null;
+}
+function looksLikeStructuredScheduleText(value) {
+  const stripped = stripCodeFence(value);
+  if (!stripped)
+    return false;
+  if (/^\s*[\[{]/.test(stripped))
+    return true;
+  return /"schedule"\s*:|["']hour["']\s*:|```(?:json|text)?/i.test(value);
+}
 function findJsonObject(value) {
   const stripped = stripCodeFence(value);
   try {
@@ -1015,6 +1027,12 @@ function parseJsonishValue(value) {
   try {
     return JSON.parse(stripped);
   } catch {
+    const fenced = extractFirstCodeFence(value);
+    if (fenced && fenced !== stripped) {
+      try {
+        return JSON.parse(fenced);
+      } catch {}
+    }
     const arrayMatch = stripped.match(/\[[\s\S]*\]/);
     if (arrayMatch) {
       try {
@@ -1047,6 +1065,8 @@ function extractLooseScheduleRecords(value) {
 }
 function scheduleItemFromRecord(value, index) {
   if (typeof value === "string") {
+    if (looksLikeStructuredScheduleText(value))
+      return null;
     const activity2 = normalizeDirectiveText(value, 600);
     return activity2 ? { hour: index % 24, activity: activity2 } : null;
   }
@@ -1054,6 +1074,8 @@ function scheduleItemFromRecord(value, index) {
   const activity = cleanString(obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan);
   const location = cleanString(obj.location ?? obj.place ?? obj.where);
   const label = cleanString(obj.label ?? obj.title ?? obj.time);
+  if (activity && looksLikeStructuredScheduleText(activity) && !location)
+    return null;
   if (!activity && !location)
     return null;
   return {
@@ -1088,7 +1110,7 @@ function normalizeWorldAgentSchedule(value) {
     if (!text)
       return [item];
     const looseRecords = extractLooseScheduleRecords(text);
-    return looseRecords.length > 1 ? looseRecords : [item];
+    return looseRecords.length > 0 ? looseRecords : [item];
   });
   const seen = new Set;
   const items = [];
@@ -1116,6 +1138,8 @@ function parseWorldAgentSchedule(raw) {
     const loose = normalizeWorldAgentSchedule(extractLooseScheduleRecords(raw));
     if (loose.length > 0)
       return loose;
+    if (looksLikeStructuredScheduleText(raw))
+      return [];
     const fallback = normalizeDirectiveText(raw, 900);
     return fallback ? normalizeWorldAgentSchedule([{ hour: 0, activity: fallback }]) : [];
   }

@@ -511,7 +511,20 @@ describe("World Agent state and parsing", () => {
     expect(parsedMessy[7]).toEqual({ hour: 7, location: "Kitchen", activity: "Breakfast" });
     expect(parsedMessy[8]).toEqual({ hour: 8, location: "Kitchen", activity: "Breakfast" });
     expect(parsedMessy[9]).toEqual({ hour: 9, location: "Training Facility", activity: "Combat training" });
-    expect(normalizeWorldAgentState({ schedule: [{ hour: 0, activity: messySchedule }] }, "chat-1").schedule).toHaveLength(24);
+    const repairedSavedSchedule = normalizeWorldAgentState({ schedule: [{ hour: 0, activity: messySchedule }] }, "chat-1").schedule;
+    expect(repairedSavedSchedule).toHaveLength(24);
+    expect(repairedSavedSchedule[0].activity).toBe("Sleeping");
+    expect(repairedSavedSchedule[0].activity).not.toContain('"schedule"');
+    const truncatedJsonSchedule = parseWorldAgentSchedule('{"schedule":[{"hour":0,"location":"Home"');
+    expect(truncatedJsonSchedule).toEqual([]);
+    const savedJsonBlobSchedule = normalizeWorldAgentState({
+      schedule: [{
+        hour: 0,
+        activity: '{"schedule":[{"hour":0,"location":"Home","activity":"Sleeping"},{"hour":7,"location":"Kitchen","activity":"Breakfast"}]}',
+      }],
+    }, "chat-1").schedule;
+    expect(savedJsonBlobSchedule[0]).toEqual({ hour: 0, location: "Home", activity: "Sleeping" });
+    expect(savedJsonBlobSchedule[7]).toEqual({ hour: 7, location: "Kitchen", activity: "Breakfast" });
     const fallbackSchedule = parseWorldAgentSchedule("A loose private day plan.");
     expect(fallbackSchedule).toHaveLength(24);
     expect(fallbackSchedule[0].activity).toBe("A loose private day plan.");
