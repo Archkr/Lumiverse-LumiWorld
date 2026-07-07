@@ -3685,7 +3685,7 @@ export function setup(ctx: SpindleFrontendContext) {
           draft = cloneSettings(message.settings);
           if (state) state = { ...state, settings: message.settings };
           drawerTab.setBadge(null);
-          render();
+          renderWidget();
         } else if (!saveTimer) {
           scheduleAutoSave();
         }
