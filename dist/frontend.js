@@ -2524,16 +2524,31 @@ function formatTime(timestamp) {
     return "";
   }
 }
-function formatClock(state) {
+function formatClock(state, hourDurationMs = DEFAULT_WORLD_AGENT_HOUR_DURATION_MS, now = Date.now()) {
   if (!state)
-    return "Day 1, 8:00am";
-  return `Day ${state.day}, ${formatHourLabel(state.hour)}`;
+    return "Day 1, 8:00:00am";
+  let minute = 0;
+  let second = 0;
+  if (state.running && state.lastTickAt != null && hourDurationMs > 0) {
+    const elapsed = Math.max(0, Math.min(hourDurationMs - 1, now - state.lastTickAt));
+    const simulatedSeconds = Math.floor(elapsed / hourDurationMs * 3600);
+    minute = Math.floor(simulatedSeconds / 60);
+    second = simulatedSeconds % 60;
+  }
+  return `Day ${state.day}, ${formatTimeLabel(state.hour, minute, second)}`;
 }
 function formatHourLabel(hour) {
+  return formatTimeLabel(hour, 0, 0, false);
+}
+function formatTimeLabel(hour, minute, second, includeSeconds = true) {
   const normalized = Math.max(0, Math.min(23, Math.round(hour)));
   const period = normalized < 12 ? "am" : "pm";
   const displayHour = normalized % 12 || 12;
-  return `${displayHour}:00${period}`;
+  const minutes = String(Math.max(0, Math.min(59, Math.floor(minute)))).padStart(2, "0");
+  if (!includeSeconds)
+    return `${displayHour}:${minutes}${period}`;
+  const seconds = String(Math.max(0, Math.min(59, Math.floor(second)))).padStart(2, "0");
+  return `${displayHour}:${minutes}:${seconds}${period}`;
 }
 function connectionLabel(connection) {
   const bits = [connection.name, connection.provider, connection.model].filter(Boolean);
@@ -2573,6 +2588,7 @@ function setup(ctx) {
   let widget = null;
   let notice = null;
   let noticeTimer = null;
+  let liveClockTimer = null;
   cleanups.push(ctx.dom.addStyle(CSS));
   const drawerTab = ctx.ui.registerDrawerTab({
     id: "lumi-world",
@@ -2597,6 +2613,32 @@ function setup(ctx) {
         render();
       }, ttlMs);
     }
+  }
+  function currentDisplayClock(now = Date.now()) {
+    return formatClock(state?.worldState, draft.worldAgent.hourDurationMs, now);
+  }
+  function markLiveClock(element, prefix = "") {
+    element.dataset.lwLiveClockPrefix = prefix;
+    return element;
+  }
+  function updateLiveClockText(now = Date.now()) {
+    const value = currentDisplayClock(now);
+    const roots = [widget?.root, drawerTab.root, settingsModal?.root].filter(Boolean);
+    for (const root of roots) {
+      for (const element of Array.from(root.querySelectorAll("[data-lw-live-clock-prefix]"))) {
+        element.textContent = `${element.dataset.lwLiveClockPrefix ?? ""}${value}`;
+      }
+    }
+  }
+  function syncLiveClockTimer() {
+    const shouldRun = !!state?.worldState?.running && draft.worldAgent.enabled;
+    if (shouldRun && !liveClockTimer) {
+      liveClockTimer = setInterval(() => updateLiveClockText(), 1000);
+    } else if (!shouldRun && liveClockTimer) {
+      clearInterval(liveClockTimer);
+      liveClockTimer = null;
+    }
+    updateLiveClockText();
   }
   async function copyTextToClipboard(text) {
     try {
@@ -2976,7 +3018,7 @@ function setup(ctx) {
     const panel = createElement("div", "lw-clock lw-world-clock-note");
     const stateNow = state?.worldState ?? null;
     const top = createElement("div", "lw-clock-top");
-    top.append(createElement("div", "lw-clock-time", formatClock(stateNow)), createElement("span", "lw-clock-status", stateNow?.running ? "▶ Running" : "⏸ Paused"));
+    top.append(markLiveClock(createElement("div", "lw-clock-time", formatClock(stateNow, draft.worldAgent.hourDurationMs))), createElement("span", "lw-clock-status", stateNow?.running ? "▶ Running" : "⏸ Paused"));
     panel.appendChild(top);
     const actions = createElement("div", "lw-clock-actions");
     const startPause = createElement("button", `lw-btn${stateNow?.running ? "" : " lw-btn-primary"}`, stateNow?.running ? "Pause" : "Start");
@@ -3197,7 +3239,7 @@ function setup(ctx) {
     const world = state.worldState ?? null;
     return [
       draft.worldAgent.enabled ? `Clock: ${world?.running ? "running" : "paused"}` : "World Agent disabled",
-      `Time: ${formatClock(world)}`,
+      `Time: ${formatClock(world, draft.worldAgent.hourDurationMs)}`,
       `Mood: ${worldStateCardValue(world?.mood, "Neutral")}`,
       `Goal: ${worldStateCardValue(world?.goal, "Unset")}`
     ];
@@ -3212,13 +3254,17 @@ function setup(ctx) {
     const monitor = createElement("div", "lw-monitor");
     const screen = createElement("div", "lw-monitor-screen");
     const head = createElement("div", "lw-monitor-head");
-    head.append(createElement("span", undefined, "LumiWorld"), createElement("span", undefined, formatClock(state?.worldState)));
+    head.append(createElement("span", undefined, "LumiWorld"), markLiveClock(createElement("span", undefined, formatClock(state?.worldState, draft.worldAgent.hourDurationMs))));
     screen.appendChild(head);
     const noteHead = createElement("div", "lw-monitor-note-head");
     noteHead.append(createElement("span", undefined, activeChannel === "director" ? "Director Note" : "World"), createElement("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
     const lines = createElement("div", "lw-monitor-lines");
-    for (const line of widgetNoteLines())
-      lines.appendChild(createElement("div", "lw-monitor-line", line));
+    for (const [index, line] of widgetNoteLines().entries()) {
+      const row = createElement("div", "lw-monitor-line", line);
+      if (activeChannel === "world_agent" && index === 1)
+        markLiveClock(row, "Time: ");
+      lines.appendChild(row);
+    }
     screen.append(noteHead, lines);
     const screenActions = createElement("div", "lw-monitor-actions");
     const refresh = createElement("button", "lw-monitor-action", "Refresh");
@@ -3317,6 +3363,7 @@ function setup(ctx) {
     renderDrawer();
     if (settingsModal)
       renderSettingsModal();
+    syncLiveClockTimer();
   }
   const onBackendMessage = ctx.onBackendMessage((raw) => {
     const message = raw;
@@ -3346,6 +3393,7 @@ function setup(ctx) {
             state = { ...state, settings: message.settings };
           drawerTab.setBadge(null);
           renderWidget();
+          syncLiveClockTimer();
         } else if (!saveTimer) {
           scheduleAutoSave();
         }
@@ -3403,6 +3451,10 @@ function setup(ctx) {
     if (noticeTimer) {
       clearTimeout(noticeTimer);
       noticeTimer = null;
+    }
+    if (liveClockTimer) {
+      clearInterval(liveClockTimer);
+      liveClockTimer = null;
     }
     destroyHandles(widgetHandles);
     destroyHandles(modalHandles);
