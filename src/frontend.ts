@@ -88,6 +88,7 @@ interface PermissionState {
   interceptor: boolean;
   generation: boolean;
   chats: boolean;
+  chatMutation: boolean;
   characters: boolean;
   personas: boolean;
   worldBooks: boolean;
@@ -3517,6 +3518,7 @@ export function setup(ctx: SpindleFrontendContext) {
       !state.permissions.interceptor ? "Interceptor" : null,
       !state.permissions.generation ? "Generation" : null,
       (draft.includeCharacter || (draft.worldAgent.enabled && draft.worldAgent.includeCharacter)) && !state.permissions.chats ? "Chats" : null,
+      draft.worldAgent.enabled && draft.worldAgent.historyMessageLimit > 0 && !state.permissions.chatMutation ? "Chat Mutation" : null,
       (draft.includeCharacter || (draft.worldAgent.enabled && draft.worldAgent.includeCharacter)) && !state.permissions.characters ? "Characters" : null,
       (draft.includeUserPersona || (draft.worldAgent.enabled && draft.worldAgent.includeUserPersona)) && !state.permissions.personas ? "Personas" : null,
       draft.includeWorldInfoEntries && !state.permissions.worldBooks ? "World Books" : null

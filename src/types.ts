@@ -4,6 +4,7 @@ export interface PermissionState {
   interceptor: boolean;
   generation: boolean;
   chats: boolean;
+  chatMutation: boolean;
   characters: boolean;
   personas: boolean;
   worldBooks: boolean;

@@ -609,6 +609,45 @@ function selectChatHistoryMessagesForController(messages, limit) {
     return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
+function rawRecord(value) {
+  return value && typeof value === "object" ? value : {};
+}
+function activeChatMessageContent(message) {
+  if (typeof message.content === "string" && message.content.trim())
+    return message.content;
+  if (!Array.isArray(message.swipes) || message.swipes.length === 0)
+    return "";
+  const index = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id) ? Math.max(0, Math.min(message.swipes.length - 1, Math.floor(message.swipe_id))) : 0;
+  const swipe = message.swipes[index];
+  return typeof swipe === "string" ? swipe : "";
+}
+function chatMutationRole(message) {
+  return message.role === "system" || message.role === "assistant" || message.role === "user" ? message.role : message.is_user === true ? "user" : "assistant";
+}
+function isHiddenChatMutationMessage(message) {
+  return rawRecord(message.extra).hidden === true || rawRecord(message.metadata).hidden === true;
+}
+function selectChatMutationMessagesForController(messages, limit) {
+  const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
+  if (cappedLimit <= 0)
+    return [];
+  return messages.filter((message) => !isHiddenChatMutationMessage(message)).map((message) => {
+    const content = activeChatMessageContent(message).trim();
+    if (!content)
+      return null;
+    const selected = {
+      role: chatMutationRole(message),
+      content,
+      __isChatHistory: true
+    };
+    if (typeof message.id === "string" && message.id.trim())
+      selected.sourceMessageId = message.id.trim();
+    if (typeof message.index_in_chat === "number" && Number.isFinite(message.index_in_chat)) {
+      selected.sourceIndexInChat = Math.floor(message.index_in_chat);
+    }
+    return selected;
+  }).filter((message) => !!message).slice(-cappedLimit);
+}
 function selectControllerMessagesForController(messages, settings, contextMessages = []) {
   const selected = [...contextMessages];
   selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
@@ -1337,6 +1376,9 @@ function connectionsApi() {
 function chatsApi() {
   return spindle.chats;
 }
+function chatApi() {
+  return spindle.chat;
+}
 function charactersApi() {
   return spindle.characters;
 }
@@ -1356,6 +1398,7 @@ var PERMISSION_IDS = {
   interceptor: "interceptor",
   generation: "generation",
   chats: "chats",
+  chatMutation: "chat_mutation",
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books"
@@ -1401,6 +1444,7 @@ function currentPermissions() {
     interceptor: permissionHas("interceptor"),
     generation: permissionHas("generation"),
     chats: permissionHas("chats"),
+    chatMutation: permissionHas("chatMutation"),
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks")
@@ -1489,6 +1533,19 @@ function cacheWorldAgentChatHistory(userId, chatId, messages, limit) {
 }
 function getCachedWorldAgentChatHistory(userId, chatId, limit) {
   return selectChatHistoryMessagesForController(worldAgentHistoryCache.get(worldAgentBusyKey(userId, chatId)) ?? [], limit);
+}
+async function readWorldAgentChatHistory(userId, chatId, limit) {
+  if (limit <= 0)
+    return [];
+  if (permissionHas("chatMutation") && typeof chatApi()?.getMessages === "function") {
+    try {
+      const messages = await chatApi().getMessages(chatId);
+      return selectChatMutationMessagesForController(Array.isArray(messages) ? messages : [], limit);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not read chat history for World Agent: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return getCachedWorldAgentChatHistory(userId, chatId, limit);
 }
 function toConnectionOption(connection) {
   return {
@@ -1899,7 +1956,7 @@ async function resolveWorldAgentContext(settings, chatId, userId, characterId) {
     includeUserPersona: settings.worldAgent.includeUserPersona,
     includeCharacter: settings.worldAgent.includeCharacter
   }, context, chatId, userId);
-  const historyMessages = getCachedWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
+  const historyMessages = await readWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
   return {
     contextMessages: [...resolved.messages, ...historyMessages],
     identity: resolved.identity,

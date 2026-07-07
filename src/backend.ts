@@ -37,6 +37,7 @@ import {
   resolveWorldAgentTarget,
   resolveWorldInfoContextMessages,
   selectChatHistoryMessagesForController,
+  selectChatMutationMessagesForController,
   selectControllerMessagesForController,
   shouldInterceptGeneration,
   type IdentityMacroValues,
@@ -108,6 +109,10 @@ function chatsApi(): any {
   return (spindle as any).chats;
 }
 
+function chatApi(): any {
+  return (spindle as any).chat;
+}
+
 function charactersApi(): any {
   return (spindle as any).characters;
 }
@@ -132,6 +137,7 @@ const PERMISSION_IDS: Record<keyof PermissionState, string> = {
   interceptor: "interceptor",
   generation: "generation",
   chats: "chats",
+  chatMutation: "chat_mutation",
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books",
@@ -178,6 +184,7 @@ function currentPermissions(): PermissionState {
     interceptor: permissionHas("interceptor"),
     generation: permissionHas("generation"),
     chats: permissionHas("chats"),
+    chatMutation: permissionHas("chatMutation"),
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks"),
@@ -284,6 +291,23 @@ function getCachedWorldAgentChatHistory(
   limit: number,
 ): LlmMessageLike[] {
   return selectChatHistoryMessagesForController(worldAgentHistoryCache.get(worldAgentBusyKey(userId, chatId)) ?? [], limit);
+}
+
+async function readWorldAgentChatHistory(
+  userId: string | null | undefined,
+  chatId: string,
+  limit: number,
+): Promise<LlmMessageLike[]> {
+  if (limit <= 0) return [];
+  if (permissionHas("chatMutation") && typeof chatApi()?.getMessages === "function") {
+    try {
+      const messages = await chatApi().getMessages(chatId);
+      return selectChatMutationMessagesForController(Array.isArray(messages) ? messages : [], limit);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not read chat history for World Agent: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return getCachedWorldAgentChatHistory(userId, chatId, limit);
 }
 
 function toConnectionOption(connection: ConnectionProfileDTO | any): ConnectionOption {
@@ -774,7 +798,7 @@ async function resolveWorldAgentContext(
     chatId,
     userId,
   );
-  const historyMessages = getCachedWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
+  const historyMessages = await readWorldAgentChatHistory(userId, chatId, settings.worldAgent.historyMessageLimit);
   return {
     contextMessages: [...resolved.messages, ...historyMessages],
     identity: resolved.identity,

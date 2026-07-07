@@ -35,6 +35,7 @@ import {
   extractActivatedWorldInfoEntries,
   resolveIdentityMacros,
   selectChatHistoryMessagesForController,
+  selectChatMutationMessagesForController,
   selectControllerMessagesForController,
   serializeMessageContent,
   shouldInterceptGeneration,
@@ -328,6 +329,21 @@ describe("message serialization and prompt trimming", () => {
     const selected = selectChatHistoryMessagesForController(messages, 2);
     expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
+
+  test("selects recent raw chat messages from chat mutation reads", () => {
+    const selected = selectChatMutationMessagesForController([
+      { id: "hidden", role: "user", content: "hidden user", index_in_chat: 1, extra: { hidden: true } },
+      { id: "empty", role: "assistant", content: "   ", index_in_chat: 2 },
+      { id: "old", role: "user", content: "old user", index_in_chat: 3 },
+      { id: "swipe", role: "assistant", content: "", swipes: ["draft", "active swipe"], swipe_id: 1, index_in_chat: 4 },
+      { id: "new", is_user: true, content: "new user", index_in_chat: 5 },
+    ], 2);
+
+    expect(selected.map((message) => message.content)).toEqual(["active swipe", "new user"]);
+    expect(selected.map((message) => message.role)).toEqual(["assistant", "user"]);
+    expect(selected.map((message) => message.sourceMessageId)).toEqual(["swipe", "new"]);
+    expect(selectChatMutationMessagesForController(selected, 0)).toEqual([]);
   });
 
   test("builds controller input from resolved context blocks and recent chat history", () => {

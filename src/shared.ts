@@ -142,6 +142,18 @@ export interface WorldInfoContextResult {
   diagnostics: WorldInfoContextDiagnostics;
 }
 
+export interface ChatMutationMessageLike {
+  id?: unknown;
+  index_in_chat?: unknown;
+  role?: unknown;
+  is_user?: unknown;
+  content?: unknown;
+  swipe_id?: unknown;
+  swipes?: unknown;
+  extra?: unknown;
+  metadata?: unknown;
+}
+
 export interface ControllerTemplateContext {
   prompt: string;
   generationType: string;
@@ -901,6 +913,55 @@ export function selectChatHistoryMessagesForController(messages: LlmMessageLike[
   const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
   if (cappedLimit <= 0) return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
+}
+
+function rawRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function activeChatMessageContent(message: ChatMutationMessageLike): string {
+  if (typeof message.content === "string" && message.content.trim()) return message.content;
+  if (!Array.isArray(message.swipes) || message.swipes.length === 0) return "";
+  const index = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id)
+    ? Math.max(0, Math.min(message.swipes.length - 1, Math.floor(message.swipe_id)))
+    : 0;
+  const swipe = message.swipes[index];
+  return typeof swipe === "string" ? swipe : "";
+}
+
+function chatMutationRole(message: ChatMutationMessageLike): MessageRole {
+  return message.role === "system" || message.role === "assistant" || message.role === "user"
+    ? message.role
+    : message.is_user === true
+      ? "user"
+      : "assistant";
+}
+
+function isHiddenChatMutationMessage(message: ChatMutationMessageLike): boolean {
+  return rawRecord(message.extra).hidden === true || rawRecord(message.metadata).hidden === true;
+}
+
+export function selectChatMutationMessagesForController(messages: ChatMutationMessageLike[], limit: number): LlmMessageLike[] {
+  const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
+  if (cappedLimit <= 0) return [];
+  return messages
+    .filter((message) => !isHiddenChatMutationMessage(message))
+    .map((message): LlmMessageLike | null => {
+      const content = activeChatMessageContent(message).trim();
+      if (!content) return null;
+      const selected: LlmMessageLike = {
+        role: chatMutationRole(message),
+        content,
+        __isChatHistory: true,
+      };
+      if (typeof message.id === "string" && message.id.trim()) selected.sourceMessageId = message.id.trim();
+      if (typeof message.index_in_chat === "number" && Number.isFinite(message.index_in_chat)) {
+        selected.sourceIndexInChat = Math.floor(message.index_in_chat);
+      }
+      return selected;
+    })
+    .filter((message): message is LlmMessageLike => !!message)
+    .slice(-cappedLimit);
 }
 
 export function selectControllerMessagesForController(
