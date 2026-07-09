@@ -117,8 +117,26 @@ var CSS = `
 .lw-empty { color:var(--lumiverse-text-dim); border:1px dashed var(--lumiverse-border); border-radius:6px; padding:14px; text-align:center; }
 .lw-drawer { min-height:100%; padding:12px; background:var(--lumiverse-surface, transparent); }.lw-drawer-header { display:flex; justify-content:space-between; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--lumiverse-border); }.lw-drawer-title { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:750; }.lw-drawer-icon { width:22px; height:22px; color:var(--lumiverse-primary, var(--lumiverse-accent)); }.lw-drawer-body { padding-top:12px; }.lw-drawer .lw-grid { grid-template-columns:1fr; }.lw-drawer .lw-panel,.lw-drawer .lw-panel.wide,.lw-drawer .lw-panel.half,.lw-drawer .lw-panel.full { grid-column:1 / -1; }
 .lw-float-root { width:260px; min-height:258px; position:relative; padding-top:42px; color:#2b201d; font-family:"Courier New",Courier,monospace; font-size:11px; line-height:1.35; user-select:none; }.lw-float-root * { box-sizing:border-box; }.lw-monitor { width:236px; margin:0 auto; padding:12px 12px 30px; position:relative; border:5px solid #8b7765; outline:2px solid #3a261f; border-radius:20px 20px 10px 10px; background:linear-gradient(145deg,#efe6d1,#c8baa0); box-shadow:0 14px 24px rgba(0,0,0,.45),inset 0 0 0 2px rgba(255,255,255,.28),inset 0 2px 4px rgba(255,255,255,.75),inset 0 -5px 10px rgba(0,0,0,.16); }.lw-monitor::before { content:""; position:absolute; top:8px; left:50%; width:92px; height:5px; transform:translateX(-50%); border-radius:999px; background:repeating-linear-gradient(90deg,#8f887a 0 3px,#665e54 3px 6px); }.lw-monitor::after { content:"LumiVision"; position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:#81796f; font-family:Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:1.6px; }.lw-monitor-antenna { position:absolute; top:-48px; left:50%; z-index:-1; width:4px; height:58px; transform-origin:bottom center; border-radius:999px; background:linear-gradient(to bottom,#b9ab92,#756653); box-shadow:0 0 2px rgba(0,0,0,.65); }.lw-monitor-antenna.left { transform:translateX(-18px) rotate(-34deg); }.lw-monitor-antenna.right { transform:translateX(18px) rotate(34deg); }.lw-monitor-screen { position:relative; aspect-ratio:4 / 3; overflow:hidden; padding:8px 8px 24px; border:7px solid #211f1d; border-radius:18px / 14px; background:radial-gradient(circle at 55% 40%,rgba(255,126,0,.16),transparent 42%),#080807; color:#ff9e3d; box-shadow:inset 0 0 28px rgba(0,0,0,.95),inset 0 0 10px rgba(255,158,61,.1); text-shadow:0 0 5px #ff5500; }.lw-monitor-screen::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(rgba(255,255,255,.035) 50%,rgba(0,0,0,.2) 50%); background-size:100% 4px; }.lw-monitor-head { position:relative; z-index:1; display:flex; justify-content:space-between; gap:6px; margin-bottom:4px; padding-bottom:3px; border-bottom:1px solid #ff7e00; font-size:10px; font-weight:700; }.lw-monitor-note-head { position:relative; z-index:1; display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:3px; font-size:10px; font-weight:800; text-transform:uppercase; }.lw-monitor-lines { position:relative; z-index:1; display:grid; gap:1px; }.lw-monitor-line { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }.lw-monitor-actions { position:absolute; z-index:1; right:10px; bottom:8px; left:10px; display:flex; justify-content:center; }.lw-monitor-action { appearance:none; border:0; background:transparent; color:#ff9e3d; padding:0; font:inherit; font-size:9px; font-weight:800; line-height:1; text-transform:uppercase; text-shadow:0 0 5px #ff5500; cursor:pointer; }.lw-monitor-action:hover { color:#ffd08a; text-decoration:underline; }.lw-monitor-knob { appearance:none; position:absolute; right:-10px; width:17px; height:17px; padding:0; border:2px solid #24211f; border-radius:50%; background:radial-gradient(circle at 35% 30%,#aaa,#333); box-shadow:1px 2px 4px rgba(0,0,0,.55); cursor:pointer; }.lw-monitor-knob:hover,.lw-monitor-knob:focus-visible { filter:brightness(1.25); outline:none; }.lw-monitor-knob.channel { bottom:24px; }.lw-monitor-knob.settings { bottom:48px; }.lw-save-dot { color:#6b5d4f; font-size:9px; text-transform:uppercase; }.lw-save-dot.is-saving { color:#9a6100; }.lw-save-dot.is-error { color:#9a1c1c; }
+/* Premium glass-console modal */
+.lw-workbench { padding:0; border:1px solid var(--lcs-glass-border, var(--lumiverse-border)); border-radius:var(--lumiverse-radius-xl,16px); background:linear-gradient(145deg,var(--lcs-glass-bg,var(--lumiverse-card-bg,var(--lumiverse-fill))),var(--lumiverse-bg-elevated,var(--lumiverse-fill))); box-shadow:var(--lumiverse-shadow-lg,0 24px 80px rgba(0,0,0,.5)),inset 0 1px 0 var(--lumiverse-highlight-inset-md,rgba(255,255,255,.12)); backdrop-filter:blur(var(--lcs-glass-strong-blur,12px)); }
+.lw-modal-body { padding:0; overflow:hidden; }
+.lw-console-header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:20px 24px; border-bottom:1px solid var(--lcs-glass-border,var(--lumiverse-border)); background:linear-gradient(100deg,var(--lumiverse-primary-010,transparent),transparent 52%); }
+.lw-console-header-brand { display:flex; align-items:center; gap:13px; min-width:0; }.lw-console-header-copy { min-width:0; }
+.lw-console-header-icon,.lw-console-rail-icon { display:grid; place-items:center; color:var(--lumiverse-primary,var(--lumiverse-accent)); filter:drop-shadow(0 0 9px var(--lumiverse-primary-020,transparent)); }.lw-console-header-icon { width:34px; height:34px; padding:7px; border:1px solid var(--lumiverse-primary-050,var(--lumiverse-border)); border-radius:11px; background:var(--lumiverse-primary-010,var(--lumiverse-fill)); }.lw-console-header-icon svg,.lw-console-rail-icon svg { width:100%; height:100%; }
+.lw-console-eyebrow { color:var(--lumiverse-primary-text,var(--lumiverse-primary,var(--lumiverse-accent))); font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }.lw-console-title { margin:2px 0 1px; color:var(--lumiverse-text); font-size:20px; font-weight:800; letter-spacing:-.025em; }.lw-console-subtitle { margin:0; color:var(--lumiverse-text-dim); font-size:12px; }.lw-console-header-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.lw-console-layout { display:grid; grid-template-columns:228px minmax(0,1fr); min-height:0; flex:1 1 auto; overflow:hidden; }.lw-console-rail { display:flex; min-width:0; flex-direction:column; gap:18px; padding:18px 12px; overflow:auto; border-right:1px solid var(--lcs-glass-border,var(--lumiverse-border)); background:var(--lumiverse-fill-subtle); }.lw-console-rail-brand { display:flex; align-items:center; gap:9px; padding:0 8px 4px; color:var(--lumiverse-text); font-size:14px; font-weight:800; }.lw-console-rail-icon { width:24px; height:24px; }
+.lw-console-nav { display:grid; gap:6px; }.lw-console-nav-item { display:flex; width:100%; align-items:center; gap:10px; padding:10px 9px; border:1px solid transparent; border-radius:12px; background:transparent; color:var(--lumiverse-text-dim); text-align:left; font:inherit; cursor:pointer; transition:background var(--lumiverse-transition-fast,.15s ease),border-color var(--lumiverse-transition-fast,.15s ease),color var(--lumiverse-transition-fast,.15s ease),transform var(--lumiverse-transition-fast,.15s ease); }.lw-console-nav-item:hover { transform:translateX(2px); border-color:var(--lcs-glass-border-hover,var(--lumiverse-border-hover)); background:var(--lcs-glass-bg-hover,var(--lumiverse-fill-hover)); color:var(--lumiverse-text); }.lw-console-nav-item.is-active { border-color:var(--lumiverse-primary-020,var(--lumiverse-border)); background:linear-gradient(135deg,var(--lumiverse-primary-015,var(--lumiverse-fill-hover)),var(--lumiverse-fill)); color:var(--lumiverse-text); box-shadow:inset 3px 0 var(--lumiverse-primary,var(--lumiverse-accent)),var(--lumiverse-shadow-sm,0 2px 8px rgba(0,0,0,.2)); }.lw-console-nav-item:focus-visible { outline:2px solid var(--lumiverse-primary,var(--lumiverse-accent)); outline-offset:2px; }.lw-console-nav-marker { display:grid; width:28px; height:28px; flex:0 0 auto; place-items:center; border:1px solid var(--lumiverse-border); border-radius:9px; color:var(--lumiverse-text-dim); font-family:var(--lumiverse-font-mono,ui-monospace,monospace); font-size:10px; }.lw-console-nav-item.is-active .lw-console-nav-marker { border-color:var(--lumiverse-primary-050,var(--lumiverse-primary)); background:var(--lumiverse-primary-015,var(--lumiverse-fill)); color:var(--lumiverse-primary-text,var(--lumiverse-primary)); }.lw-console-nav-copy { display:grid; min-width:0; gap:2px; }.lw-console-nav-label { color:inherit; font-size:12px; font-weight:800; }.lw-console-nav-description { overflow:hidden; color:var(--lumiverse-text-dim); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }.lw-console-rail-footer { display:grid; gap:8px; margin-top:auto; padding:11px 8px 2px; border-top:1px solid var(--lumiverse-border); color:var(--lumiverse-text-dim); font-size:10px; }
+.lw-console-main { min-width:0; min-height:0; overflow:auto; padding:22px; scrollbar-color:var(--lumiverse-primary-020,var(--lumiverse-border)) transparent; }.lw-console-main > .lw-banner { margin-bottom:12px; }.lw-console-main .lw-grid { gap:14px; }
+.lw-panel.lw-console-card { border-color:var(--lcs-glass-border,var(--lumiverse-border)); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lcs-glass-bg,var(--lumiverse-card-bg,var(--lumiverse-fill-subtle))); box-shadow:var(--lumiverse-shadow-sm,0 2px 8px rgba(0,0,0,.2)),inset 0 1px 0 var(--lumiverse-highlight-inset,rgba(255,255,255,.08)); transition:border-color var(--lumiverse-transition-fast,.15s ease),box-shadow var(--lumiverse-transition-fast,.15s ease),transform var(--lumiverse-transition-fast,.15s ease); }.lw-panel.lw-console-card:hover { transform:translateY(-1px); border-color:var(--lcs-glass-border-hover,var(--lumiverse-border-hover)); box-shadow:var(--lumiverse-shadow-md,0 8px 24px rgba(0,0,0,.3)),inset 0 1px 0 var(--lumiverse-highlight-inset-md,rgba(255,255,255,.12)); }.lw-panel.lw-console-card .lw-panel-head { align-items:flex-start; border-bottom-color:var(--lcs-glass-border,var(--lumiverse-border)); }.lw-panel.lw-console-card .lw-panel-head h3 { font-size:14px; letter-spacing:-.01em; }.lw-panel.lw-console-card .lw-panel-head .lw-status-badge { margin-left:auto; }
+.lw-overview-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:16px; padding:22px; overflow:hidden; border:1px solid var(--lumiverse-primary-020,var(--lumiverse-border)); border-radius:var(--lumiverse-radius-lg,12px); background:radial-gradient(circle at 88% 15%,var(--lumiverse-primary-015,transparent),transparent 38%),linear-gradient(135deg,var(--lcs-glass-bg-hover,var(--lumiverse-fill-hover)),var(--lcs-glass-bg,var(--lumiverse-fill))); box-shadow:inset 0 1px 0 var(--lumiverse-highlight-inset-md,rgba(255,255,255,.12)); }.lw-overview-hero-copy { max-width:650px; }.lw-overview-hero-title { margin:5px 0 7px; font-size:clamp(22px,3vw,32px); letter-spacing:-.045em; line-height:1.05; }.lw-overview-hero-text,.lw-card-copy { margin:0; color:var(--lumiverse-text-muted,var(--lumiverse-text-dim)); font-size:13px; line-height:1.55; }.lw-overview-hero-aside { display:grid; min-width:210px; gap:12px; justify-items:end; }.lw-overview-hero-metrics { display:grid; grid-template-columns:repeat(2,minmax(86px,1fr)); gap:9px; width:100%; }.lw-overview-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-bottom:14px; }.lw-overview-stat { display:grid; gap:3px; min-width:0; padding:9px 10px; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill-subtle); }.lw-overview-stat-label { overflow:hidden; color:var(--lumiverse-text-dim); font-size:10px; font-weight:700; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }.lw-overview-stat-value { overflow:hidden; color:var(--lumiverse-text); font-size:12px; font-weight:750; text-overflow:ellipsis; white-space:nowrap; }.lw-overview-stat-value.success { color:var(--lumiverse-success,#22c55e); }.lw-overview-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; padding-top:5px; }.lw-overview-card { min-height:220px; }.lw-overview-card > .lw-card-copy { min-height:42px; }
+.lw-status-badge { display:inline-flex; align-items:center; gap:6px; width:max-content; min-height:22px; padding:3px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-dim); font-size:10px; font-weight:800; letter-spacing:.02em; white-space:nowrap; }.lw-status-badge::before { width:5px; height:5px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; content:""; }.lw-status-badge.success { border-color:var(--lumiverse-success-020,var(--lumiverse-border)); background:var(--lumiverse-success-015,var(--lumiverse-fill-subtle)); color:var(--lumiverse-success,#22c55e); }.lw-status-badge.warning { border-color:var(--lumiverse-warning-020,var(--lumiverse-border)); background:var(--lumiverse-warning-015,var(--lumiverse-fill-subtle)); color:var(--lumiverse-warning,#f59e0b); }.lw-status-badge.error { border-color:var(--lumiverse-danger-020,var(--lumiverse-border)); background:var(--lumiverse-danger-015,var(--lumiverse-fill-subtle)); color:var(--lumiverse-danger,#ef4444); }.lw-run-list { display:grid; gap:7px; }.lw-run-row { display:grid; grid-template-columns:minmax(90px,.5fr) minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill-subtle); }.lw-run-label { font-weight:750; }.lw-run-meta { overflow:hidden; color:var(--lumiverse-text-dim); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.lw-btn { min-height:35px; border-radius:10px; background:var(--lcs-glass-bg-hover,var(--lumiverse-fill)); box-shadow:inset 0 1px 0 var(--lumiverse-highlight-inset,rgba(255,255,255,.08)); transition:background var(--lumiverse-transition-fast,.15s ease),border-color var(--lumiverse-transition-fast,.15s ease),transform var(--lumiverse-transition-fast,.15s ease),box-shadow var(--lumiverse-transition-fast,.15s ease); }.lw-btn:hover:not(:disabled) { transform:translateY(-1px); background:var(--lcs-glass-bg-hover,var(--lumiverse-fill-hover)); box-shadow:var(--lumiverse-shadow-sm,0 2px 8px rgba(0,0,0,.2)); }.lw-btn-primary { background:linear-gradient(135deg,var(--lumiverse-primary,var(--lumiverse-accent)),var(--lumiverse-primary-hover,var(--lumiverse-primary,var(--lumiverse-accent)))); box-shadow:0 4px 16px var(--lumiverse-primary-020,transparent),inset 0 1px 0 var(--lumiverse-highlight-inset-md,rgba(255,255,255,.15)); }.lw-btn-danger { color:var(--lumiverse-danger,#ef4444); }.lw-channel-tabs { border-radius:999px; background:var(--lcs-glass-bg,var(--lumiverse-fill-subtle)); }.lw-channel-tab { border-radius:999px; padding:8px 13px; transition:background var(--lumiverse-transition-fast,.15s ease),color var(--lumiverse-transition-fast,.15s ease),transform var(--lumiverse-transition-fast,.15s ease); }.lw-channel-tab:hover:not(.is-active) { transform:translateY(-1px); color:var(--lumiverse-text); }
+.lw-input,.lw-textarea,.lw-select { border-radius:10px; border-color:var(--lcs-glass-border,var(--lumiverse-border)); background:var(--lumiverse-fill); transition:border-color var(--lumiverse-transition-fast,.15s ease),box-shadow var(--lumiverse-transition-fast,.15s ease),background var(--lumiverse-transition-fast,.15s ease); }.lw-input:hover,.lw-textarea:hover,.lw-select:hover { border-color:var(--lcs-glass-border-hover,var(--lumiverse-border-hover)); background:var(--lumiverse-fill-hover,var(--lumiverse-fill)); }.lw-input:focus,.lw-textarea:focus,.lw-select:focus { border-color:var(--lumiverse-primary-050,var(--lumiverse-primary)); box-shadow:0 0 0 3px var(--lumiverse-primary-010,transparent); outline:none; }.lw-setting { padding:10px 0; border-bottom-color:var(--lcs-glass-border,var(--lumiverse-border)); }.lw-check { padding:8px 11px; border:1px solid var(--lumiverse-border); border-radius:999px; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-dim); cursor:pointer; transition:background var(--lumiverse-transition-fast,.15s ease),border-color var(--lumiverse-transition-fast,.15s ease),color var(--lumiverse-transition-fast,.15s ease),transform var(--lumiverse-transition-fast,.15s ease); }.lw-check:hover { transform:translateY(-1px); border-color:var(--lumiverse-border-hover); color:var(--lumiverse-text); }.lw-check.is-selected { border-color:var(--lumiverse-primary-050,var(--lumiverse-primary)); background:var(--lumiverse-primary-015,var(--lumiverse-fill)); color:var(--lumiverse-text); box-shadow:0 0 0 2px var(--lumiverse-primary-010,transparent); }.lw-check input { accent-color:var(--lumiverse-primary,var(--lumiverse-accent)); }.lw-range-slot { min-width:0; }.lw-range-fallback-wrap { display:flex; align-items:center; gap:10px; }.lw-range-fallback { width:100%; accent-color:var(--lumiverse-primary,var(--lumiverse-accent)); }.lw-range-value { min-width:38px; color:var(--lumiverse-text-muted,var(--lumiverse-text)); font-family:var(--lumiverse-font-mono,ui-monospace,monospace); font-size:11px; text-align:right; }
+.lw-details { border-radius:10px; border-color:var(--lcs-glass-border,var(--lumiverse-border)); background:var(--lumiverse-fill-subtle); }.lw-details summary { padding:12px; transition:background var(--lumiverse-transition-fast,.15s ease); }.lw-details summary:hover { background:var(--lumiverse-fill-hover); }.lw-schedule { gap:9px; }.lw-slot { border-radius:10px; border-color:var(--lcs-glass-border,var(--lumiverse-border)); background:var(--lumiverse-fill-subtle); transition:transform var(--lumiverse-transition-fast,.15s ease),border-color var(--lumiverse-transition-fast,.15s ease),background var(--lumiverse-transition-fast,.15s ease); }.lw-slot:hover { transform:translateY(-2px); border-color:var(--lcs-glass-border-hover,var(--lumiverse-border-hover)); background:var(--lcs-glass-bg-hover,var(--lumiverse-fill-hover)); }.lw-slot.is-now { border-color:var(--lumiverse-primary,var(--lumiverse-accent)); background:var(--lumiverse-primary-010,var(--lumiverse-fill-subtle)); box-shadow:0 0 0 1px var(--lumiverse-primary,var(--lumiverse-accent)),0 0 18px var(--lumiverse-primary-015,transparent); }.lw-banner { border-radius:10px; border-color:var(--lcs-glass-border,var(--lumiverse-border)); background:var(--lcs-glass-bg,var(--lumiverse-fill-subtle)); box-shadow:inset 0 1px 0 var(--lumiverse-highlight-inset,rgba(255,255,255,.08)); }.lw-empty { border-radius:10px; background:var(--lumiverse-fill-subtle); }
 @media (max-width:900px) { .lw-panel,.lw-panel.wide,.lw-panel.half { grid-column:1 / -1; }.lw-schedule { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media (max-width:560px) { .lw-modal-header,.lw-drawer-header { align-items:stretch; flex-direction:column; }.lw-header-actions { justify-content:stretch; }.lw-header-actions .lw-btn { flex:1; }.lw-two,.lw-meters,.lw-actions { grid-template-columns:1fr; }.lw-schedule { grid-template-columns:repeat(2,minmax(0,1fr)); }.lw-clock-readout { align-items:flex-start; flex-direction:column; } }
+@media (max-width:760px) { .lw-console-header { align-items:flex-start; flex-direction:column; padding:16px; }.lw-console-header-actions { width:100%; justify-content:flex-start; }.lw-console-layout { display:flex; flex-direction:column; }.lw-console-rail { flex:0 0 auto; flex-direction:row; align-items:center; gap:12px; padding:10px 12px; overflow-x:auto; border-right:0; border-bottom:1px solid var(--lcs-glass-border,var(--lumiverse-border)); }.lw-console-rail-brand,.lw-console-rail-footer { display:none; }.lw-console-nav { display:flex; flex:1 1 auto; gap:6px; }.lw-console-nav-item { min-width:150px; }.lw-console-main { padding:14px; }.lw-overview-hero { align-items:flex-start; flex-direction:column; padding:17px; }.lw-overview-hero-aside { width:100%; justify-items:stretch; }.lw-overview-grid { grid-template-columns:1fr; } }
+@media (prefers-reduced-motion:reduce) { .lw-console-nav-item,.lw-btn,.lw-panel.lw-console-card,.lw-check,.lw-slot,.lw-channel-tab { transition:none; } .lw-console-nav-item:hover,.lw-btn:hover:not(:disabled),.lw-panel.lw-console-card:hover,.lw-check:hover,.lw-slot:hover,.lw-channel-tab:hover:not(.is-active) { transform:none; } }
 `;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -262,6 +280,7 @@ function setup(ctx) {
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
   let activeChannel = "director";
+  let modalView = "overview";
   let notice = null;
   let noticeTimer = null;
   let saveTimer = null;
@@ -378,6 +397,39 @@ function setup(ctx) {
     } else
       slot.appendChild(nativeNumber(value, min, max, step, onChange));
     return field(label, slot, hint);
+  }
+  function rangeField(label, value, min, max, step, onChange, hint, suffix = "") {
+    const slot = element("div", "lw-range-slot");
+    const components = ctx.components;
+    if (components?.mountRangeSlider) {
+      const decimals = step < 1 ? Math.max(0, String(step).split(".")[1]?.length ?? 0) : 0;
+      mountingHandles.push(components.mountRangeSlider(slot, {
+        label,
+        min,
+        max,
+        step,
+        value,
+        hint,
+        format: { decimals, suffix },
+        onCommit: (next) => onChange(next)
+      }));
+      return slot;
+    }
+    const input = element("input", "lw-range-fallback");
+    input.type = "range";
+    input.value = String(value);
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    const valueReadout = element("span", "lw-range-value", `${value}${suffix}`);
+    input.addEventListener("input", () => {
+      const next = Number(input.value);
+      valueReadout.textContent = `${next}${suffix}`;
+      onChange(next);
+    });
+    const fallback = element("div", "lw-range-fallback-wrap");
+    fallback.append(input, valueReadout);
+    return field(label, fallback, hint);
   }
   function textField(label, value, onChange, hint) {
     const input = element("input", "lw-input");
@@ -535,6 +587,106 @@ function setup(ctx) {
     if (state.connectionError)
       target.appendChild(element("div", "lw-banner error", state.connectionError));
   }
+  function statusBadge(text, tone = "neutral") {
+    return element("span", `lw-status-badge ${tone}`, text);
+  }
+  function selectModalView(next) {
+    modalView = next;
+    if (next !== "overview")
+      activeChannel = next;
+    renderInteractive();
+  }
+  function overviewStat(label, value, tone = "neutral") {
+    const stat = element("div", "lw-overview-stat");
+    stat.append(element("div", "lw-overview-stat-label", label), element("div", `lw-overview-stat-value ${tone}`, value));
+    return stat;
+  }
+  function renderOverview(target) {
+    const directorConnection = selectedConnection(draft.connectionId);
+    const worldConnection = selectedConnection(draft.worldAgent.connectionId);
+    const current = state?.worldState ?? null;
+    const latestDirectorRun = state?.runs.find((run) => run.channel === "director");
+    const hero = element("section", "lw-overview-hero");
+    const heroCopy = element("div", "lw-overview-hero-copy");
+    heroCopy.append(element("div", "lw-console-eyebrow", "LUMIWORLD CONTROL ROOM"), element("h2", "lw-overview-hero-title", "Shape the world behind the reply."), element("p", "lw-overview-hero-text", "Tune the private director and keep the character's hidden day moving in sync with the conversation."));
+    const heroAside = element("div", "lw-overview-hero-aside");
+    const syncTone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
+    heroAside.append(statusBadge(saveState === "saving" ? "Syncing changes" : saveState === "error" ? "Sync error" : "All changes saved", syncTone));
+    const heroMetrics = element("div", "lw-overview-hero-metrics");
+    heroMetrics.append(overviewStat("Director", draft.enabled ? "Online" : "Standby", draft.enabled ? "success" : "neutral"), overviewStat("World clock", current?.running ? formatClock(current, draft.worldAgent.hourDurationMs) : "Paused", current?.running ? "success" : "neutral"));
+    heroAside.appendChild(heroMetrics);
+    hero.append(heroCopy, heroAside);
+    target.appendChild(hero);
+    const overviewGrid = element("div", "lw-overview-grid");
+    const director = panel("Director Note", "lw-console-card");
+    director.firstElementChild.appendChild(statusBadge(draft.enabled ? "Online" : "Standby", draft.enabled ? "success" : "neutral"));
+    director.append(element("p", "lw-card-copy", draft.enabled ? "A private controller call is ready to shape every enabled visible generation." : "Enable the Director when you want LumiWorld to quietly prepare the next world-state beat."), overviewStat("Connection", directorConnection?.name || "Not configured"), overviewStat("Latest run", latestDirectorRun?.status ?? "No runs yet", latestDirectorRun?.status === "success" ? "success" : "neutral"));
+    const directorActions = element("div", "lw-overview-actions");
+    directorActions.append(button("Configure Director", "lw-btn-primary", () => selectModalView("director")), button("Test Director", "", () => {
+      setNotice({ tone: "info", text: "Testing Director Note..." });
+      renderModal();
+      send({ type: "test_controller", settings: draft });
+    }, !draft.connectionId || !state?.permissions.generation));
+    director.appendChild(directorActions);
+    overviewGrid.appendChild(director);
+    const world = panel("World Agent", "lw-console-card");
+    world.firstElementChild.appendChild(statusBadge(draft.worldAgent.enabled ? current?.running ? "Running" : "Paused" : "Standby", draft.worldAgent.enabled && current?.running ? "success" : "neutral"));
+    world.append(element("p", "lw-card-copy", draft.worldAgent.enabled ? "The private clock and schedule are ready to advance alongside the active chat." : "Enable the World Agent to give the active character a persistent private routine."), overviewStat("Current time", formatClock(current, draft.worldAgent.hourDurationMs)), overviewStat("Connection", worldConnection?.name || "Not configured"));
+    const worldActions = element("div", "lw-overview-actions");
+    const canModelRun = !!(draft.worldAgent.enabled && draft.worldAgent.connectionId && state?.permissions.generation);
+    worldActions.append(button("Configure World", "lw-btn-primary", () => selectModalView("world_agent")), button(current?.running ? "Pause clock" : "Start clock", "", () => {
+      setNotice({ tone: "info", text: current?.running ? "Pausing World Agent..." : "Starting World Agent..." });
+      send({ type: current?.running ? "world_agent_pause" : "world_agent_start" });
+    }, current?.running ? !current : !canModelRun));
+    world.appendChild(worldActions);
+    overviewGrid.appendChild(world);
+    target.appendChild(overviewGrid);
+    const activity = panel("Recent activity", "lw-console-card full");
+    const runs = (state?.runs ?? []).slice(0, 5);
+    if (!runs.length)
+      activity.appendChild(element("div", "lw-empty", "No LumiWorld activity has been recorded yet."));
+    else {
+      const runList = element("div", "lw-run-list");
+      for (const run of runs) {
+        const row = element("div", "lw-run-row");
+        const label = run.channel === "world_agent" ? "World Agent" : "Director Note";
+        row.append(element("div", "lw-run-label", label), element("div", "lw-run-meta", run.action || "Controller activity"), statusBadge(run.status, run.status === "success" || run.status === "test_success" ? "success" : run.status === "error" || run.status === "test_error" ? "error" : "neutral"));
+        runList.appendChild(row);
+      }
+      activity.appendChild(runList);
+    }
+    target.appendChild(activity);
+  }
+  function renderModalNavigation() {
+    const rail = element("aside", "lw-console-rail");
+    const railBrand = element("div", "lw-console-rail-brand");
+    const railIcon = element("span", "lw-console-rail-icon");
+    railIcon.innerHTML = ICON;
+    railBrand.append(railIcon, element("span", undefined, "LumiWorld"));
+    rail.appendChild(railBrand);
+    const nav = element("nav", "lw-console-nav");
+    const entries = [
+      ["overview", "Overview", "Live system pulse", "01"],
+      ["director", "Director Note", "Prompt control", "02"],
+      ["world_agent", "World Agent", "Private simulation", "03"]
+    ];
+    for (const [view, label, description, index] of entries) {
+      const item = element("button", `lw-console-nav-item${modalView === view ? " is-active" : ""}`);
+      item.type = "button";
+      item.setAttribute("aria-current", modalView === view ? "page" : "false");
+      const marker = element("span", "lw-console-nav-marker", index);
+      const copy = element("span", "lw-console-nav-copy");
+      copy.append(element("span", "lw-console-nav-label", label), element("span", "lw-console-nav-description", description));
+      item.append(marker, copy);
+      item.addEventListener("click", () => selectModalView(view));
+      nav.appendChild(item);
+    }
+    rail.appendChild(nav);
+    const footer = element("div", "lw-console-rail-footer");
+    footer.append(statusBadge("Private by design", "success"), element("span", undefined, "Settings autosave as you work."));
+    rail.appendChild(footer);
+    return rail;
+  }
   function renderDirector(target) {
     const grid = element("div", "lw-grid");
     const core = panel("Director Note", "half");
@@ -546,7 +698,7 @@ function setup(ctx) {
     const params = panel("Response Parameters", "half");
     const paramsForm = element("div", "lw-form");
     const rowOne = element("div", "lw-two");
-    rowOne.append(numberField("Temperature", draft.temperature, 0, 2, 0.05, (temperature) => mutate({ temperature })), numberField("Max tokens", draft.maxTokens, 64, MAX_SAFE_SETTING, 1, (maxTokens) => mutate({ maxTokens })));
+    rowOne.append(rangeField("Temperature", draft.temperature, 0, 2, 0.05, (temperature) => mutate({ temperature }), "How expressive the Director should be.", ""), numberField("Max tokens", draft.maxTokens, 64, MAX_SAFE_SETTING, 1, (maxTokens) => mutate({ maxTokens })));
     const rowTwo = element("div", "lw-two");
     rowTwo.append(numberField("Timeout ms", draft.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS, 1000, (timeoutMs) => mutate({ timeoutMs }), "Lumiverse limits prompt interceptors to five minutes."), numberField("History", draft.historyMessageLimit, 0, MAX_SAFE_SETTING, 1, (historyMessageLimit) => mutate({ historyMessageLimit })));
     const rowThree = element("div", "lw-two");
@@ -563,11 +715,14 @@ function setup(ctx) {
     const runs = panel("Runs On", "full");
     const types = element("div", "lw-generation-types");
     for (const type of VISIBLE_GENERATION_TYPES) {
-      const label = element("label", "lw-check");
+      const label = element("label", `lw-check${draft.generationTypes.includes(type) ? " is-selected" : ""}`);
       const input = element("input");
       input.type = "checkbox";
       input.checked = draft.generationTypes.includes(type);
-      input.addEventListener("change", () => mutate({ generationTypes: input.checked ? [...new Set([...draft.generationTypes, type])] : draft.generationTypes.filter((item) => item !== type) }));
+      input.addEventListener("change", () => {
+        label.classList.toggle("is-selected", input.checked);
+        mutate({ generationTypes: input.checked ? [...new Set([...draft.generationTypes, type])] : draft.generationTypes.filter((item) => item !== type) });
+      });
       label.append(input, document.createTextNode(type));
       types.appendChild(label);
     }
@@ -627,7 +782,7 @@ function setup(ctx) {
     grid.appendChild(stateCard);
     const params = panel("Simulation Parameters", "half");
     const first = element("div", "lw-two");
-    first.append(numberField("Temperature", draft.worldAgent.temperature, 0, 2, 0.05, (temperature) => mutateWorld({ temperature })), numberField("Max tokens", draft.worldAgent.maxTokens, 64, MAX_SAFE_SETTING, 1, (maxTokens) => mutateWorld({ maxTokens })));
+    first.append(rangeField("Temperature", draft.worldAgent.temperature, 0, 2, 0.05, (temperature) => mutateWorld({ temperature }), "How freely the World Agent should improvise.", ""), numberField("Max tokens", draft.worldAgent.maxTokens, 64, MAX_SAFE_SETTING, 1, (maxTokens) => mutateWorld({ maxTokens })));
     const second = element("div", "lw-two");
     second.append(numberField("Timeout ms", draft.worldAgent.timeoutMs, 1000, MAX_WORLD_AGENT_TIMEOUT_MS, 1000, (timeoutMs) => mutateWorld({ timeoutMs })), numberField("Hour duration ms", draft.worldAgent.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000, 1000, (hourDurationMs) => mutateWorld({ hourDurationMs })));
     params.append(first, second, collapsible("Prompt templates", (body) => body.append(textareaField("Schedule template", draft.worldAgent.scheduleTemplate, (scheduleTemplate) => mutateWorld({ scheduleTemplate })), textareaField("Update template", draft.worldAgent.updateTemplate, (updateTemplate) => mutateWorld({ updateTemplate })))));
@@ -660,6 +815,20 @@ function setup(ctx) {
     else
       renderWorld(target);
   }
+  function renderModalContent(target) {
+    renderWarnings(target);
+    renderNotice(target);
+    if (!state) {
+      target.appendChild(element("div", "lw-empty", "Loading LumiWorld..."));
+      return;
+    }
+    if (modalView === "overview")
+      renderOverview(target);
+    else if (modalView === "director")
+      renderDirector(target);
+    else
+      renderWorld(target);
+  }
   function renderDrawer() {
     destroyHandles(drawerHandles);
     mountingHandles = drawerHandles;
@@ -684,6 +853,8 @@ function setup(ctx) {
       tab.type = "button";
       tab.addEventListener("click", () => {
         activeChannel = channel;
+        if (modal)
+          modalView = channel;
         renderInteractive();
       });
       tabs.appendChild(tab);
@@ -759,30 +930,43 @@ function setup(ctx) {
     mountingHandles = modalHandles;
     modal.root.replaceChildren();
     const shell = element("div", "lw-workbench");
-    const header = element("div", "lw-modal-header");
-    header.append(channelTabs());
-    const actions = element("div", "lw-header-actions");
+    const header = element("div", "lw-console-header");
+    const brand = element("div", "lw-console-header-brand");
+    const icon = element("span", "lw-console-header-icon");
+    icon.innerHTML = ICON;
+    const copy = element("div", "lw-console-header-copy");
+    copy.append(element("div", "lw-console-eyebrow", "LUMIVERSE EXTENSION / LUMIWORLD"), element("h1", "lw-console-title", modalView === "overview" ? "World control room" : modalView === "director" ? "Director Note" : "World Agent"), element("p", "lw-console-subtitle", "Private world-state controls for the active conversation."));
+    brand.append(icon, copy);
+    const actions = element("div", "lw-console-header-actions");
+    const syncTone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
+    actions.append(statusBadge(saveState === "saving" ? "Syncing" : saveState === "error" ? "Save error" : "Saved", syncTone));
     actions.appendChild(button("Refresh", "", () => {
       send({ type: "refresh_state" });
       send({ type: "refresh_world_state" });
     }));
-    if (activeChannel === "director")
-      actions.appendChild(button("Test", "lw-btn-primary", () => {
+    if (modalView === "director")
+      actions.appendChild(button("Test Director", "lw-btn-primary", () => {
         setNotice({ tone: "info", text: "Testing Director Note..." });
         renderModal();
         send({ type: "test_controller", settings: draft });
-      }));
-    header.appendChild(actions);
+      }, !draft.connectionId || !state?.permissions.generation));
+    header.append(brand, actions);
     shell.appendChild(header);
     const body = element("div", "lw-modal-body");
-    renderChannel(body);
+    const layout = element("div", "lw-console-layout");
+    layout.appendChild(renderModalNavigation());
+    const content = element("main", "lw-console-main");
+    renderModalContent(content);
+    layout.appendChild(content);
+    body.appendChild(layout);
     shell.appendChild(body);
     modal.root.appendChild(shell);
   }
   function openModal() {
     if (!modal) {
+      modalView = activeChannel;
       const width = Math.max(420, Math.min(1180, window.innerWidth - 32));
-      const maxHeight = Math.max(520, window.innerHeight - 48);
+      const maxHeight = Math.max(560, window.innerHeight - 32);
       modal = ctx.ui.showModal({ title: "LumiWorld Settings", width, maxHeight });
       modal.onDismiss(() => {
         destroyHandles(modalHandles);
