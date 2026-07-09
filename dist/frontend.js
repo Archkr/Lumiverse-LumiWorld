@@ -1,6 +1,5 @@
 // src/frontend.ts
 var EXTENSION_NAME = "LumiWorld";
-var EXTENSION_VERSION = "v0.3.1";
 var VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"];
 var MAX_DIRECTOR_TIMEOUT_MS = 300000;
 var MAX_WORLD_AGENT_TIMEOUT_MS = 2147483647;
@@ -79,8 +78,9 @@ var DEFAULT_SETTINGS = {
 var CSS = `
 .lw-workbench, .lw-drawer { color:var(--lumiverse-text); font-family:var(--lumiverse-font-family,system-ui,sans-serif); font-size:13px; line-height:1.45; }
 .lw-workbench *, .lw-drawer * { box-sizing:border-box; }
-.lw-workbench { display:grid; gap:16px; min-height:0; max-height:calc(100vh - 140px); overflow:auto; padding:4px; }
-.lw-modal-header { position:sticky; top:0; z-index:4; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:2px 0 12px; background:var(--lumiverse-surface, var(--lumiverse-fill)); border-bottom:1px solid var(--lumiverse-border); }
+.lw-workbench { display:flex; flex-direction:column; width:100%; height:clamp(460px,calc(100vh - 150px),820px); min-height:0; overflow:hidden; padding:4px; }
+.lw-modal-header { flex:0 0 auto; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:2px 0 12px; background:var(--lumiverse-surface, var(--lumiverse-fill)); border-bottom:1px solid var(--lumiverse-border); }
+.lw-modal-body { flex:1 1 auto; min-height:0; overflow:auto; padding:12px 2px 2px; }
 .lw-channel-tabs { display:flex; gap:4px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); }
 .lw-channel-tab { appearance:none; border:0; border-radius:5px; background:transparent; color:var(--lumiverse-text-dim); font:inherit; font-weight:700; padding:7px 10px; cursor:pointer; }
 .lw-channel-tab.is-active { background:var(--lumiverse-primary, var(--lumiverse-accent)); color:var(--lumiverse-primary-contrast, CanvasText); }
@@ -115,8 +115,8 @@ var CSS = `
 .lw-meters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }.lw-meter { border:1px solid var(--lumiverse-border); border-radius:6px; padding:9px; background:var(--lumiverse-fill); min-width:0; }.lw-meter-label { color:var(--lumiverse-text-dim); font-size:10px; font-weight:700; text-transform:uppercase; }.lw-meter-value { margin-top:4px; overflow-wrap:anywhere; }
 .lw-schedule { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }.lw-slot { min-width:0; border:1px solid var(--lumiverse-border); border-radius:6px; background:var(--lumiverse-fill); padding:8px; display:grid; gap:4px; }.lw-slot.is-now { border-color:var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow:0 0 0 1px var(--lumiverse-primary, var(--lumiverse-accent)); }.lw-slot-time { font-size:11px; font-weight:750; }.lw-slot-location { color:var(--lumiverse-text-dim); font-size:12px; overflow-wrap:anywhere; }.lw-slot-activity { overflow-wrap:anywhere; }
 .lw-empty { color:var(--lumiverse-text-dim); border:1px dashed var(--lumiverse-border); border-radius:6px; padding:14px; text-align:center; }
-.lw-drawer { min-height:100%; padding:12px; background:var(--lumiverse-surface, transparent); }.lw-drawer-header { display:flex; justify-content:space-between; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--lumiverse-border); }.lw-drawer-title { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:750; }.lw-drawer-icon { width:22px; height:22px; color:var(--lumiverse-primary, var(--lumiverse-accent)); }.lw-drawer-body { padding-top:12px; }
-.lw-float { width:260px; min-height:232px; position:relative; padding-top:30px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; color:#ffb15f; user-select:none; }.lw-tv { width:236px; margin:auto; position:relative; padding:13px 12px 30px; border:4px solid #756653; outline:2px solid #332b25; border-radius:18px 18px 9px 9px; background:linear-gradient(145deg,#f1e6cf,#b8a689); box-shadow:0 14px 24px rgba(0,0,0,.42); }.lw-tv::before { content:""; position:absolute; top:-35px; left:72px; width:4px; height:45px; background:#968771; transform:rotate(-32deg); box-shadow:52px 33px 0 #968771; }.lw-tv::after { content:"LumiWorld"; position:absolute; bottom:9px; left:0; right:0; text-align:center; font-family:var(--lumiverse-font-family,system-ui,sans-serif); font-size:10px; font-weight:700; letter-spacing:1px; color:#6b6259; }.lw-tv-screen { aspect-ratio:4/3; position:relative; overflow:hidden; padding:9px 9px 24px; border:7px solid #201e1b; border-radius:15px/12px; background:repeating-linear-gradient(0deg,rgba(255,255,255,.03) 0 1px,transparent 1px 4px),#090908; box-shadow:inset 0 0 22px #000; text-shadow:0 0 5px #ff6c1d; }.lw-tv-head,.lw-tv-row { display:flex; justify-content:space-between; gap:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.lw-tv-head { padding-bottom:3px; border-bottom:1px solid #b95b18; font-size:10px; font-weight:700; }.lw-tv-row { margin-top:5px; font-size:10px; }.lw-tv-actions { position:absolute; left:9px; right:9px; bottom:7px; display:flex; justify-content:center; }.lw-tv-action { border:0; background:transparent; color:inherit; font:inherit; font-size:9px; font-weight:800; padding:0; cursor:pointer; text-transform:uppercase; }.lw-tv-knob { appearance:none; position:absolute; right:-12px; width:20px; height:20px; border:2px solid #211f1d; border-radius:50%; background:radial-gradient(circle at 35% 30%,#bbb,#333); cursor:pointer; }.lw-tv-knob.settings { bottom:50px; }.lw-tv-knob.channel { bottom:22px; }.lw-tv-knob:focus-visible { outline:2px solid #ffb15f; outline-offset:2px; }
+.lw-drawer { min-height:100%; padding:12px; background:var(--lumiverse-surface, transparent); }.lw-drawer-header { display:flex; justify-content:space-between; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--lumiverse-border); }.lw-drawer-title { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:750; }.lw-drawer-icon { width:22px; height:22px; color:var(--lumiverse-primary, var(--lumiverse-accent)); }.lw-drawer-body { padding-top:12px; }.lw-drawer .lw-grid { grid-template-columns:1fr; }.lw-drawer .lw-panel,.lw-drawer .lw-panel.wide,.lw-drawer .lw-panel.half,.lw-drawer .lw-panel.full { grid-column:1 / -1; }
+.lw-float-root { width:260px; min-height:258px; position:relative; padding-top:42px; color:#2b201d; font-family:"Courier New",Courier,monospace; font-size:11px; line-height:1.35; user-select:none; }.lw-float-root * { box-sizing:border-box; }.lw-monitor { width:236px; margin:0 auto; padding:12px 12px 30px; position:relative; border:5px solid #8b7765; outline:2px solid #3a261f; border-radius:20px 20px 10px 10px; background:linear-gradient(145deg,#efe6d1,#c8baa0); box-shadow:0 14px 24px rgba(0,0,0,.45),inset 0 0 0 2px rgba(255,255,255,.28),inset 0 2px 4px rgba(255,255,255,.75),inset 0 -5px 10px rgba(0,0,0,.16); }.lw-monitor::before { content:""; position:absolute; top:8px; left:50%; width:92px; height:5px; transform:translateX(-50%); border-radius:999px; background:repeating-linear-gradient(90deg,#8f887a 0 3px,#665e54 3px 6px); }.lw-monitor::after { content:"LumiVision"; position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:#81796f; font-family:Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:1.6px; }.lw-monitor-antenna { position:absolute; top:-48px; left:50%; z-index:-1; width:4px; height:58px; transform-origin:bottom center; border-radius:999px; background:linear-gradient(to bottom,#b9ab92,#756653); box-shadow:0 0 2px rgba(0,0,0,.65); }.lw-monitor-antenna.left { transform:translateX(-18px) rotate(-34deg); }.lw-monitor-antenna.right { transform:translateX(18px) rotate(34deg); }.lw-monitor-screen { position:relative; aspect-ratio:4 / 3; overflow:hidden; padding:8px 8px 24px; border:7px solid #211f1d; border-radius:18px / 14px; background:radial-gradient(circle at 55% 40%,rgba(255,126,0,.16),transparent 42%),#080807; color:#ff9e3d; box-shadow:inset 0 0 28px rgba(0,0,0,.95),inset 0 0 10px rgba(255,158,61,.1); text-shadow:0 0 5px #ff5500; }.lw-monitor-screen::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(rgba(255,255,255,.035) 50%,rgba(0,0,0,.2) 50%); background-size:100% 4px; }.lw-monitor-head { position:relative; z-index:1; display:flex; justify-content:space-between; gap:6px; margin-bottom:4px; padding-bottom:3px; border-bottom:1px solid #ff7e00; font-size:10px; font-weight:700; }.lw-monitor-note-head { position:relative; z-index:1; display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:3px; font-size:10px; font-weight:800; text-transform:uppercase; }.lw-monitor-lines { position:relative; z-index:1; display:grid; gap:1px; }.lw-monitor-line { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }.lw-monitor-actions { position:absolute; z-index:1; right:10px; bottom:8px; left:10px; display:flex; justify-content:center; }.lw-monitor-action { appearance:none; border:0; background:transparent; color:#ff9e3d; padding:0; font:inherit; font-size:9px; font-weight:800; line-height:1; text-transform:uppercase; text-shadow:0 0 5px #ff5500; cursor:pointer; }.lw-monitor-action:hover { color:#ffd08a; text-decoration:underline; }.lw-monitor-knob { appearance:none; position:absolute; right:-10px; width:17px; height:17px; padding:0; border:2px solid #24211f; border-radius:50%; background:radial-gradient(circle at 35% 30%,#aaa,#333); box-shadow:1px 2px 4px rgba(0,0,0,.55); cursor:pointer; }.lw-monitor-knob:hover,.lw-monitor-knob:focus-visible { filter:brightness(1.25); outline:none; }.lw-monitor-knob.channel { bottom:24px; }.lw-monitor-knob.settings { bottom:48px; }.lw-save-dot { color:#6b5d4f; font-size:9px; text-transform:uppercase; }.lw-save-dot.is-saving { color:#9a6100; }.lw-save-dot.is-error { color:#9a1c1c; }
 @media (max-width:900px) { .lw-panel,.lw-panel.wide,.lw-panel.half { grid-column:1 / -1; }.lw-schedule { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media (max-width:560px) { .lw-modal-header,.lw-drawer-header { align-items:stretch; flex-direction:column; }.lw-header-actions { justify-content:stretch; }.lw-header-actions .lw-btn { flex:1; }.lw-two,.lw-meters,.lw-actions { grid-template-columns:1fr; }.lw-schedule { grid-template-columns:repeat(2,minmax(0,1fr)); }.lw-clock-readout { align-items:flex-start; flex-direction:column; } }
 `;
@@ -692,40 +692,55 @@ function setup(ctx) {
   }
   function widgetLines() {
     if (!state)
-      return ["Loading..."];
+      return ["Loading LumiWorld...", "Waiting for extension state."];
     if (activeChannel === "director") {
       const connection = selectedConnection(draft.connectionId);
-      return [draft.enabled ? "Director: live" : "Director: off", connection ? `Model: ${connection.name}` : "Model: none", "Open settings for context"];
+      const run = state.runs.find((item) => item.channel === "director");
+      return [
+        draft.enabled ? "Director: enabled" : "Director: disabled",
+        connection ? `Model: ${connection.name}` : "No controller connection",
+        `Last Run: ${run?.status ?? "none"}`
+      ];
     }
     const world = state.worldState;
-    return [draft.worldAgent.enabled ? `Clock: ${world?.running ? "running" : "paused"}` : "World: off", `Mood: ${world?.mood || "Neutral"}`, `Goal: ${world?.goal || "Unset"}`];
+    return [
+      draft.worldAgent.enabled ? `Clock: ${world?.running ? "running" : "paused"}` : "World Agent disabled",
+      `Time: ${formatClock(world, draft.worldAgent.hourDurationMs)}`,
+      `Mood: ${world?.mood || "Neutral"}`,
+      `Goal: ${world?.goal || "Unset"}`
+    ];
   }
   function renderWidget() {
     if (!widget)
       return;
     widget.root.replaceChildren();
-    const root = element("div", "lw-float");
-    const tv = element("div", "lw-tv");
-    const screen = element("div", "lw-tv-screen");
-    const head = element("div", "lw-tv-head");
+    const root = element("div", "lw-float-root");
+    const monitor = element("div", "lw-monitor");
+    const screen = element("div", "lw-monitor-screen");
+    const head = element("div", "lw-monitor-head");
     const clock = element("span", undefined, formatClock(state?.worldState, draft.worldAgent.hourDurationMs));
     clock.dataset.lwClock = "";
-    head.append(element("span", undefined, `${EXTENSION_NAME} ${EXTENSION_VERSION}`), clock);
-    screen.appendChild(head);
+    head.append(element("span", undefined, EXTENSION_NAME), clock);
+    const noteHead = element("div", "lw-monitor-note-head");
+    noteHead.append(element("span", undefined, activeChannel === "director" ? "Director Note" : "World"), element("span", `lw-save-dot${saveState === "saving" ? " is-saving" : saveState === "error" ? " is-error" : ""}`, saveState));
+    const lines = element("div", "lw-monitor-lines");
     for (const line of widgetLines())
-      screen.appendChild(element("div", "lw-tv-row", line));
-    const actions = element("div", "lw-tv-actions");
-    actions.appendChild(button("Refresh", "lw-tv-action", () => {
+      lines.appendChild(element("div", "lw-monitor-line", line));
+    const actions = element("div", "lw-monitor-actions");
+    const refresh = element("button", "lw-monitor-action", "Refresh");
+    refresh.type = "button";
+    refresh.addEventListener("click", () => {
       send({ type: "refresh_state" });
       send({ type: "refresh_world_state" });
-    }));
-    screen.appendChild(actions);
-    const settings = element("button", "lw-tv-knob settings");
+    });
+    actions.appendChild(refresh);
+    screen.append(head, noteHead, lines, actions);
+    const settings = element("button", "lw-monitor-knob settings");
     settings.type = "button";
     settings.title = "Open LumiWorld settings";
     settings.setAttribute("aria-label", settings.title);
     settings.addEventListener("click", openModal);
-    const channel = element("button", "lw-tv-knob channel");
+    const channel = element("button", "lw-monitor-knob channel");
     channel.type = "button";
     channel.title = "Switch LumiWorld channel";
     channel.setAttribute("aria-label", channel.title);
@@ -733,8 +748,8 @@ function setup(ctx) {
       activeChannel = activeChannel === "director" ? "world_agent" : "director";
       renderInteractive();
     });
-    tv.append(screen, settings, channel);
-    root.appendChild(tv);
+    monitor.append(element("div", "lw-monitor-antenna left"), element("div", "lw-monitor-antenna right"), screen, settings, channel);
+    root.appendChild(monitor);
     widget.root.appendChild(root);
   }
   function renderModal() {
@@ -759,15 +774,15 @@ function setup(ctx) {
       }));
     header.appendChild(actions);
     shell.appendChild(header);
-    const body = element("div");
+    const body = element("div", "lw-modal-body");
     renderChannel(body);
     shell.appendChild(body);
     modal.root.appendChild(shell);
   }
   function openModal() {
     if (!modal) {
-      const width = Math.max(320, Math.min(1180, window.innerWidth - 32));
-      const maxHeight = Math.max(480, Math.min(860, window.innerHeight - 64));
+      const width = Math.max(420, Math.min(1180, window.innerWidth - 32));
+      const maxHeight = Math.max(520, window.innerHeight - 48);
       modal = ctx.ui.showModal({ title: "LumiWorld Settings", width, maxHeight });
       modal.onDismiss(() => {
         destroyHandles(modalHandles);
