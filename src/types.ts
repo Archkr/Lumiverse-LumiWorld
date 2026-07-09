@@ -1,4 +1,11 @@
-import type { LumiWorldSettings, WorldAgentSettings, WorldAgentState, ConnectionOption, RunLogEntry } from "./shared";
+import type {
+  LumiWorldSettings,
+  WorldAgentSettings,
+  WorldAgentState,
+  WorldAgentOperationResult,
+  ConnectionOption,
+  RunLogEntry,
+} from "./shared";
 
 export interface PermissionState {
   interceptor: boolean;
@@ -38,8 +45,8 @@ export type BackendToFrontend =
   | { type: "state"; state: FrontendState }
   | { type: "settings_saved"; settings: LumiWorldSettings }
   | { type: "world_state"; state: WorldAgentState | null }
-  | { type: "world_agent_result"; ok: true; message?: string; state?: WorldAgentState | null; rawOutput?: string | null }
-  | { type: "world_agent_result"; ok: false; error: string; state?: WorldAgentState | null; rawOutput?: string | null }
+  | { type: "world_agent_result"; ok: true; result: WorldAgentOperationResult }
+  | { type: "world_agent_result"; ok: false; result: WorldAgentOperationResult }
   | { type: "run_logged"; run: RunLogEntry }
   | { type: "test_result"; ok: true; directive: string; durationMs: number; model: string; connectionName: string }
   | { type: "test_result"; ok: false; error: string }

@@ -1,13 +1,13 @@
 {
   "identifier": "agent_world",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "name": "LumiWorld",
   "author": "Archkr",
   "github": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "homepage": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "description": "World-simulation channels for private director notes and per-chat World Agent state.",
   "permissions": ["interceptor", "generation", "chats", "chat_mutation", "characters", "personas", "world_books", "ui_panels"],
-  "interceptorTimeoutMs": 2147483647,
+  "interceptorTimeoutMs": 300000,
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "0.9.0"

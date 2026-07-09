@@ -198,6 +198,23 @@ export interface WorldAgentScheduleItem {
   activity: string;
 }
 
+export interface WorldAgentScheduleParseResult {
+  schedule: WorldAgentScheduleItem[];
+  error: string | null;
+}
+
+export type WorldAgentOperationStatus = "success" | "warning" | "error";
+
+export interface WorldAgentOperationResult {
+  action: "start" | "pause" | "schedule" | "update" | "advance" | "reset" | "set_time";
+  status: WorldAgentOperationStatus;
+  state: WorldAgentState | null;
+  message: string;
+  error?: string | null;
+  rawOutput?: string | null;
+  historyMessageCount?: number;
+}
+
 export interface WorldAgentUpdate {
   location?: string;
   mood?: string;
@@ -237,13 +254,36 @@ export interface WorldAgentState {
 
 export const MAX_DIRECTIVE_CHARS = 2200;
 export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
+// Lumiverse clamps prompt interceptor work to five minutes. Keep the Director
+// setting honest while leaving the asynchronous World Agent independently configurable.
+export const MAX_DIRECTOR_TIMEOUT_MS = 300_000;
 export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
 export const MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_RUN_LOG_LIMIT = 12;
 export const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
 export const DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
 export const WORLD_AGENT_HISTORY_LIMIT = 24;
+export const WORLD_AGENT_SCHEDULE_HOURS = 24;
+export const WORLD_AGENT_INJECTION_HORIZON = 3;
 export const CONTROLLER_CONTEXT_LABEL_KEY = "__lumiWorldContextLabel";
+
+export class KeyedOperationLock {
+  private readonly keys = new Set<string>();
+
+  acquire(key: string): boolean {
+    if (this.keys.has(key)) return false;
+    this.keys.add(key);
+    return true;
+  }
+
+  release(key: string): void {
+    this.keys.delete(key);
+  }
+
+  has(key: string): boolean {
+    return this.keys.has(key);
+  }
+}
 
 export const LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
@@ -584,7 +624,7 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     modelOverride: cleanString(obj.modelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
-    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
@@ -1093,13 +1133,6 @@ function extractFirstCodeFence(value: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-function looksLikeStructuredScheduleText(value: string): boolean {
-  const stripped = stripCodeFence(value);
-  if (!stripped) return false;
-  if (/^\s*[\[{]/.test(stripped)) return true;
-  return /"schedule"\s*:|["']hour["']\s*:|```(?:json|text)?/i.test(value);
-}
-
 function findJsonObject(value: string): unknown | null {
   const stripped = stripCodeFence(value);
   try {
@@ -1318,6 +1351,7 @@ export function makeDirectivePreview(directive: string | null | undefined, maxCh
 export function normalizeWorldAgentState(value: unknown, chatId: string, patch: Partial<WorldAgentState> = {}): WorldAgentState {
   const obj = asRecord(value);
   const now = Date.now();
+  const storedSchedule = normalizeWorldAgentSchedule(obj.schedule);
   const rawHistory = Array.isArray(obj.history) ? obj.history : [];
   const history = rawHistory
     .map((item): WorldAgentHistoryEntry | null => {
@@ -1348,7 +1382,7 @@ export function normalizeWorldAgentState(value: unknown, chatId: string, patch: 
     activeCharacterId: cleanNullableString(obj.activeCharacterId),
     activePersonaId: cleanNullableString(obj.activePersonaId),
     scheduleDay: obj.scheduleDay == null ? null : integerInRange(obj.scheduleDay, 1, 1, Number.MAX_SAFE_INTEGER),
-    schedule: normalizeWorldAgentSchedule(obj.schedule),
+    schedule: storedSchedule,
     location: cleanString(obj.location, "Unspecified"),
     mood: cleanString(obj.mood, "Neutral"),
     activity: cleanString(obj.activity, "Idle"),
@@ -1358,13 +1392,19 @@ export function normalizeWorldAgentState(value: unknown, chatId: string, patch: 
     history,
   };
 
+  const schedule = patch.schedule !== undefined ? normalizeWorldAgentSchedule(patch.schedule) : state.schedule;
+  const scheduleDay = schedule.length === WORLD_AGENT_SCHEDULE_HOURS
+    ? (patch.scheduleDay === null ? null : integerInRange(patch.scheduleDay, state.scheduleDay ?? state.day, 1, Number.MAX_SAFE_INTEGER))
+    : null;
+
   return {
     ...state,
     ...patch,
     chatId,
     day: integerInRange(patch.day, state.day, 1, Number.MAX_SAFE_INTEGER),
     hour: integerInRange(patch.hour, state.hour, 0, 23),
-    schedule: patch.schedule ? normalizeWorldAgentSchedule(patch.schedule) : state.schedule,
+    scheduleDay,
+    schedule,
     history: patch.history ? normalizeWorldAgentState({ ...state, history: patch.history }, chatId).history : state.history,
   };
 }
@@ -1420,12 +1460,22 @@ function parseJsonishValue(value: unknown): unknown | null {
   }
 }
 
-function normalizeScheduleHour(value: unknown, fallback: number): number {
-  if (typeof value === "string") {
-    const match = value.match(/\d{1,2}/);
-    if (match) return integerInRange(Number(match[0]), fallback, 0, 23);
+function parseScheduleHour(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const hour = Math.round(value);
+    return hour >= 0 && hour < WORLD_AGENT_SCHEDULE_HOURS ? hour : null;
   }
-  return integerInRange(value, fallback, 0, 23);
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!match) return null;
+  const sourceHour = Number(match[1]);
+  const minute = match[2] == null ? 0 : Number(match[2]);
+  const period = match[3]?.toLowerCase();
+  if (!Number.isInteger(sourceHour) || minute < 0 || minute > 59) return null;
+  if (!period) return sourceHour >= 0 && sourceHour < WORLD_AGENT_SCHEDULE_HOURS ? sourceHour : null;
+  if (sourceHour < 1 || sourceHour > 12) return null;
+  if (period === "am") return sourceHour === 12 ? 0 : sourceHour;
+  return sourceHour === 12 ? 12 : sourceHour + 12;
 }
 
 function parseLooseJsonObjectFragment(value: string): unknown | null {
@@ -1447,85 +1497,60 @@ function extractLooseScheduleRecords(value: string): unknown[] {
     .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
 }
 
-function scheduleItemFromRecord(value: unknown, index: number): WorldAgentScheduleItem | null {
-  if (typeof value === "string") {
-    if (looksLikeStructuredScheduleText(value)) return null;
-    const activity = normalizeDirectiveText(value, 600);
-    return activity ? { hour: index % 24, activity } : null;
-  }
+function strictScheduleItem(value: unknown): WorldAgentScheduleItem | null {
   const obj = asRecord(value);
-  const activity = cleanString(
-    obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan,
-  );
+  const hour = parseScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour);
+  if (hour == null) return null;
+  const activity = cleanString(obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan);
   const location = cleanString(obj.location ?? obj.place ?? obj.where);
-  const label = cleanString(obj.label ?? obj.title ?? obj.time);
-  if (activity && looksLikeStructuredScheduleText(activity) && !location) return null;
   if (!activity && !location) return null;
   return {
-    hour: normalizeScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour, index % 24),
-    label: label || undefined,
+    hour,
+    label: cleanString(obj.label ?? obj.title) || undefined,
     location: location || undefined,
-    activity: activity || (location ? `At ${location}` : "Unspecified activity"),
+    activity: activity || `At ${location}`,
   };
 }
 
-function expandScheduleToEveryHour(items: WorldAgentScheduleItem[]): WorldAgentScheduleItem[] {
-  if (!items.length) return [];
-  const byHour = new Map<number, WorldAgentScheduleItem>();
-  for (const item of items) {
-    if (!byHour.has(item.hour)) byHour.set(item.hour, item);
-  }
-  const anchors = [...byHour.values()].sort((left, right) => left.hour - right.hour);
-  return Array.from({ length: 24 }, (_, hour) => {
-    const anchor = [...anchors].reverse().find((item) => item.hour <= hour) ?? anchors[anchors.length - 1];
-    return {
-      ...anchor,
-      hour,
-    };
-  });
-}
-
-export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleItem[] {
-  const raw = Array.isArray(value) ? value : [];
-  const expanded = raw.flatMap((item) => {
-    const record = asRecord(item);
-    const text = typeof item === "string" ? item : cleanString(record.activity ?? record.description ?? record.note ?? record.plan);
-    if (!text) return [item];
-    const looseRecords = extractLooseScheduleRecords(text);
-    return looseRecords.length > 0 ? looseRecords : [item];
-  });
-  const seen = new Set<string>();
-  const items: WorldAgentScheduleItem[] = [];
-  for (let index = 0; index < expanded.length; index += 1) {
-    const item = scheduleItemFromRecord(expanded[index], index);
-    if (!item) continue;
-    const key = `${item.hour}|${item.location || ""}|${item.activity}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push(item);
-  }
-  return expandScheduleToEveryHour(items.sort((left, right) => left.hour - right.hour));
-}
-
-export function parseWorldAgentSchedule(raw: unknown): WorldAgentScheduleItem[] {
+function scheduleCandidate(raw: unknown): unknown[] {
   const parsed = parseJsonishValue(raw);
   const obj = asRecord(parsed);
   const scheduleValue = obj.schedule ?? obj.dailySchedule ?? obj.daily_schedule ?? obj.plan;
-  const candidate =
+  return (
     Array.isArray(parsed) ? parsed
       : Array.isArray(scheduleValue) ? scheduleValue
         : scheduleValue && typeof scheduleValue === "object" ? [scheduleValue]
-              : [];
-  const normalized = normalizeWorldAgentSchedule(candidate);
-  if (normalized.length > 0) return normalized;
-  if (typeof raw === "string") {
-    const loose = normalizeWorldAgentSchedule(extractLooseScheduleRecords(raw));
-    if (loose.length > 0) return loose;
-    if (looksLikeStructuredScheduleText(raw)) return [];
-    const fallback = normalizeDirectiveText(raw, 900);
-    return fallback ? normalizeWorldAgentSchedule([{ hour: 0, activity: fallback }]) : [];
+              : []
+  );
+}
+
+export function parseWorldAgentScheduleResult(raw: unknown): WorldAgentScheduleParseResult {
+  const candidate = scheduleCandidate(raw);
+  if (!candidate.length && typeof raw === "string") {
+    const loose = extractLooseScheduleRecords(raw);
+    if (loose.length) candidate.push(...loose);
   }
-  return [];
+  if (!candidate.length) {
+    return { schedule: [], error: "World Agent did not return a structured schedule." };
+  }
+  const items = candidate.map(strictScheduleItem);
+  if (items.some((item) => item == null)) {
+    return { schedule: [], error: "World Agent schedule entries need an hour plus a location or activity." };
+  }
+  const schedule = items as WorldAgentScheduleItem[];
+  const hours = new Set(schedule.map((item) => item.hour));
+  if (schedule.length !== WORLD_AGENT_SCHEDULE_HOURS || hours.size !== WORLD_AGENT_SCHEDULE_HOURS) {
+    return { schedule: [], error: "World Agent must return exactly one structured schedule entry for every hour from 0 through 23." };
+  }
+  return { schedule: schedule.sort((left, right) => left.hour - right.hour), error: null };
+}
+
+export function parseWorldAgentSchedule(raw: unknown): WorldAgentScheduleItem[] {
+  return parseWorldAgentScheduleResult(raw).schedule;
+}
+
+export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleItem[] {
+  return parseWorldAgentScheduleResult({ schedule: value }).schedule;
 }
 
 export function parseWorldAgentUpdate(raw: unknown): WorldAgentUpdate {
@@ -1540,6 +1565,8 @@ export function parseWorldAgentUpdate(raw: unknown): WorldAgentUpdate {
   };
   if (Object.values(update).some(Boolean)) return update;
   if (typeof raw === "string") {
+    const trimmed = stripCodeFence(raw).trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return {};
     const fallback = normalizeDirectiveText(raw, 900);
     if (fallback) return { thought: fallback };
   }
@@ -1592,7 +1619,7 @@ export function isWorldAgentHourDue(
   if (!settings.enabled) return { due: false, shouldResetLastTick: false, reason: "disabled" };
   if (!state.running) return { due: false, shouldResetLastTick: false, reason: "paused" };
   if (settings.autoTickVisibleOnly && !visible) {
-    return { due: false, shouldResetLastTick: state.lastTickAt != null, reason: "hidden" };
+    return { due: false, shouldResetLastTick: false, reason: "hidden" };
   }
   if (state.lastTickAt == null) return { due: false, shouldResetLastTick: true, reason: "initialized" };
   return {
@@ -1661,12 +1688,52 @@ export function formatWorldAgentStateForPrompt(state: WorldAgentState): string {
   ].filter((line) => line !== null).join("\n");
 }
 
+function compactWorldText(value: string | null | undefined, fallback: string, limit = 320): string {
+  const text = cleanString(value, fallback) || fallback;
+  return text.length <= limit ? text : `${text.slice(0, Math.max(1, limit - 3)).trimEnd()}...`;
+}
+
+function upcomingScheduleItems(state: WorldAgentState, count = WORLD_AGENT_INJECTION_HORIZON): WorldAgentScheduleItem[] {
+  const byHour = new Map(state.schedule.map((item) => [item.hour, item]));
+  const items: WorldAgentScheduleItem[] = [];
+  for (let offset = 0; offset < count; offset += 1) {
+    const hour = (state.hour + offset) % WORLD_AGENT_SCHEDULE_HOURS;
+    const item = byHour.get(hour);
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+export function formatCompactWorldAgentStateForInjection(state: WorldAgentState): string {
+  const upcoming = upcomingScheduleItems(state);
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    `Location: ${compactWorldText(state.location, "Unspecified")}`,
+    `Mood: ${compactWorldText(state.mood, "Neutral")}`,
+    `Activity: ${compactWorldText(state.activity, "Idle")}`,
+    state.thought ? `Current thought: ${compactWorldText(state.thought, "", 360)}` : null,
+    state.goal ? `Goal: ${compactWorldText(state.goal, "", 360)}` : null,
+    "",
+    "Current and upcoming schedule:",
+    upcoming.length
+      ? upcoming.map((item) => {
+        const pieces = [
+          formatWorldAgentHourLabel(item.hour),
+          item.location ? `Location: ${compactWorldText(item.location, "", 180)}` : null,
+          `Activity: ${compactWorldText(item.activity, "Unspecified activity", 220)}`,
+        ].filter(Boolean);
+        return `- ${pieces.join(" | ")}`;
+      }).join("\n")
+      : "No matching schedule slots.",
+  ].filter((line) => line !== null).join("\n");
+}
+
 export function buildWorldAgentStateInjection(state: WorldAgentState): string {
   return [
     "[LumiWorld World Agent]",
     "Use this private simulation state to keep the next visible reply aligned with the ongoing world clock. Do not mention LumiWorld, the World Agent, the clock system, or this note.",
     "",
-    formatWorldAgentStateForPrompt(state),
+    formatCompactWorldAgentStateForInjection(state),
   ].join("\n");
 }
 

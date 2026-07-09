@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  KeyedOperationLock,
+  MAX_DIRECTOR_TIMEOUT_MS,
   PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
@@ -28,6 +30,7 @@ import {
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
   parseWorldAgentSchedule,
+  parseWorldAgentScheduleResult,
   parseWorldAgentUpdate,
   resolveControllerTarget,
   resolveWorldAgentTarget,
@@ -106,8 +109,8 @@ describe("settings normalization", () => {
     expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
   });
 
-  test("does not cap controller timeout at legacy 55 seconds", () => {
-    expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(600000);
+  test("uses Lumiverse's real five-minute interceptor ceiling", () => {
+    expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(MAX_DIRECTOR_TIMEOUT_MS);
   });
 
   test("migrates 0.2 settings into nested 0.3 world agent defaults", () => {
@@ -212,6 +215,21 @@ describe("settings normalization", () => {
     expect(settings.worldAgent.updateTemplate).toBe(DEFAULT_SETTINGS.worldAgent.updateTemplate);
     expect(settings.worldAgent.updateTemplate).toContain("location, activity, current thought");
     expect(settings.worldAgent.updateTemplate).not.toContain("mood");
+  });
+});
+
+describe("operation locks", () => {
+  test("allows unrelated chats while blocking duplicate chat and scheduler work", () => {
+    const lock = new KeyedOperationLock();
+    expect(lock.acquire("user-a:chat-1")).toBe(true);
+    expect(lock.acquire("user-a:chat-1")).toBe(false);
+    expect(lock.acquire("user-a:chat-2")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(false);
+    lock.release("user-a:chat-1");
+    lock.release("sweep");
+    expect(lock.acquire("user-a:chat-1")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(true);
   });
 });
 
@@ -464,7 +482,7 @@ describe("activated World Info context", () => {
 });
 
 describe("World Agent state and parsing", () => {
-  test("normalizes per-chat state and trims history", () => {
+  test("rejects incomplete persisted schedules and trims history", () => {
     const state = normalizeWorldAgentState(
       {
         day: -1,
@@ -490,10 +508,8 @@ describe("World Agent state and parsing", () => {
     expect(state.chatId).toBe("chat-1");
     expect(state.day).toBe(1);
     expect(state.hour).toBe(23);
-    expect(state.schedule).toHaveLength(24);
-    expect(state.schedule.map((item) => item.hour)).toEqual(Array.from({ length: 24 }, (_, hour) => hour));
-    expect(state.schedule[0].activity).toBe("Watch the station");
-    expect(state.schedule[7].activity).toBe("Check the signal");
+    expect(state.schedule).toEqual([]);
+    expect(state.scheduleDay).toBeNull();
     expect(state.history).toHaveLength(24);
     expect(state.history[0].timestamp).toBe(30);
   });
@@ -516,11 +532,7 @@ describe("World Agent state and parsing", () => {
 
     expect(isWorldAgentHourDue(state, settings, 1500, true).due).toBe(false);
     expect(isWorldAgentHourDue(state, settings, 2500, true).due).toBe(true);
-    expect(isWorldAgentHourDue(state, settings, 2500, false)).toMatchObject({
-      due: false,
-      shouldResetLastTick: true,
-      reason: "hidden",
-    });
+    expect(isWorldAgentHourDue(state, settings, 2500, false)).toMatchObject({ due: false, shouldResetLastTick: false, reason: "hidden" });
     expect(isWorldAgentHourDue(normalizeWorldAgentState({ running: true, lastTickAt: null }, "chat-1"), settings, 2500, true)).toMatchObject({
       due: false,
       shouldResetLastTick: true,
@@ -528,28 +540,21 @@ describe("World Agent state and parsing", () => {
     });
   });
 
-  test("parses schedule and update JSON with plain-text fallbacks", () => {
-    const oneSlotSchedule = parseWorldAgentSchedule('{"schedule":[{"hour":9,"location":"Cafe","activity":"Write notes"}]}');
-    expect(oneSlotSchedule).toHaveLength(24);
-    expect(oneSlotSchedule[0]).toEqual({ hour: 0, location: "Cafe", activity: "Write notes" });
-    expect(oneSlotSchedule[9]).toEqual({ hour: 9, location: "Cafe", activity: "Write notes" });
-    const messySchedule = [
-      "```json",
-      "{\"schedule\": {\"hour\": 0, \"location\": \"Residential Quarters\", \"activity\": \"Sleeping\", \"mood\": \"Peaceful\", \"goal\": \"Rest and recover\"},",
-      "{\"hour\": 7, \"location\": \"Kitchen\", \"activity\": \"Breakfast\", \"mood\": \"Affectionate\", \"goal\": \"Spend time\"},",
-      "{\"hour\": 9, \"location\": \"Training Facility\", \"activity\": \"Combat training\", \"mood\": \"Focused\", \"goal\": \"Improve\"}}",
-      "```",
-    ].join("\n");
-    const parsedMessy = parseWorldAgentSchedule(messySchedule);
-    expect(parsedMessy).toHaveLength(24);
-    expect(parsedMessy[0]).toEqual({ hour: 0, location: "Residential Quarters", activity: "Sleeping" });
-    expect(parsedMessy[7]).toEqual({ hour: 7, location: "Kitchen", activity: "Breakfast" });
-    expect(parsedMessy[8]).toEqual({ hour: 8, location: "Kitchen", activity: "Breakfast" });
-    expect(parsedMessy[9]).toEqual({ hour: 9, location: "Training Facility", activity: "Combat training" });
-    const repairedSavedSchedule = normalizeWorldAgentState({ schedule: [{ hour: 0, activity: messySchedule }] }, "chat-1").schedule;
-    expect(repairedSavedSchedule).toHaveLength(24);
-    expect(repairedSavedSchedule[0].activity).toBe("Sleeping");
-    expect(repairedSavedSchedule[0].activity).not.toContain('"schedule"');
+  test("requires a complete structured hourly schedule and accepts AM/PM labels", () => {
+    const fullDay = Array.from({ length: 24 }, (_, hour) => ({ hour, location: `Room ${hour}`, activity: `Task ${hour}` }));
+    fullDay[0] = { hour: "12:00am" as unknown as number, location: "Room 0", activity: "Task 0" };
+    fullDay[13] = { hour: "1:00pm" as unknown as number, location: "Room 13", activity: "Task 13" };
+    const parsed = parseWorldAgentScheduleResult(JSON.stringify({ schedule: fullDay }));
+    expect(parsed.error).toBeNull();
+    expect(parsed.schedule).toHaveLength(24);
+    expect(parsed.schedule[0]).toEqual({ hour: 0, location: "Room 0", activity: "Task 0" });
+    expect(parsed.schedule[13]).toEqual({ hour: 13, location: "Room 13", activity: "Task 13" });
+    expect(parseWorldAgentSchedule('{"schedule":[{"hour":9,"location":"Cafe","activity":"Write notes"}]}')).toEqual([]);
+    expect(parseWorldAgentScheduleResult("A loose private day plan.").error).toContain("structured schedule");
+    expect(parseWorldAgentScheduleResult(JSON.stringify({ schedule: [...fullDay.slice(0, 23), fullDay[22]] })).error).toContain("exactly one structured schedule entry");
+    const legacySavedSchedule = '{"schedule":[{"hour":0,"location":"Residential Quarters","activity":"Sleeping"},{"hour":7,"location":"Kitchen","activity":"Breakfast"}]}';
+    const rejectedPersistedSchedule = normalizeWorldAgentState({ schedule: [{ hour: 0, activity: legacySavedSchedule }] }, "chat-1").schedule;
+    expect(rejectedPersistedSchedule).toEqual([]);
     const truncatedJsonSchedule = parseWorldAgentSchedule('{"schedule":[{"hour":0,"location":"Home"');
     expect(truncatedJsonSchedule).toEqual([]);
     const savedJsonBlobSchedule = normalizeWorldAgentState({
@@ -558,12 +563,8 @@ describe("World Agent state and parsing", () => {
         activity: '{"schedule":[{"hour":0,"location":"Home","activity":"Sleeping"},{"hour":7,"location":"Kitchen","activity":"Breakfast"}]}',
       }],
     }, "chat-1").schedule;
-    expect(savedJsonBlobSchedule[0]).toEqual({ hour: 0, location: "Home", activity: "Sleeping" });
-    expect(savedJsonBlobSchedule[7]).toEqual({ hour: 7, location: "Kitchen", activity: "Breakfast" });
-    const fallbackSchedule = parseWorldAgentSchedule("A loose private day plan.");
-    expect(fallbackSchedule).toHaveLength(24);
-    expect(fallbackSchedule[0].activity).toBe("A loose private day plan.");
-    expect(fallbackSchedule[23].activity).toBe("A loose private day plan.");
+    expect(savedJsonBlobSchedule).toEqual([]);
+    expect(parseWorldAgentSchedule("A loose private day plan.")).toEqual([]);
     expect(formatWorldAgentHourLabel(0)).toBe("12:00am");
     expect(formatWorldAgentHourLabel(13)).toBe("1:00pm");
     expect(formatWorldAgentHourLabel(22)).toBe("10:00pm");
@@ -577,10 +578,16 @@ describe("World Agent state and parsing", () => {
     expect(parseWorldAgentUpdate("She keeps watching the north window.")).toEqual({
       thought: "She keeps watching the north window.",
     });
+    expect(parseWorldAgentUpdate("{}")).toEqual({});
   });
 
   test("formats private World Agent injection without raw logs", () => {
     const state = makeDefaultWorldAgentState("chat-1");
+    const schedule = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      location: `Place ${hour}`,
+      activity: `Activity ${hour} ${"x".repeat(120)}`,
+    }));
     const injected = buildWorldAgentStateInjection({
       ...state,
       day: 4,
@@ -590,7 +597,7 @@ describe("World Agent state and parsing", () => {
       activity: "cataloging broken seals",
       thought: "Someone moved the brass case.",
       goal: "confirm who entered after midnight",
-      schedule: [{ hour: 14, location: "Archive", activity: "cataloging broken seals" }],
+      schedule,
       history: [{ id: "hidden", timestamp: 1, day: 4, hour: 14, action: "update", preview: "private raw output" }],
     });
 
@@ -598,6 +605,11 @@ describe("World Agent state and parsing", () => {
     expect(injected).toContain("Day 4, 14:00");
     expect(injected).toContain("Archive");
     expect(injected).not.toContain("private raw output");
+    expect(injected).toContain("Activity 14");
+    expect(injected).toContain("Activity 15");
+    expect(injected).toContain("Activity 16");
+    expect(injected).not.toContain("Activity 17");
+    expect(injected).not.toContain("Activity 2");
   });
 });
 
