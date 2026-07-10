@@ -1,6 +1,7 @@
 // @bun
 // src/shared.ts
 var BREAKDOWN_NAME = "LumiWorld Director";
+var WORLD_AGENT_BREAKDOWN_NAME = "LumiWorld World Agent";
 var VISIBLE_GENERATION_TYPES = [
   "normal",
   "continue",
@@ -10,11 +11,32 @@ var VISIBLE_GENERATION_TYPES = [
 ];
 var MAX_DIRECTIVE_CHARS = 2200;
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
+var MAX_DIRECTOR_TIMEOUT_MS = 300000;
 var MAX_CONTROLLER_TIMEOUT_MS = 2147483647;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
 var DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+var DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
+var WORLD_AGENT_HISTORY_LIMIT = 24;
+var WORLD_AGENT_SCHEDULE_HOURS = 24;
+var WORLD_AGENT_INJECTION_HORIZON = 3;
 var CONTROLLER_CONTEXT_LABEL_KEY = "__lumiWorldContextLabel";
+
+class KeyedOperationLock {
+  keys = new Set;
+  acquire(key) {
+    if (this.keys.has(key))
+      return false;
+    this.keys.add(key);
+    return true;
+  }
+  release(key) {
+    this.keys.delete(key);
+  }
+  has(key) {
+    return this.keys.has(key);
+  }
+}
 var LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
   "Your job is to decide how the world, scene, NPCs, hidden pressures, and immediate consequences should react before the main roleplay model writes the visible reply.",
@@ -133,6 +155,116 @@ var DEFAULT_USER_TEMPLATE = [
   'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
+var PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create the current day's background schedule for {{char}}.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "",
+  "Return compact JSON only:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"...","mood":"...","goal":"..."}]}',
+  "",
+  "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override."
+].join(`
+`);
+var PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":7,"location":"...","activity":"..."},{"hour":12,"location":"...","activity":"..."},{"hour":18,"location":"...","activity":"..."}]}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan exactly 24 hourly entries, one entry for every hour from 0 through 23.",
+  "Each entry's hour is the exact hour it describes. Use 0-23 hour values.",
+  "If {{char}} keeps doing the same thing for several hours, repeat the same location and activity for each hour.",
+  "For example, sleeping from midnight to 6am still needs separate 0, 1, 2, 3, 4, 5, and 6 entries.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"..."},{"hour":1,"location":"...","activity":"..."},{"hour":2,"location":"...","activity":"..."},{"hour":3,"location":"...","activity":"..."}]}'
+].join(`
+`);
+var PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  '{"schedule":[{"hour":0,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":7,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":12,"location":"...","activity":"...","mood":"...","goal":"..."},{"hour":18,"location":"...","activity":"...","mood":"...","goal":"..."}]}'
+].join(`
+`);
+var PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, mood, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  '{"location":"...","mood":"...","activity":"...","thought":"...","goal":"..."}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  '{"location":"...","activity":"...","thought":"...","goal":"..."}'
+].join(`
+`);
+var DEFAULT_WORLD_AGENT_SETTINGS = {
+  enabled: false,
+  connectionId: null,
+  modelOverride: "",
+  temperature: 0.45,
+  maxTokens: 700,
+  timeoutMs: 60000,
+  hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeUserPersona: true,
+  includeCharacter: true,
+  injectState: true,
+  autoTickVisibleOnly: true,
+  scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+  updateTemplate: DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+};
 var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
@@ -149,7 +281,8 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
-  runLogLimit: DEFAULT_RUN_LOG_LIMIT
+  runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  worldAgent: DEFAULT_WORLD_AGENT_SETTINGS
 };
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -176,6 +309,29 @@ function normalizeGenerationTypes(value) {
   const normalized = incoming.filter((item) => typeof item === "string" && allowed.has(item));
   return normalized.length ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
+function normalizeWorldAgentSettings(value) {
+  const obj = asRecord(value);
+  const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
+  const storedUpdateTemplate = cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE);
+  const scheduleTemplate = !storedScheduleTemplate || storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE || storedScheduleTemplate === PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE : storedScheduleTemplate;
+  const updateTemplate = !storedUpdateTemplate || storedUpdateTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE ? DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE : storedUpdateTemplate;
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
+    connectionId: cleanNullableString(obj.connectionId),
+    modelOverride: cleanString(obj.modelOverride),
+    temperature: numberInRange(obj.temperature, DEFAULT_WORLD_AGENT_SETTINGS.temperature, 0, 2),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_WORLD_AGENT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_WORLD_AGENT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_WORLD_AGENT_SETTINGS.includeCharacter,
+    injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
+    autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean" ? obj.autoTickVisibleOnly : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
+    scheduleTemplate,
+    updateTemplate
+  };
+}
 function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -188,7 +344,7 @@ function normalizeSettings(value) {
     modelOverride: cleanString(obj.modelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
-    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
@@ -198,7 +354,8 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
-    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50)
+    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    worldAgent: normalizeWorldAgentSettings(obj.worldAgent)
   };
 }
 function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
@@ -211,10 +368,13 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
     const status = cleanString(obj.status);
     if (!id || !timestamp || !["success", "error", "timeout", "skipped", "test_success", "test_error"].includes(status))
       return null;
+    const channel = cleanString(obj.channel);
     return {
       id,
       timestamp,
       status,
+      channel: channel === "director" || channel === "world_agent" ? channel : null,
+      action: cleanNullableString(obj.action),
       generationType: cleanNullableString(obj.generationType),
       durationMs: obj.durationMs == null ? null : numberInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
       connectionId: cleanNullableString(obj.connectionId),
@@ -222,6 +382,9 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
       model: cleanNullableString(obj.model),
       directivePreview: cleanNullableString(obj.directivePreview),
       error: cleanNullableString(obj.error),
+      worldAgentDay: obj.worldAgentDay == null ? null : integerInRange(obj.worldAgentDay, 1, 1, Number.MAX_SAFE_INTEGER),
+      worldAgentHour: obj.worldAgentHour == null ? null : integerInRange(obj.worldAgentHour, 0, 0, 23),
+      worldAgentScheduleCount: obj.worldAgentScheduleCount == null ? null : integerInRange(obj.worldAgentScheduleCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoActivatedCount: obj.worldInfoActivatedCount == null ? null : integerInRange(obj.worldInfoActivatedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
@@ -254,6 +417,25 @@ function resolveControllerTarget(settings, connection) {
   const model = settings.modelOverride.trim() || connection.model.trim();
   if (!model) {
     return { ok: false, reason: "The selected LumiWorld controller connection has no model configured." };
+  }
+  return {
+    ok: true,
+    connectionId: connection.id,
+    connectionName: connection.name,
+    provider: connection.provider,
+    model
+  };
+}
+function resolveWorldAgentTarget(settings, connection) {
+  if (!settings.connectionId) {
+    return { ok: false, reason: "Choose a LumiWorld World Agent connection first." };
+  }
+  if (!connection) {
+    return { ok: false, reason: "The selected LumiWorld World Agent connection could not be found." };
+  }
+  const model = settings.modelOverride.trim() || connection.model.trim();
+  if (!model) {
+    return { ok: false, reason: "The selected LumiWorld World Agent connection has no model configured." };
   }
   return {
     ok: true,
@@ -446,6 +628,45 @@ function selectChatHistoryMessagesForController(messages, limit) {
     return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
+function rawRecord(value) {
+  return value && typeof value === "object" ? value : {};
+}
+function activeChatMessageContent(message) {
+  if (typeof message.content === "string" && message.content.trim())
+    return message.content;
+  if (!Array.isArray(message.swipes) || message.swipes.length === 0)
+    return "";
+  const index = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id) ? Math.max(0, Math.min(message.swipes.length - 1, Math.floor(message.swipe_id))) : 0;
+  const swipe = message.swipes[index];
+  return typeof swipe === "string" ? swipe : "";
+}
+function chatMutationRole(message) {
+  return message.role === "system" || message.role === "assistant" || message.role === "user" ? message.role : message.is_user === true ? "user" : "assistant";
+}
+function isHiddenChatMutationMessage(message) {
+  return rawRecord(message.extra).hidden === true || rawRecord(message.metadata).hidden === true;
+}
+function selectChatMutationMessagesForController(messages, limit) {
+  const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
+  if (cappedLimit <= 0)
+    return [];
+  return messages.filter((message) => !isHiddenChatMutationMessage(message)).map((message) => {
+    const content = activeChatMessageContent(message).trim();
+    if (!content)
+      return null;
+    const selected = {
+      role: chatMutationRole(message),
+      content,
+      __isChatHistory: true
+    };
+    if (typeof message.id === "string" && message.id.trim())
+      selected.sourceMessageId = message.id.trim();
+    if (typeof message.index_in_chat === "number" && Number.isFinite(message.index_in_chat)) {
+      selected.sourceIndexInChat = Math.floor(message.index_in_chat);
+    }
+    return selected;
+  }).filter((message) => !!message).slice(-cappedLimit);
+}
 function selectControllerMessagesForController(messages, settings, contextMessages = []) {
   const selected = [...contextMessages];
   selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
@@ -563,6 +784,10 @@ function stripCodeFence(value) {
   const trimmed = value.trim();
   const match = trimmed.match(/^```(?:json|text)?\s*([\s\S]*?)\s*```$/i);
   return (match ? match[1] : trimmed).trim();
+}
+function extractFirstCodeFence(value) {
+  const match = value.match(/```(?:json|text)?\s*([\s\S]*?)\s*```/i);
+  return match ? match[1].trim() : null;
 }
 function findJsonObject(value) {
   const stripped = stripCodeFence(value);
@@ -743,6 +968,25 @@ function describeEmptyControllerResponse(response) {
     "No director note was injected."
   ].join(" ");
 }
+function describeEmptyWorldAgentResponse(response) {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null
+  ].filter(Boolean).join(", ");
+  if (reasoning) {
+    return [
+      `LumiWorld World Agent returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No schedule or state update was applied because LumiWorld only uses final response content."
+    ].join(" ");
+  }
+  return [
+    `LumiWorld World Agent returned no final schedule or state update${suffix ? ` (${suffix})` : ""}.`,
+    "No schedule or state update was applied."
+  ].join(" ");
+}
 function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE_CHARS) {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
 }
@@ -763,15 +1007,374 @@ function makeDirectivePreview(directive, maxChars = 360) {
     return null;
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1).trimEnd()}...`;
 }
+function normalizeWorldAgentState(value, chatId, patch = {}) {
+  const obj = asRecord(value);
+  const now = Date.now();
+  const storedSchedule = normalizeWorldAgentSchedule(obj.schedule);
+  const rawHistory = Array.isArray(obj.history) ? obj.history : [];
+  const history = rawHistory.map((item) => {
+    const record = asRecord(item);
+    const timestamp = numberInRange(record.timestamp, 0, 0, Number.MAX_SAFE_INTEGER);
+    const action = cleanString(record.action);
+    if (!timestamp || !action)
+      return null;
+    return {
+      id: cleanString(record.id) || `${timestamp}-${action}`,
+      timestamp,
+      day: integerInRange(record.day, 1, 1, Number.MAX_SAFE_INTEGER),
+      hour: integerInRange(record.hour, 0, 0, 23),
+      action,
+      preview: cleanNullableString(record.preview),
+      error: cleanNullableString(record.error)
+    };
+  }).filter((item) => !!item).sort((left, right) => right.timestamp - left.timestamp).slice(0, WORLD_AGENT_HISTORY_LIMIT);
+  const state = {
+    chatId: cleanString(obj.chatId, chatId) || chatId,
+    day: integerInRange(obj.day, 1, 1, Number.MAX_SAFE_INTEGER),
+    hour: integerInRange(obj.hour, 8, 0, 23),
+    running: typeof obj.running === "boolean" ? obj.running : false,
+    lastTickAt: obj.lastTickAt == null ? null : numberInRange(obj.lastTickAt, now, 0, Number.MAX_SAFE_INTEGER),
+    activeCharacterId: cleanNullableString(obj.activeCharacterId),
+    activePersonaId: cleanNullableString(obj.activePersonaId),
+    scheduleDay: obj.scheduleDay == null ? null : integerInRange(obj.scheduleDay, 1, 1, Number.MAX_SAFE_INTEGER),
+    schedule: storedSchedule,
+    location: cleanString(obj.location, "Unspecified"),
+    mood: cleanString(obj.mood, "Neutral"),
+    activity: cleanString(obj.activity, "Idle"),
+    thought: cleanString(obj.thought),
+    goal: cleanString(obj.goal),
+    updatedAt: numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER),
+    history
+  };
+  const schedule = patch.schedule !== undefined ? normalizeWorldAgentSchedule(patch.schedule) : state.schedule;
+  const scheduleDay = schedule.length === WORLD_AGENT_SCHEDULE_HOURS ? patch.scheduleDay === null ? null : integerInRange(patch.scheduleDay, state.scheduleDay ?? state.day, 1, Number.MAX_SAFE_INTEGER) : null;
+  return {
+    ...state,
+    ...patch,
+    chatId,
+    day: integerInRange(patch.day, state.day, 1, Number.MAX_SAFE_INTEGER),
+    hour: integerInRange(patch.hour, state.hour, 0, 23),
+    scheduleDay,
+    schedule,
+    history: patch.history ? normalizeWorldAgentState({ ...state, history: patch.history }, chatId).history : state.history
+  };
+}
+function makeDefaultWorldAgentState(chatId, identity) {
+  const now = Date.now();
+  return normalizeWorldAgentState({
+    chatId,
+    day: 1,
+    hour: 8,
+    running: false,
+    lastTickAt: null,
+    activeCharacterId: identity?.characterId ?? null,
+    activePersonaId: identity?.personaId ?? null,
+    scheduleDay: null,
+    schedule: [],
+    location: "Unspecified",
+    mood: "Neutral",
+    activity: "Idle",
+    thought: "",
+    goal: "",
+    updatedAt: now,
+    history: []
+  }, chatId);
+}
+function parseJsonishValue(value) {
+  if (typeof value !== "string")
+    return value ?? null;
+  const stripped = stripCodeFence(value);
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const fenced = extractFirstCodeFence(value);
+    if (fenced && fenced !== stripped) {
+      try {
+        return JSON.parse(fenced);
+      } catch {}
+    }
+    const arrayMatch = stripped.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch {}
+    }
+    return findJsonObject(stripped);
+  }
+}
+function parseScheduleHour(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const hour = Math.round(value);
+    return hour >= 0 && hour < WORLD_AGENT_SCHEDULE_HOURS ? hour : null;
+  }
+  if (typeof value !== "string")
+    return null;
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!match)
+    return null;
+  const sourceHour = Number(match[1]);
+  const minute = match[2] == null ? 0 : Number(match[2]);
+  const period = match[3]?.toLowerCase();
+  if (!Number.isInteger(sourceHour) || minute < 0 || minute > 59)
+    return null;
+  if (!period)
+    return sourceHour >= 0 && sourceHour < WORLD_AGENT_SCHEDULE_HOURS ? sourceHour : null;
+  if (sourceHour < 1 || sourceHour > 12)
+    return null;
+  if (period === "am")
+    return sourceHour === 12 ? 0 : sourceHour;
+  return sourceHour === 12 ? 12 : sourceHour + 12;
+}
+function parseLooseJsonObjectFragment(value) {
+  const repaired = value.replace(/,\s*}/g, "}").replace(/([{,]\s*)([A-Za-z_][\w-]*)(\s*:)/g, '$1"$2"$3');
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return null;
+  }
+}
+function extractLooseScheduleRecords(value) {
+  const stripped = stripCodeFence(value);
+  const matches = stripped.match(/\{[^{}]*\b(?:hour|time|start_hour|startHour)\b[^{}]*\}/gi) ?? [];
+  return matches.map(parseLooseJsonObjectFragment).filter((item) => !!item && typeof item === "object" && !Array.isArray(item));
+}
+function strictScheduleItem(value) {
+  const obj = asRecord(value);
+  const hour = parseScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour);
+  if (hour == null)
+    return null;
+  const activity = cleanString(obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan);
+  const location = cleanString(obj.location ?? obj.place ?? obj.where);
+  if (!activity && !location)
+    return null;
+  return {
+    hour,
+    label: cleanString(obj.label ?? obj.title) || undefined,
+    location: location || undefined,
+    activity: activity || `At ${location}`
+  };
+}
+function scheduleCandidate(raw) {
+  const parsed = parseJsonishValue(raw);
+  const obj = asRecord(parsed);
+  const scheduleValue = obj.schedule ?? obj.dailySchedule ?? obj.daily_schedule ?? obj.plan;
+  return Array.isArray(parsed) ? parsed : Array.isArray(scheduleValue) ? scheduleValue : scheduleValue && typeof scheduleValue === "object" ? [scheduleValue] : [];
+}
+function parseWorldAgentScheduleResult(raw) {
+  const candidate = scheduleCandidate(raw);
+  if (!candidate.length && typeof raw === "string") {
+    const loose = extractLooseScheduleRecords(raw);
+    if (loose.length)
+      candidate.push(...loose);
+  }
+  if (!candidate.length) {
+    return { schedule: [], error: "World Agent did not return a structured schedule." };
+  }
+  const items = candidate.map(strictScheduleItem);
+  if (items.some((item) => item == null)) {
+    return { schedule: [], error: "World Agent schedule entries need an hour plus a location or activity." };
+  }
+  const schedule = items;
+  const hours = new Set(schedule.map((item) => item.hour));
+  if (schedule.length !== WORLD_AGENT_SCHEDULE_HOURS || hours.size !== WORLD_AGENT_SCHEDULE_HOURS) {
+    return { schedule: [], error: "World Agent must return exactly one structured schedule entry for every hour from 0 through 23." };
+  }
+  return { schedule: schedule.sort((left, right) => left.hour - right.hour), error: null };
+}
+function normalizeWorldAgentSchedule(value) {
+  return parseWorldAgentScheduleResult({ schedule: value }).schedule;
+}
+function parseWorldAgentUpdate(raw) {
+  const parsed = parseJsonishValue(raw);
+  const obj = asRecord(parsed);
+  const update = {
+    location: cleanString(obj.location ?? obj.place ?? obj.where) || undefined,
+    mood: cleanString(obj.mood ?? obj.emotion ?? obj.affect) || undefined,
+    activity: cleanString(obj.activity ?? obj.action ?? obj.current_activity ?? obj.currentActivity) || undefined,
+    thought: cleanString(obj.thought ?? obj.current_thought ?? obj.currentThought ?? obj.inner_monologue) || undefined,
+    goal: cleanString(obj.goal ?? obj.intent ?? obj.objective ?? obj.current_goal ?? obj.currentGoal) || undefined
+  };
+  if (Object.values(update).some(Boolean))
+    return update;
+  if (typeof raw === "string") {
+    const trimmed = stripCodeFence(raw).trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("["))
+      return {};
+    const fallback = normalizeDirectiveText(raw, 900);
+    if (fallback)
+      return { thought: fallback };
+  }
+  return {};
+}
+function appendWorldAgentHistory(state, action, preview, error, timestamp = Date.now()) {
+  const entry = {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${timestamp}-${Math.random()}`,
+    timestamp,
+    day: state.day,
+    hour: state.hour,
+    action,
+    preview: makeDirectivePreview(preview, 240),
+    error: makeDirectivePreview(error, 240)
+  };
+  return {
+    ...state,
+    updatedAt: timestamp,
+    history: [entry, ...state.history].slice(0, WORLD_AGENT_HISTORY_LIMIT)
+  };
+}
+function advanceWorldAgentHour(state, timestamp = Date.now()) {
+  const nextHour = (state.hour + 1) % 24;
+  const nextDay = nextHour === 0 ? state.day + 1 : state.day;
+  return {
+    ...state,
+    day: nextDay,
+    hour: nextHour,
+    lastTickAt: timestamp,
+    scheduleDay: nextDay !== state.day ? null : state.scheduleDay,
+    schedule: nextDay !== state.day ? [] : state.schedule,
+    updatedAt: timestamp
+  };
+}
+function isWorldAgentHourDue(state, settings, now = Date.now(), visible = true) {
+  if (!settings.enabled)
+    return { due: false, shouldResetLastTick: false, reason: "disabled" };
+  if (!state.running)
+    return { due: false, shouldResetLastTick: false, reason: "paused" };
+  if (settings.autoTickVisibleOnly && !visible) {
+    return { due: false, shouldResetLastTick: false, reason: "hidden" };
+  }
+  if (state.lastTickAt == null)
+    return { due: false, shouldResetLastTick: true, reason: "initialized" };
+  return {
+    due: now - state.lastTickAt >= settings.hourDurationMs,
+    shouldResetLastTick: false
+  };
+}
+function applyWorldAgentUpdate(state, update, timestamp = Date.now()) {
+  return {
+    ...state,
+    location: cleanString(update.location, state.location),
+    mood: cleanString(update.mood, state.mood),
+    activity: cleanString(update.activity, state.activity),
+    thought: cleanString(update.thought, state.thought),
+    goal: cleanString(update.goal, state.goal),
+    updatedAt: timestamp
+  };
+}
+function formatWorldAgentClock(day, hour) {
+  return `Day ${Math.max(1, Math.round(day))}, ${String(Math.max(0, Math.min(23, Math.round(hour)))).padStart(2, "0")}:00`;
+}
+function formatWorldAgentHourLabel(hour) {
+  const normalized = Math.max(0, Math.min(23, Math.round(hour)));
+  const period = normalized < 12 ? "am" : "pm";
+  const displayHour = normalized % 12 || 12;
+  return `${displayHour}:00${period}`;
+}
+function currentScheduleItems(state) {
+  return state.schedule.filter((item) => item.hour === state.hour);
+}
+function formatWorldAgentSchedule(schedule) {
+  if (!schedule.length)
+    return "No schedule generated.";
+  return schedule.map((item) => {
+    const pieces = [
+      formatWorldAgentHourLabel(item.hour),
+      item.location ? `Location: ${item.location}` : null,
+      `Activity: ${item.activity}`
+    ].filter(Boolean);
+    return `- ${pieces.join(" | ")}`;
+  }).join(`
+`);
+}
+function formatWorldAgentStateForPrompt(state) {
+  const currentSchedule = currentScheduleItems(state);
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    `Running: ${state.running ? "yes" : "paused"}`,
+    `Location: ${state.location || "Unspecified"}`,
+    `Mood: ${state.mood || "Neutral"}`,
+    `Activity: ${state.activity || "Idle"}`,
+    state.thought ? `Current thought: ${state.thought}` : null,
+    state.goal ? `Goal: ${state.goal}` : null,
+    "",
+    "Current schedule slot:",
+    currentSchedule.length ? formatWorldAgentSchedule(currentSchedule) : "No matching schedule slot.",
+    "",
+    "Daily schedule:",
+    formatWorldAgentSchedule(state.schedule)
+  ].filter((line) => line !== null).join(`
+`);
+}
+function compactWorldText(value, fallback, limit = 320) {
+  const text = cleanString(value, fallback) || fallback;
+  return text.length <= limit ? text : `${text.slice(0, Math.max(1, limit - 3)).trimEnd()}...`;
+}
+function upcomingScheduleItems(state, count = WORLD_AGENT_INJECTION_HORIZON) {
+  const byHour = new Map(state.schedule.map((item) => [item.hour, item]));
+  const items = [];
+  for (let offset = 0;offset < count; offset += 1) {
+    const hour = (state.hour + offset) % WORLD_AGENT_SCHEDULE_HOURS;
+    const item = byHour.get(hour);
+    if (item)
+      items.push(item);
+  }
+  return items;
+}
+function formatCompactWorldAgentStateForInjection(state) {
+  const upcoming = upcomingScheduleItems(state);
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    `Location: ${compactWorldText(state.location, "Unspecified")}`,
+    `Mood: ${compactWorldText(state.mood, "Neutral")}`,
+    `Activity: ${compactWorldText(state.activity, "Idle")}`,
+    state.thought ? `Current thought: ${compactWorldText(state.thought, "", 360)}` : null,
+    state.goal ? `Goal: ${compactWorldText(state.goal, "", 360)}` : null,
+    "",
+    "Current and upcoming schedule:",
+    upcoming.length ? upcoming.map((item) => {
+      const pieces = [
+        formatWorldAgentHourLabel(item.hour),
+        item.location ? `Location: ${compactWorldText(item.location, "", 180)}` : null,
+        `Activity: ${compactWorldText(item.activity, "Unspecified activity", 220)}`
+      ].filter(Boolean);
+      return `- ${pieces.join(" | ")}`;
+    }).join(`
+`) : "No matching schedule slots."
+  ].filter((line) => line !== null).join(`
+`);
+}
+function buildWorldAgentStateInjection(state) {
+  return [
+    "[LumiWorld World Agent]",
+    "Use this private simulation state to keep the next visible reply aligned with the ongoing world clock. Do not mention LumiWorld, the World Agent, the clock system, or this note.",
+    "",
+    formatCompactWorldAgentStateForInjection(state)
+  ].join(`
+`);
+}
+function makeWorldAgentPreview(state) {
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    state.location ? `at ${state.location}` : null,
+    state.activity ? `doing ${state.activity}` : null,
+    state.mood ? `mood ${state.mood}` : null
+  ].filter(Boolean).join(" / ");
+}
 
 // src/backend.ts
 var SETTINGS_PATH = "global/settings.json";
 var RUNS_PATH = "global/runs.json";
+var WORLD_AGENT_DIR = "world-agent/chats";
 var INTERCEPTOR_PRIORITY = 150;
+var WORLD_AGENT_TICK_INTERVAL_MS = 1000;
 var lastFrontendUserId = null;
 var chatUserIds = new Map;
+var activeChats = new Map;
+var worldAgentBusy = new KeyedOperationLock;
+var directorBusy = new KeyedOperationLock;
+var worldAgentHiddenChats = new Set;
 var interceptorRegistered = false;
-var controllerBusy = false;
+var worldAgentTimerSweepLock = new KeyedOperationLock;
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs) {
@@ -780,10 +1383,26 @@ class ControllerTimeoutError extends Error {
   }
 }
 
+class WorldAgentTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super(`LumiWorld World Agent timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    this.name = "WorldAgentTimeoutError";
+  }
+}
+
 class EmptyControllerDirectiveError extends Error {
   constructor(response) {
     super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
+  }
+}
+
+class EmptyWorldAgentContentError extends Error {
+  rawOutput;
+  constructor(response) {
+    super(describeEmptyWorldAgentResponse(response));
+    this.name = "EmptyWorldAgentContentError";
+    this.rawOutput = makeGenerationOutputForCopy(response, null) || null;
   }
 }
 function storageApi() {
@@ -795,6 +1414,9 @@ function connectionsApi() {
 function chatsApi() {
   return spindle.chats;
 }
+function chatApi() {
+  return spindle.chat;
+}
 function charactersApi() {
   return spindle.characters;
 }
@@ -804,6 +1426,9 @@ function personasApi() {
 function worldBooksApi() {
   return spindle.world_books;
 }
+function usersApi() {
+  return spindle.users;
+}
 function permissionsApi() {
   return spindle.permissions;
 }
@@ -811,12 +1436,36 @@ var PERMISSION_IDS = {
   interceptor: "interceptor",
   generation: "generation",
   chats: "chats",
+  chatMutation: "chat_mutation",
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books"
 };
 function send(message, userId = lastFrontendUserId ?? undefined) {
   spindle.sendToFrontend(message, userId);
+}
+function stringifyForCopy(value) {
+  if (typeof value === "string")
+    return value;
+  const seen = new WeakSet;
+  try {
+    return JSON.stringify(value, (_key, nested) => {
+      if (nested && typeof nested === "object") {
+        if (seen.has(nested))
+          return "[Circular]";
+        seen.add(nested);
+      }
+      return nested;
+    }, 2);
+  } catch {
+    return String(value);
+  }
+}
+function makeGenerationOutputForCopy(response, finalText) {
+  const text = finalText?.trim();
+  if (text)
+    return text;
+  return stringifyForCopy(response).trim();
 }
 function permissionHas(permission) {
   const permissions = permissionsApi();
@@ -833,6 +1482,7 @@ function currentPermissions() {
     interceptor: permissionHas("interceptor"),
     generation: permissionHas("generation"),
     chats: permissionHas("chats"),
+    chatMutation: permissionHas("chatMutation"),
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks")
@@ -842,6 +1492,19 @@ function rememberChatUser(chatId, userId) {
   if (!chatId || !userId)
     return;
   chatUserIds.set(chatId, userId);
+}
+function rememberActiveChat(chatId, userId, characterId) {
+  if (!chatId || !userId)
+    return;
+  rememberChatUser(chatId, userId);
+  const previous = activeChats.get(userId);
+  if (previous && previous.chatId !== chatId)
+    worldAgentHiddenChats.delete(worldAgentBusyKey(userId, previous.chatId));
+  activeChats.set(userId, {
+    chatId,
+    characterId: characterId && characterId.trim() ? characterId.trim() : activeChats.get(userId)?.characterId ?? null,
+    lastSeenAt: Date.now()
+  });
 }
 function resolveUserId(chatId) {
   if (chatId) {
@@ -889,6 +1552,42 @@ function extractCharacterId(value) {
 function readChatIdFromMessage(message) {
   return "chatId" in message && typeof message.chatId === "string" && message.chatId.trim() ? message.chatId : null;
 }
+function readCharacterIdFromMessage(message) {
+  return "characterId" in message && typeof message.characterId === "string" && message.characterId.trim() ? message.characterId : null;
+}
+function sanitizeStorageSegment(value) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
+}
+function worldAgentStatePath(chatId) {
+  return `${WORLD_AGENT_DIR}/${sanitizeStorageSegment(chatId)}.json`;
+}
+function worldAgentBusyKey(userId, chatId) {
+  return `${userId || "user"}:${chatId}`;
+}
+function directorBusyKey(userId, chatId) {
+  return `${userId || "user"}:${chatId || "no-chat"}`;
+}
+async function readWorldAgentChatHistory(chatId, limit) {
+  if (limit <= 0)
+    return { messages: [], error: null };
+  if (!permissionHas("chatMutation")) {
+    return { messages: [], error: "Chat Mutation permission is not granted, so World Agent history is unavailable." };
+  }
+  if (typeof chatApi()?.getMessages !== "function") {
+    return { messages: [], error: "Lumiverse does not expose chat history reads in this extension runtime." };
+  }
+  try {
+    const messages = await chatApi().getMessages(chatId);
+    return {
+      messages: selectChatMutationMessagesForController(Array.isArray(messages) ? messages : [], limit),
+      error: null
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWorld could not read chat history for World Agent: ${message}`);
+    return { messages: [], error: message };
+  }
+}
 function toConnectionOption(connection) {
   return {
     id: String(connection.id || ""),
@@ -907,6 +1606,8 @@ function toConnectionLike(connection) {
 }
 async function ensureFolders(userId) {
   await storageApi().mkdir("global", userId ?? undefined).catch(() => {});
+  await storageApi().mkdir("world-agent", userId ?? undefined).catch(() => {});
+  await storageApi().mkdir(WORLD_AGENT_DIR, userId ?? undefined).catch(() => {});
 }
 async function loadSettings(userId) {
   try {
@@ -922,7 +1623,14 @@ async function loadSettings(userId) {
 async function saveSettings(patch, userId) {
   await ensureFolders(userId);
   const current = await loadSettings(userId);
-  const next = normalizeSettings({ ...current, ...patch });
+  const next = normalizeSettings({
+    ...current,
+    ...patch,
+    worldAgent: normalizeWorldAgentSettings({
+      ...current.worldAgent,
+      ...patch.worldAgent ?? {}
+    })
+  });
   await storageApi().setJson(SETTINGS_PATH, next, { indent: 2, userId: userId ?? undefined });
   return next;
 }
@@ -940,6 +1648,60 @@ async function loadRuns(userId, limit = DEFAULT_SETTINGS.runLogLimit) {
 async function saveRuns(runs, userId) {
   await ensureFolders(userId);
   await storageApi().setJson(RUNS_PATH, runs, { indent: 2, userId: userId ?? undefined });
+}
+async function resolveActiveChatId(userId, explicitChatId) {
+  if (explicitChatId && explicitChatId.trim())
+    return explicitChatId.trim();
+  const remembered = userId ? activeChats.get(userId)?.chatId : null;
+  if (remembered)
+    return remembered;
+  if (!permissionHas("chats"))
+    return null;
+  try {
+    const chat = await chatsApi().getActive(userId ?? undefined);
+    return typeof chat?.id === "string" && chat.id.trim() ? chat.id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+async function loadWorldAgentState(chatId, userId, identity) {
+  if (!chatId)
+    return null;
+  try {
+    const stored = await storageApi().getJson(worldAgentStatePath(chatId), {
+      fallback: makeDefaultWorldAgentState(chatId, identity),
+      userId: userId ?? undefined
+    });
+    return normalizeWorldAgentState(stored, chatId, {
+      activeCharacterId: identity?.characterId ?? normalizeWorldAgentState(stored, chatId).activeCharacterId,
+      activePersonaId: identity?.personaId ?? normalizeWorldAgentState(stored, chatId).activePersonaId
+    });
+  } catch {
+    return makeDefaultWorldAgentState(chatId, identity);
+  }
+}
+async function loadExistingWorldAgentState(chatId, userId, identity) {
+  if (!chatId)
+    return null;
+  try {
+    const stored = await storageApi().getJson(worldAgentStatePath(chatId), {
+      fallback: null,
+      userId: userId ?? undefined
+    });
+    return stored ? normalizeWorldAgentState(stored, chatId, {
+      activeCharacterId: identity?.characterId ?? normalizeWorldAgentState(stored, chatId).activeCharacterId,
+      activePersonaId: identity?.personaId ?? normalizeWorldAgentState(stored, chatId).activePersonaId
+    }) : null;
+  } catch {
+    return null;
+  }
+}
+async function saveWorldAgentState(state, userId) {
+  await ensureFolders(userId);
+  const normalized = normalizeWorldAgentState(state, state.chatId);
+  await storageApi().setJson(worldAgentStatePath(normalized.chatId), normalized, { indent: 2, userId: userId ?? undefined });
+  send({ type: "world_state", state: normalized }, userId ?? undefined);
+  return normalized;
 }
 async function recordRun(entry, userId, settings) {
   try {
@@ -1066,24 +1828,27 @@ async function resolveControllerContextMessages(settings, context, chatId, userI
     settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
     settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
   ].filter((message) => !!message);
-  return { messages, identity };
+  return { messages, identity, characterId: character?.id ?? null, personaId: persona?.id ?? null };
 }
-async function buildState(userId) {
+async function buildState(userId, chatId, characterId) {
   const settings = await loadSettings(userId);
-  const [connectionState, runs] = await Promise.all([
+  const resolvedChatId = await resolveActiveChatId(userId, chatId);
+  const [connectionState, runs, worldState] = await Promise.all([
     listConnections(userId),
-    loadRuns(userId, settings.runLogLimit)
+    loadRuns(userId, settings.runLogLimit),
+    loadWorldAgentState(resolvedChatId, userId, { characterId })
   ]);
   return {
     settings,
     connections: connectionState.connections,
     connectionError: connectionState.error,
     runs,
-    permissions: currentPermissions()
+    permissions: currentPermissions(),
+    worldState
   };
 }
-async function pushState(userId) {
-  send({ type: "state", state: await buildState(userId) }, userId ?? undefined);
+async function pushState(userId, chatId, characterId) {
+  send({ type: "state", state: await buildState(userId, chatId, characterId) }, userId ?? undefined);
 }
 function makeRunBase(status, startedAt, patch = {}) {
   return {
@@ -1141,40 +1906,553 @@ async function callController(userId, settings, target, messages) {
     clearTimeout(timer);
   }
 }
+function buildWorldAgentTemplateVars(state, identity, extra = {}) {
+  return {
+    chatId: state.chatId,
+    user: identity.userName || "User",
+    char: identity.characterName || "Character",
+    day: String(state.day),
+    hour: String(state.hour),
+    time: `${String(state.hour).padStart(2, "0")}:00`,
+    timestamp: new Date().toISOString(),
+    state: formatWorldAgentStateForPrompt(state),
+    schedule: formatWorldAgentSchedule(state.schedule),
+    ...extra
+  };
+}
+function buildWorldAgentMessages(options) {
+  const vars = buildWorldAgentTemplateVars(options.state, options.identity);
+  const systemTemplate = options.mode === "schedule" ? options.settings.scheduleTemplate : options.settings.updateTemplate;
+  const system = renderTemplate(systemTemplate, vars);
+  const action = options.mode === "schedule" ? "Generate today's full private schedule as exactly 24 hourly entries, one for every hour 0 through 23. Repeat location/activity across consecutive hours when needed. Only include hour, location, and activity; do not assign mood, thoughts, or current goals." : "Advance the private state by one simulated hour.";
+  return [
+    { role: "system", content: system },
+    ...options.contextMessages,
+    {
+      role: "user",
+      content: [
+        action,
+        "",
+        `Chat ID: ${vars.chatId}`,
+        `Current time: Day ${vars.day}, ${vars.time}`,
+        "",
+        "Current World Agent state:",
+        "<world_state>",
+        vars.state,
+        "</world_state>"
+      ].join(`
+`)
+    }
+  ];
+}
+async function callWorldAgentModel(userId, settings, target, messages) {
+  if (!userId) {
+    throw new Error("LumiWorld could not resolve the active Lumiverse user for the World Agent call.");
+  }
+  const startedAt = Date.now();
+  const controller = new AbortController;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, settings.timeoutMs);
+  try {
+    const response = await spindle.generate.raw({
+      provider: target.provider,
+      model: target.model,
+      connection_id: target.connectionId,
+      userId,
+      messages,
+      parameters: {
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens
+      },
+      reasoning: { source: "off" },
+      signal: controller.signal
+    });
+    const text = extractControllerResponseText(response);
+    const rawOutput = makeGenerationOutputForCopy(response, text);
+    if (!text) {
+      throw new EmptyWorldAgentContentError(response);
+    }
+    return { text, durationMs: Date.now() - startedAt, rawOutput: rawOutput || null };
+  } catch (error) {
+    if (timedOut || error instanceof Error && error.name === "AbortError") {
+      throw new WorldAgentTimeoutError(settings.timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function resolveWorldAgentContext(settings, chatId, userId, characterId) {
+  const context = { chatId, characterId: characterId || undefined };
+  const resolved = await resolveControllerContextMessages({
+    ...settings,
+    includeUserPersona: settings.worldAgent.includeUserPersona,
+    includeCharacter: settings.worldAgent.includeCharacter
+  }, context, chatId, userId);
+  const history = await readWorldAgentChatHistory(chatId, settings.worldAgent.historyMessageLimit);
+  return {
+    contextMessages: [...resolved.messages, ...history.messages],
+    identity: resolved.identity,
+    stateIdentity: { characterId: resolved.characterId, personaId: resolved.personaId },
+    historyMessageCount: history.messages.length,
+    historyError: history.error
+  };
+}
+async function ensureWorldAgentSchedule(options) {
+  const worldSettings = options.settings.worldAgent;
+  if (!worldSettings.enabled) {
+    return {
+      action: "schedule",
+      status: "error",
+      state: options.state,
+      message: "World Agent is disabled.",
+      error: "Enable World Agent before generating a schedule.",
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+  if (!options.force && options.state.scheduleDay === options.state.day && options.state.schedule.length === 24) {
+    return {
+      action: "schedule",
+      status: options.historyError ? "warning" : "success",
+      state: options.state,
+      message: options.historyError ? "Daily schedule is ready, but chat history could not be read." : "Daily schedule is ready.",
+      error: options.historyError,
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+  if (!permissionHas("generation")) {
+    const error = "Generation permission is not granted.";
+    const state = appendWorldAgentHistory(options.state, "schedule_error", null, error);
+    return { action: "schedule", status: "error", state, message: "Schedule was not generated.", error, historyMessageCount: options.historyMessageCount };
+  }
+  const startedAt = Date.now();
+  const connection = await getConnection(worldSettings.connectionId, options.userId);
+  const target = resolveWorldAgentTarget(worldSettings, connection);
+  if (!target.ok) {
+    const next = appendWorldAgentHistory(options.state, "schedule_error", null, target.reason);
+    await recordRun(makeRunBase("skipped", startedAt, {
+      channel: "world_agent",
+      action: "schedule",
+      connectionId: worldSettings.connectionId,
+      error: target.reason,
+      worldAgentDay: next.day,
+      worldAgentHour: next.hour
+    }), options.userId, options.settings);
+    return {
+      action: "schedule",
+      status: "error",
+      state: next,
+      message: "Schedule was not generated.",
+      error: target.reason,
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+  try {
+    const messages = buildWorldAgentMessages({
+      settings: worldSettings,
+      state: options.state,
+      identity: options.identity,
+      contextMessages: options.contextMessages,
+      mode: "schedule"
+    });
+    const { text, durationMs, rawOutput } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const parsed = parseWorldAgentScheduleResult(text);
+    if (parsed.error) {
+      const next2 = appendWorldAgentHistory(options.state, "schedule_error", null, parsed.error);
+      await recordRun(makeRunBase("error", startedAt, {
+        channel: "world_agent",
+        action: "schedule",
+        durationMs,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        error: parsed.error,
+        worldAgentDay: next2.day,
+        worldAgentHour: next2.hour,
+        worldAgentScheduleCount: next2.schedule.length
+      }), options.userId, options.settings);
+      return {
+        action: "schedule",
+        status: "error",
+        state: next2,
+        message: "Schedule was rejected because it was incomplete or malformed.",
+        error: parsed.error,
+        rawOutput,
+        historyMessageCount: options.historyMessageCount
+      };
+    }
+    const schedule = parsed.schedule;
+    const next = appendWorldAgentHistory({
+      ...options.state,
+      schedule,
+      scheduleDay: options.state.day,
+      updatedAt: Date.now()
+    }, "schedule", schedule.length ? `${schedule.length} schedule entries generated.` : "No schedule entries generated.");
+    await recordRun(makeRunBase("success", startedAt, {
+      channel: "world_agent",
+      action: "schedule",
+      durationMs,
+      connectionId: target.connectionId,
+      connectionName: target.connectionName,
+      model: target.model,
+      directivePreview: `${schedule.length} schedule entries generated.`,
+      worldAgentDay: next.day,
+      worldAgentHour: next.hour,
+      worldAgentScheduleCount: schedule.length
+    }), options.userId, options.settings);
+    return {
+      action: "schedule",
+      status: options.historyError ? "warning" : "success",
+      state: next,
+      message: options.historyError ? `Generated ${schedule.length} hourly entries without chat history.` : `Generated ${schedule.length} hourly entries.`,
+      error: options.historyError,
+      rawOutput,
+      historyMessageCount: options.historyMessageCount
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const next = appendWorldAgentHistory(options.state, "schedule_error", null, message);
+    await recordRun(makeRunBase(error instanceof WorldAgentTimeoutError ? "timeout" : "error", startedAt, {
+      channel: "world_agent",
+      action: "schedule",
+      connectionId: target.connectionId,
+      connectionName: target.connectionName,
+      model: target.model,
+      error: message,
+      worldAgentDay: next.day,
+      worldAgentHour: next.hour
+    }), options.userId, options.settings);
+    spindle.log.warn(`LumiWorld World Agent schedule skipped: ${message}`);
+    return {
+      action: "schedule",
+      status: "error",
+      state: next,
+      message: "Schedule was not generated.",
+      error: message,
+      rawOutput: error instanceof EmptyWorldAgentContentError ? error.rawOutput : null,
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+}
+async function runWorldAgentHourUpdate(options) {
+  const worldSettings = options.settings.worldAgent;
+  const resultAction = options.action === "manual_advance" ? "advance" : "update";
+  if (!worldSettings.enabled) {
+    return {
+      action: resultAction,
+      status: "error",
+      state: options.state,
+      message: "World Agent is disabled.",
+      error: "Enable World Agent before advancing the simulation.",
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+  let nextState = advanceWorldAgentHour(options.state);
+  const scheduleResult = await ensureWorldAgentSchedule({
+    userId: options.userId,
+    settings: options.settings,
+    state: nextState,
+    contextMessages: options.contextMessages,
+    identity: options.identity,
+    historyMessageCount: options.historyMessageCount,
+    historyError: options.historyError
+  });
+  nextState = scheduleResult.state ?? nextState;
+  if (scheduleResult.status === "error") {
+    return {
+      action: resultAction,
+      status: "warning",
+      state: nextState,
+      message: "Clock advanced, but the hourly update was skipped because no valid daily schedule is available.",
+      error: scheduleResult.error,
+      rawOutput: scheduleResult.rawOutput,
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+  if (!permissionHas("generation")) {
+    const error = "Generation permission is not granted.";
+    const state = appendWorldAgentHistory(nextState, `${options.action}_error`, null, error);
+    return { action: resultAction, status: "warning", state, message: "Clock advanced, but the hourly update was skipped.", error, historyMessageCount: options.historyMessageCount };
+  }
+  const startedAt = Date.now();
+  const connection = await getConnection(worldSettings.connectionId, options.userId);
+  const target = resolveWorldAgentTarget(worldSettings, connection);
+  if (!target.ok) {
+    const skipped = appendWorldAgentHistory(nextState, `${options.action}_error`, null, target.reason);
+    await recordRun(makeRunBase("skipped", startedAt, {
+      channel: "world_agent",
+      action: options.action,
+      connectionId: worldSettings.connectionId,
+      error: target.reason,
+      worldAgentDay: skipped.day,
+      worldAgentHour: skipped.hour
+    }), options.userId, options.settings);
+    return { action: resultAction, status: "warning", state: skipped, message: "Clock advanced, but the hourly update was skipped.", error: target.reason, historyMessageCount: options.historyMessageCount };
+  }
+  try {
+    const messages = buildWorldAgentMessages({
+      settings: worldSettings,
+      state: nextState,
+      identity: options.identity,
+      contextMessages: options.contextMessages,
+      mode: "update"
+    });
+    const { text, durationMs, rawOutput } = await callWorldAgentModel(options.userId, worldSettings, target, messages);
+    const parsed = parseWorldAgentUpdate(text);
+    if (!Object.values(parsed).some(Boolean)) {
+      const error = "World Agent returned no usable state update.";
+      const failed = appendWorldAgentHistory(nextState, `${options.action}_error`, null, error);
+      await recordRun(makeRunBase("error", startedAt, {
+        channel: "world_agent",
+        action: options.action,
+        durationMs,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        error,
+        worldAgentDay: failed.day,
+        worldAgentHour: failed.hour,
+        worldAgentScheduleCount: failed.schedule.length
+      }), options.userId, options.settings);
+      return {
+        action: resultAction,
+        status: "warning",
+        state: failed,
+        message: "Clock advanced, but the World Agent returned no usable state update.",
+        error,
+        rawOutput,
+        historyMessageCount: options.historyMessageCount
+      };
+    }
+    const updatedState = applyWorldAgentUpdate(nextState, parsed);
+    nextState = appendWorldAgentHistory(updatedState, options.action, makeWorldAgentPreview(updatedState));
+    await recordRun(makeRunBase("success", startedAt, {
+      channel: "world_agent",
+      action: options.action,
+      durationMs,
+      connectionId: target.connectionId,
+      connectionName: target.connectionName,
+      model: target.model,
+      directivePreview: makeWorldAgentPreview(nextState),
+      worldAgentDay: nextState.day,
+      worldAgentHour: nextState.hour,
+      worldAgentScheduleCount: nextState.schedule.length
+    }), options.userId, options.settings);
+    return {
+      action: resultAction,
+      status: options.historyError ? "warning" : "success",
+      state: nextState,
+      message: options.historyError ? "Clock advanced and state updated without chat history." : "Clock advanced and state updated.",
+      error: options.historyError,
+      rawOutput,
+      historyMessageCount: options.historyMessageCount
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = appendWorldAgentHistory(nextState, `${options.action}_error`, null, message);
+    await recordRun(makeRunBase(error instanceof WorldAgentTimeoutError ? "timeout" : "error", startedAt, {
+      channel: "world_agent",
+      action: options.action,
+      connectionId: target.connectionId,
+      connectionName: target.connectionName,
+      model: target.model,
+      error: message,
+      worldAgentDay: failed.day,
+      worldAgentHour: failed.hour
+    }), options.userId, options.settings);
+    spindle.log.warn(`LumiWorld World Agent update skipped: ${message}`);
+    return {
+      action: resultAction,
+      status: "warning",
+      state: failed,
+      message: "Clock advanced, but the hourly model update failed.",
+      error: message,
+      rawOutput: error instanceof EmptyWorldAgentContentError ? error.rawOutput : null,
+      historyMessageCount: options.historyMessageCount
+    };
+  }
+}
+async function injectWorldAgentOnly(messages, chatId, userId, characterId) {
+  const state = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  if (!state)
+    return messages;
+  return {
+    messages: [
+      {
+        role: "system",
+        content: buildWorldAgentStateInjection(state)
+      },
+      ...messages
+    ],
+    breakdown: [{ messageIndex: 0, name: WORLD_AGENT_BREAKDOWN_NAME }]
+  };
+}
+async function isUserVisible(userId) {
+  try {
+    return usersApi()?.isVisible ? !!await usersApi().isVisible(userId ?? undefined) : true;
+  } catch {
+    return true;
+  }
+}
+async function loadWorldAgentBundle(userId, chatId, characterId) {
+  const settings = await loadSettings(userId);
+  const context = await resolveWorldAgentContext(settings, chatId, userId, characterId);
+  const state = await loadWorldAgentState(chatId, userId, context.stateIdentity) ?? makeDefaultWorldAgentState(chatId, context.stateIdentity);
+  return {
+    settings,
+    state,
+    contextMessages: context.contextMessages,
+    identity: context.identity,
+    historyMessageCount: context.historyMessageCount,
+    historyError: context.historyError
+  };
+}
+async function tickWorldAgentChat(userId, chatId, characterId, manualAction = "hourly_update") {
+  const busyKey = worldAgentBusyKey(userId, chatId);
+  if (!worldAgentBusy.acquire(busyKey))
+    return null;
+  try {
+    const { settings, state, contextMessages, identity, historyMessageCount, historyError } = await loadWorldAgentBundle(userId, chatId, characterId);
+    const result = await runWorldAgentHourUpdate({
+      userId,
+      settings,
+      state,
+      contextMessages,
+      identity,
+      historyMessageCount,
+      historyError,
+      action: manualAction
+    });
+    return { ...result, state: result.state ? await saveWorldAgentState(result.state, userId) : null };
+  } finally {
+    worldAgentBusy.release(busyKey);
+  }
+}
+async function checkWorldAgentTimers() {
+  if (!worldAgentTimerSweepLock.acquire("sweep"))
+    return;
+  try {
+    for (const [userId, active] of activeChats.entries()) {
+      const busyKey = worldAgentBusyKey(userId, active.chatId);
+      if (worldAgentBusy.has(busyKey))
+        continue;
+      try {
+        const settings = await loadSettings(userId);
+        if (!settings.worldAgent.enabled)
+          continue;
+        const state = await loadExistingWorldAgentState(active.chatId, userId, { characterId: active.characterId });
+        if (!state?.running)
+          continue;
+        const visible = await isUserVisible(userId);
+        if (settings.worldAgent.autoTickVisibleOnly && !visible) {
+          worldAgentHiddenChats.add(busyKey);
+          continue;
+        }
+        if (worldAgentHiddenChats.delete(busyKey)) {
+          await saveWorldAgentState({ ...state, lastTickAt: Date.now(), updatedAt: Date.now() }, userId);
+          continue;
+        }
+        const due = isWorldAgentHourDue(state, settings.worldAgent, Date.now(), visible);
+        if (due.shouldResetLastTick) {
+          await saveWorldAgentState({ ...state, lastTickAt: Date.now(), updatedAt: Date.now() }, userId);
+          continue;
+        }
+        if (!due.due)
+          continue;
+        const updated = await tickWorldAgentChat(userId, active.chatId, active.characterId, "hourly_update");
+        if (updated?.state)
+          send({ type: "world_state", state: updated.state }, userId);
+      } catch (error) {
+        spindle.log.warn(`LumiWorld World Agent timer skipped: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  } finally {
+    worldAgentTimerSweepLock.release("sweep");
+  }
+}
+async function refreshWorldStateForMessage(message, userId) {
+  const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+  if (!chatId)
+    return null;
+  const characterId = readCharacterIdFromMessage(message);
+  rememberActiveChat(chatId, userId, characterId);
+  const state = await loadExistingWorldAgentState(chatId, userId, { characterId }) ?? await loadWorldAgentState(chatId, userId, { characterId });
+  send({ type: "world_state", state }, userId);
+  return state;
+}
+async function resumeWorldAgentClockWithoutCatchup(chatId, userId, characterId) {
+  if (!chatId)
+    return;
+  const existing = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  if (!existing?.running)
+    return;
+  worldAgentHiddenChats.delete(worldAgentBusyKey(userId, chatId));
+  await saveWorldAgentState({ ...existing, lastTickAt: Date.now(), updatedAt: Date.now() }, userId);
+}
 async function handleInterceptor(messages, context) {
   const chatId = extractChatId(context);
+  const contextCharacterId = extractCharacterId(context);
   const userId = resolveUserId(chatId);
   const generationType = extractGenerationType(context);
   const startedAt = Date.now();
+  rememberActiveChat(chatId, userId, contextCharacterId);
   const settings = await loadSettings(userId);
-  const decision = shouldInterceptGeneration(settings, generationType);
-  if (!decision.intercept)
+  const directorDecision = shouldInterceptGeneration(settings, generationType);
+  const visibleGeneration = VISIBLE_GENERATION_TYPES.includes(generationType);
+  const promptMessages = messages;
+  const shouldInjectWorldAgent = visibleGeneration && settings.worldAgent.enabled && settings.worldAgent.injectState && !!chatId;
+  if (!directorDecision.intercept && !shouldInjectWorldAgent)
     return messages;
   if (!permissionHas("generation")) {
-    await recordRun(makeRunBase("skipped", startedAt, {
-      generationType,
-      error: "Generation permission is not granted."
-    }), userId, settings);
-    return messages;
+    if (directorDecision.intercept) {
+      await recordRun(makeRunBase("skipped", startedAt, {
+        channel: "director",
+        generationType,
+        error: "Generation permission is not granted."
+      }), userId, settings);
+    }
+    return shouldInjectWorldAgent ? await injectWorldAgentOnly(messages, chatId, userId, contextCharacterId) : messages;
   }
-  if (controllerBusy) {
+  const injectedMessages = [];
+  const breakdown = [];
+  const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
+  const worldAgentState = shouldInjectWorldAgent ? await loadExistingWorldAgentState(chatId, userId, {
+    characterId: controllerContext.characterId ?? contextCharacterId,
+    personaId: controllerContext.personaId
+  }) : null;
+  if (worldAgentState) {
+    injectedMessages.push({
+      role: "system",
+      content: buildWorldAgentStateInjection(worldAgentState)
+    });
+    breakdown.push({ messageIndex: injectedMessages.length - 1, name: WORLD_AGENT_BREAKDOWN_NAME });
+  }
+  if (!directorDecision.intercept) {
+    return injectedMessages.length ? { messages: [...injectedMessages, ...messages], breakdown } : messages;
+  }
+  const busyKey = directorBusyKey(userId, chatId);
+  if (!directorBusy.acquire(busyKey)) {
     await recordRun(makeRunBase("skipped", startedAt, {
+      channel: "director",
       generationType,
       error: "Another LumiWorld controller call is already running."
     }), userId, settings);
-    return messages;
+    return injectedMessages.length ? { messages: [...injectedMessages, ...messages], breakdown } : messages;
   }
   const connection = await getConnection(settings.connectionId, userId);
   const target = resolveControllerTarget(settings, connection);
   if (!target.ok) {
     await recordRun(makeRunBase("skipped", startedAt, {
+      channel: "director",
       generationType,
       connectionId: settings.connectionId,
       error: target.reason
     }), userId, settings);
-    return messages;
+    return injectedMessages.length ? { messages: [...injectedMessages, ...messages], breakdown } : messages;
   }
-  controllerBusy = true;
   let worldInfoDiagnostics = {
     activatedEntryCount: 0,
     fetchedEntryCount: 0,
@@ -1183,8 +2461,6 @@ async function handleInterceptor(messages, context) {
   };
   try {
     const worldBooks = worldBooksApi();
-    const promptMessages = messages;
-    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
     const worldInfoContext = await resolveWorldInfoContextMessages({
       messages: promptMessages,
       settings,
@@ -1195,7 +2471,12 @@ async function handleInterceptor(messages, context) {
       identity: controllerContext.identity
     });
     worldInfoDiagnostics = worldInfoContext.diagnostics;
-    const controllerContextMessages = selectControllerMessagesForController(promptMessages, settings, [...controllerContext.messages, ...worldInfoContext.messages]);
+    const worldAgentContextMessage = worldAgentState ? makeControllerContextMessage("World Agent State", formatWorldAgentStateForPrompt(worldAgentState)) : null;
+    const controllerContextMessages = selectControllerMessagesForController(promptMessages, settings, [
+      ...controllerContext.messages,
+      ...worldInfoContext.messages,
+      ...worldAgentContextMessage ? [worldAgentContextMessage] : []
+    ]);
     const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
     const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
       generationType,
@@ -1209,7 +2490,10 @@ async function handleInterceptor(messages, context) {
       role: "system",
       content: buildInjectedDirective(directive)
     };
+    injectedMessages.push(injected);
+    breakdown.push({ messageIndex: injectedMessages.length - 1, name: BREAKDOWN_NAME });
     await recordRun(makeRunBase("success", startedAt, {
+      channel: "director",
       generationType,
       durationMs,
       connectionId: target.connectionId,
@@ -1219,14 +2503,15 @@ async function handleInterceptor(messages, context) {
       ...runLogWorldInfoPatch(worldInfoDiagnostics)
     }), userId, settings);
     return {
-      messages: [injected, ...messages],
-      breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }]
+      messages: [...injectedMessages, ...messages],
+      breakdown
     };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
     const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
     await recordRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
+      channel: "director",
       generationType,
       connectionId: target.connectionId,
       connectionName: target.connectionName,
@@ -1235,9 +2520,9 @@ async function handleInterceptor(messages, context) {
       ...runLogWorldInfoPatch(worldInfoDiagnostics)
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
-    return messages;
+    return injectedMessages.length ? { messages: [...injectedMessages, ...messages], breakdown } : messages;
   } finally {
-    controllerBusy = false;
+    directorBusy.release(busyKey);
   }
 }
 function tryRegisterInterceptor() {
@@ -1303,7 +2588,16 @@ async function runControllerTest(userId, patch) {
     send({ type: "test_result", ok: false, error: message }, userId ?? undefined);
   }
 }
+function worldAgentError(action, message) {
+  return { action, status: "error", state: null, message, error: message };
+}
+function sendWorldAgentResult(result, userId) {
+  send({ type: "world_agent_result", ok: result.status !== "error", result }, userId);
+}
 tryRegisterInterceptor();
+setInterval(() => {
+  checkWorldAgentTimers();
+}, WORLD_AGENT_TICK_INTERVAL_MS);
 permissionsApi()?.onChanged?.(({ permission, granted }) => {
   if (permission === "interceptor" && granted)
     tryRegisterInterceptor();
@@ -1315,28 +2609,195 @@ permissionsApi()?.onDenied?.(({ permission, operation }) => {
 spindle.onFrontendMessage(async (raw, userId) => {
   lastFrontendUserId = userId;
   const message = raw;
-  rememberChatUser(readChatIdFromMessage(message), userId);
+  rememberActiveChat(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
   try {
     await ensureFolders(userId);
     switch (message.type) {
       case "ready":
+        await resumeWorldAgentClockWithoutCatchup(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
       case "refresh_state":
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
+      case "refresh_world_state":
+        await refreshWorldStateForMessage(message, userId);
         break;
       case "save_settings": {
         const settings = await saveSettings(message.settings, userId);
         send({ type: "settings_saved", settings }, userId);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
+        break;
+      }
+      case "save_world_settings": {
+        const settings = await saveSettings({ worldAgent: message.settings }, userId);
+        send({ type: "settings_saved", settings }, userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
       }
       case "test_controller":
         await runControllerTest(userId, message.settings);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
       case "clear_runs":
         await saveRuns([], userId);
-        await pushState(userId);
+        await pushState(userId, readChatIdFromMessage(message), readCharacterIdFromMessage(message));
         break;
+      case "world_agent_start": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("start", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const busyKey = worldAgentBusyKey(userId, chatId);
+        if (!worldAgentBusy.acquire(busyKey)) {
+          sendWorldAgentResult(worldAgentError("start", "World Agent is already running an operation for this chat."), userId);
+          break;
+        }
+        try {
+          rememberActiveChat(chatId, userId, readCharacterIdFromMessage(message));
+          const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+          if (!bundle.settings.worldAgent.enabled) {
+            sendWorldAgentResult(worldAgentError("start", "Enable World Agent before starting its clock."), userId);
+            break;
+          }
+          let state = {
+            ...bundle.state,
+            running: true,
+            lastTickAt: Date.now(),
+            activeCharacterId: bundle.state.activeCharacterId ?? readCharacterIdFromMessage(message),
+            updatedAt: Date.now()
+          };
+          const scheduleResult = await ensureWorldAgentSchedule({
+            userId,
+            settings: bundle.settings,
+            state,
+            contextMessages: bundle.contextMessages,
+            identity: bundle.identity,
+            historyMessageCount: bundle.historyMessageCount,
+            historyError: bundle.historyError
+          });
+          state = appendWorldAgentHistory(scheduleResult.state ?? state, "start", "Clock started.");
+          const saved = await saveWorldAgentState(state, userId);
+          sendWorldAgentResult({
+            action: "start",
+            status: scheduleResult.status === "error" ? "warning" : scheduleResult.status,
+            state: saved,
+            message: scheduleResult.status === "error" ? "World Agent clock started, but the daily schedule was not generated." : "World Agent clock started.",
+            error: scheduleResult.error,
+            rawOutput: scheduleResult.rawOutput,
+            historyMessageCount: bundle.historyMessageCount
+          }, userId);
+          await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        } finally {
+          worldAgentBusy.release(busyKey);
+        }
+        break;
+      }
+      case "world_agent_pause": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("pause", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const state = await loadWorldAgentState(chatId, userId, { characterId: readCharacterIdFromMessage(message) });
+        if (!state) {
+          sendWorldAgentResult(worldAgentError("pause", "No World Agent state exists for this chat."), userId);
+          break;
+        }
+        const saved = await saveWorldAgentState(appendWorldAgentHistory({ ...state, running: false, updatedAt: Date.now() }, "pause", "Clock paused."), userId);
+        sendWorldAgentResult({ action: "pause", status: "success", state: saved, message: "World Agent clock paused." }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_advance_hour": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("advance", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const result = await tickWorldAgentChat(userId, chatId, readCharacterIdFromMessage(message), "manual_advance");
+        if (!result) {
+          sendWorldAgentResult(worldAgentError("advance", "World Agent is already running an update for this chat."), userId);
+          break;
+        }
+        sendWorldAgentResult(result, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_regenerate_schedule": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("schedule", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const busyKey = worldAgentBusyKey(userId, chatId);
+        if (!worldAgentBusy.acquire(busyKey)) {
+          sendWorldAgentResult(worldAgentError("schedule", "World Agent is already running an operation for this chat."), userId);
+          break;
+        }
+        try {
+          const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+          const result = await ensureWorldAgentSchedule({
+            userId,
+            settings: bundle.settings,
+            state: { ...bundle.state, updatedAt: Date.now() },
+            contextMessages: bundle.contextMessages,
+            identity: bundle.identity,
+            historyMessageCount: bundle.historyMessageCount,
+            historyError: bundle.historyError,
+            force: true
+          });
+          const saved = await saveWorldAgentState(result.state ?? bundle.state, userId);
+          sendWorldAgentResult({ ...result, state: saved }, userId);
+          await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        } finally {
+          worldAgentBusy.release(busyKey);
+        }
+        break;
+      }
+      case "world_agent_reset": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("reset", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const bundle = await loadWorldAgentBundle(userId, chatId, readCharacterIdFromMessage(message));
+        const state = appendWorldAgentHistory(makeDefaultWorldAgentState(chatId, bundle.state.activeCharacterId || readCharacterIdFromMessage(message) ? {
+          characterId: bundle.state.activeCharacterId || readCharacterIdFromMessage(message),
+          personaId: bundle.state.activePersonaId
+        } : undefined), "reset", "State reset.");
+        const saved = await saveWorldAgentState(state, userId);
+        sendWorldAgentResult({ action: "reset", status: "success", state: saved, message: "World Agent state reset." }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
+      case "world_agent_set_time": {
+        const chatId = await resolveActiveChatId(userId, readChatIdFromMessage(message));
+        if (!chatId) {
+          sendWorldAgentResult(worldAgentError("set_time", "No active chat is available for the World Agent."), userId);
+          break;
+        }
+        const state = await loadWorldAgentState(chatId, userId, { characterId: readCharacterIdFromMessage(message) });
+        if (!state) {
+          sendWorldAgentResult(worldAgentError("set_time", "No World Agent state exists for this chat."), userId);
+          break;
+        }
+        const nextDay = typeof message.day === "number" && Number.isFinite(message.day) ? Math.max(1, Math.round(message.day)) : state.day;
+        const nextHour = Math.max(0, Math.min(23, Math.round(Number(message.hour))));
+        const saved = await saveWorldAgentState(appendWorldAgentHistory({
+          ...state,
+          day: nextDay,
+          hour: nextHour,
+          lastTickAt: Date.now(),
+          schedule: nextDay === state.day ? state.schedule : [],
+          scheduleDay: nextDay === state.day ? state.scheduleDay : null,
+          updatedAt: Date.now()
+        }, "set_time", `Set to Day ${nextDay}, ${String(nextHour).padStart(2, "0")}:00.`), userId);
+        sendWorldAgentResult({ action: "set_time", status: "success", state: saved, message: "World Agent time updated." }, userId);
+        await pushState(userId, chatId, readCharacterIdFromMessage(message));
+        break;
+      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";

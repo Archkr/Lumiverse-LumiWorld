@@ -1,6 +1,7 @@
 export const EXTENSION_ID = "agent_world";
 export const EXTENSION_NAME = "LumiWorld";
 export const BREAKDOWN_NAME = "LumiWorld Director";
+export const WORLD_AGENT_BREAKDOWN_NAME = "LumiWorld World Agent";
 
 export const VISIBLE_GENERATION_TYPES = [
   "normal",
@@ -12,6 +13,7 @@ export const VISIBLE_GENERATION_TYPES = [
 
 export type LumiWorldGenerationType = (typeof VISIBLE_GENERATION_TYPES)[number];
 export type MessageRole = "system" | "user" | "assistant";
+export type LumiWorldChannel = "director" | "world_agent";
 
 export type LlmMessagePartLike =
   | { type: "text"; text: string }
@@ -44,6 +46,24 @@ export interface LumiWorldSettings {
   systemTemplate: string;
   userTemplate: string;
   runLogLimit: number;
+  worldAgent: WorldAgentSettings;
+}
+
+export interface WorldAgentSettings {
+  enabled: boolean;
+  connectionId: string | null;
+  modelOverride: string;
+  temperature: number;
+  maxTokens: number;
+  timeoutMs: number;
+  hourDurationMs: number;
+  historyMessageLimit: number;
+  includeUserPersona: boolean;
+  includeCharacter: boolean;
+  injectState: boolean;
+  autoTickVisibleOnly: boolean;
+  scheduleTemplate: string;
+  updateTemplate: string;
 }
 
 export interface ConnectionOption {
@@ -65,6 +85,8 @@ export interface RunLogEntry {
   id: string;
   timestamp: number;
   status: RunLogStatus;
+  channel?: LumiWorldChannel | null;
+  action?: string | null;
   generationType?: string | null;
   durationMs?: number | null;
   connectionId?: string | null;
@@ -72,6 +94,9 @@ export interface RunLogEntry {
   model?: string | null;
   directivePreview?: string | null;
   error?: string | null;
+  worldAgentDay?: number | null;
+  worldAgentHour?: number | null;
+  worldAgentScheduleCount?: number | null;
   worldInfoActivatedCount?: number | null;
   worldInfoFetchedCount?: number | null;
   worldInfoFallbackTaggedCount?: number | null;
@@ -117,6 +142,18 @@ export interface WorldInfoContextResult {
   diagnostics: WorldInfoContextDiagnostics;
 }
 
+export interface ChatMutationMessageLike {
+  id?: unknown;
+  index_in_chat?: unknown;
+  role?: unknown;
+  is_user?: unknown;
+  content?: unknown;
+  swipe_id?: unknown;
+  swipes?: unknown;
+  extra?: unknown;
+  metadata?: unknown;
+}
+
 export interface ControllerTemplateContext {
   prompt: string;
   generationType: string;
@@ -154,13 +191,99 @@ export interface ControllerTargetError {
 
 export type ControllerTargetResult = ControllerTarget | ControllerTargetError;
 
+export interface WorldAgentScheduleItem {
+  hour: number;
+  label?: string;
+  location?: string;
+  activity: string;
+}
+
+export interface WorldAgentScheduleParseResult {
+  schedule: WorldAgentScheduleItem[];
+  error: string | null;
+}
+
+export type WorldAgentOperationStatus = "success" | "warning" | "error";
+
+export interface WorldAgentOperationResult {
+  action: "start" | "pause" | "schedule" | "update" | "advance" | "reset" | "set_time";
+  status: WorldAgentOperationStatus;
+  state: WorldAgentState | null;
+  message: string;
+  error?: string | null;
+  rawOutput?: string | null;
+  historyMessageCount?: number;
+}
+
+export interface WorldAgentUpdate {
+  location?: string;
+  mood?: string;
+  activity?: string;
+  thought?: string;
+  goal?: string;
+}
+
+export interface WorldAgentHistoryEntry {
+  id: string;
+  timestamp: number;
+  day: number;
+  hour: number;
+  action: string;
+  preview?: string | null;
+  error?: string | null;
+}
+
+export interface WorldAgentState {
+  chatId: string;
+  day: number;
+  hour: number;
+  running: boolean;
+  lastTickAt: number | null;
+  activeCharacterId: string | null;
+  activePersonaId: string | null;
+  scheduleDay: number | null;
+  schedule: WorldAgentScheduleItem[];
+  location: string;
+  mood: string;
+  activity: string;
+  thought: string;
+  goal: string;
+  updatedAt: number;
+  history: WorldAgentHistoryEntry[];
+}
+
 export const MAX_DIRECTIVE_CHARS = 2200;
 export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
+// Lumiverse clamps prompt interceptor work to five minutes. Keep the Director
+// setting honest while leaving the asynchronous World Agent independently configurable.
+export const MAX_DIRECTOR_TIMEOUT_MS = 300_000;
 export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
 export const MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_RUN_LOG_LIMIT = 12;
 export const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+export const DEFAULT_WORLD_AGENT_HOUR_DURATION_MS = 5 * 60 * 1000;
+export const WORLD_AGENT_HISTORY_LIMIT = 24;
+export const WORLD_AGENT_SCHEDULE_HOURS = 24;
+export const WORLD_AGENT_INJECTION_HORIZON = 3;
 export const CONTROLLER_CONTEXT_LABEL_KEY = "__lumiWorldContextLabel";
+
+export class KeyedOperationLock {
+  private readonly keys = new Set<string>();
+
+  acquire(key: string): boolean {
+    if (this.keys.has(key)) return false;
+    this.keys.add(key);
+    return true;
+  }
+
+  release(key: string): void {
+    this.keys.delete(key);
+  }
+
+  has(key: string): boolean {
+    return this.keys.has(key);
+  }
+}
 
 export const LEGACY_DEFAULT_SYSTEM_TEMPLATE = [
   "You are AgentWorld, a private world-simulation director for an interactive Lumiverse chat.",
@@ -280,6 +403,117 @@ export const DEFAULT_USER_TEMPLATE = [
   "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
 ].join("\n");
 
+export const PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create the current day's background schedule for {{char}}.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "",
+  "Return compact JSON only:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"}]}",
+  "",
+  "Cover the full day when possible. Keep entries short, playable, and flexible enough for the chat to override.",
+].join("\n");
+
+export const PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":7,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":12,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":18,\"location\":\"...\",\"activity\":\"...\"}]}",
+].join("\n");
+
+export const DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan exactly 24 hourly entries, one entry for every hour from 0 through 23.",
+  "Each entry's hour is the exact hour it describes. Use 0-23 hour values.",
+  "If {{char}} keeps doing the same thing for several hours, repeat the same location and activity for each hour.",
+  "For example, sleeping from midnight to 6am still needs separate 0, 1, 2, 3, 4, 5, and 6 entries.",
+  "Only plan where {{char}} is and what {{char}} is doing.",
+  "Do not decide mood, thoughts, emotions, reactions, or current goals in the schedule.",
+  "Those belong to the hourly update step.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":1,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":2,\"location\":\"...\",\"activity\":\"...\"},{\"hour\":3,\"location\":\"...\",\"activity\":\"...\"}]}",
+].join("\n");
+
+export const PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Create {{char}}'s private background schedule for the entire current day.",
+  "",
+  "Plan the full 24-hour day as start-hour blocks, not a single current activity.",
+  "Each entry's hour is the hour when that block begins. Use 0-23 hour values.",
+  "Include overnight/rest time, morning, midday, afternoon, evening, and late-night blocks when they make sense.",
+  "Aim for 8-14 concise entries unless the character's day truly needs fewer.",
+  "",
+  "Use the active character and persona context, the current chat state, and any provided notes.",
+  "The schedule is private simulation scaffolding. Do not write visible roleplay prose.",
+  "Keep entries flexible enough for the chat to override.",
+  "",
+  "Return compact JSON only in this shape:",
+  "{\"schedule\":[{\"hour\":0,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":7,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":12,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"},{\"hour\":18,\"location\":\"...\",\"activity\":\"...\",\"mood\":\"...\",\"goal\":\"...\"}]}",
+].join("\n");
+
+export const PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, mood, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  "{\"location\":\"...\",\"mood\":\"...\",\"activity\":\"...\",\"thought\":\"...\",\"goal\":\"...\"}",
+].join("\n");
+
+export const DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE = [
+  "You are LumiWorld's private World Agent for an interactive Lumiverse chat.",
+  "Advance {{char}}'s private world state by one simulated hour.",
+  "",
+  "Use the schedule as a rough location/activity plan, plus current state, active character/persona context, and recent chat context.",
+  "Track what changes in location, activity, current thought, and immediate goal.",
+  "Do not write the visible assistant reply. Do not mention LumiWorld or this control step.",
+  "",
+  "Return compact JSON only:",
+  "{\"location\":\"...\",\"activity\":\"...\",\"thought\":\"...\",\"goal\":\"...\"}",
+].join("\n");
+
+export const DEFAULT_WORLD_AGENT_SETTINGS: WorldAgentSettings = {
+  enabled: false,
+  connectionId: null,
+  modelOverride: "",
+  temperature: 0.45,
+  maxTokens: 700,
+  timeoutMs: 60000,
+  hourDurationMs: DEFAULT_WORLD_AGENT_HOUR_DURATION_MS,
+  historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
+  includeUserPersona: true,
+  includeCharacter: true,
+  injectState: true,
+  autoTickVisibleOnly: true,
+  scheduleTemplate: DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+  updateTemplate: DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+};
+
 export const DEFAULT_SETTINGS: LumiWorldSettings = {
   enabled: false,
   connectionId: null,
@@ -297,6 +531,7 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  worldAgent: DEFAULT_WORLD_AGENT_SETTINGS,
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -329,6 +564,41 @@ export function normalizeGenerationTypes(value: unknown): LumiWorldGenerationTyp
   return normalized.length ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
 
+export function normalizeWorldAgentSettings(value: unknown): WorldAgentSettings {
+  const obj = asRecord(value);
+  const storedScheduleTemplate = cleanString(obj.scheduleTemplate, DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE);
+  const storedUpdateTemplate = cleanString(obj.updateTemplate, DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE);
+  const scheduleTemplate =
+    !storedScheduleTemplate ||
+    storedScheduleTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE ||
+    storedScheduleTemplate === PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE ||
+    storedScheduleTemplate === PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE
+      ? DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE
+      : storedScheduleTemplate;
+  const updateTemplate =
+    !storedUpdateTemplate || storedUpdateTemplate === PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+      ? DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE
+      : storedUpdateTemplate;
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_WORLD_AGENT_SETTINGS.enabled,
+    connectionId: cleanNullableString(obj.connectionId),
+    modelOverride: cleanString(obj.modelOverride),
+    temperature: numberInRange(obj.temperature, DEFAULT_WORLD_AGENT_SETTINGS.temperature, 0, 2),
+    maxTokens: integerInRange(obj.maxTokens, DEFAULT_WORLD_AGENT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_WORLD_AGENT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    hourDurationMs: integerInRange(obj.hourDurationMs, DEFAULT_WORLD_AGENT_SETTINGS.hourDurationMs, 1000, 365 * 24 * 60 * 60 * 1000),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_WORLD_AGENT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_WORLD_AGENT_SETTINGS.includeUserPersona,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_WORLD_AGENT_SETTINGS.includeCharacter,
+    injectState: typeof obj.injectState === "boolean" ? obj.injectState : DEFAULT_WORLD_AGENT_SETTINGS.injectState,
+    autoTickVisibleOnly: typeof obj.autoTickVisibleOnly === "boolean"
+      ? obj.autoTickVisibleOnly
+      : DEFAULT_WORLD_AGENT_SETTINGS.autoTickVisibleOnly,
+    scheduleTemplate,
+    updateTemplate,
+  };
+}
+
 export function normalizeSettings(value: unknown): LumiWorldSettings {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -354,7 +624,7 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     modelOverride: cleanString(obj.modelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
-    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_CONTROLLER_TIMEOUT_MS),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
@@ -365,6 +635,7 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    worldAgent: normalizeWorldAgentSettings(obj.worldAgent),
   };
 }
 
@@ -377,10 +648,13 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
       const timestamp = numberInRange(obj.timestamp, 0, 0, Number.MAX_SAFE_INTEGER);
       const status = cleanString(obj.status) as RunLogStatus;
       if (!id || !timestamp || !["success", "error", "timeout", "skipped", "test_success", "test_error"].includes(status)) return null;
+      const channel = cleanString(obj.channel);
       return {
         id,
         timestamp,
         status,
+        channel: channel === "director" || channel === "world_agent" ? channel : null,
+        action: cleanNullableString(obj.action),
         generationType: cleanNullableString(obj.generationType),
         durationMs: obj.durationMs == null ? null : numberInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
         connectionId: cleanNullableString(obj.connectionId),
@@ -388,6 +662,11 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         model: cleanNullableString(obj.model),
         directivePreview: cleanNullableString(obj.directivePreview),
         error: cleanNullableString(obj.error),
+        worldAgentDay: obj.worldAgentDay == null ? null : integerInRange(obj.worldAgentDay, 1, 1, Number.MAX_SAFE_INTEGER),
+        worldAgentHour: obj.worldAgentHour == null ? null : integerInRange(obj.worldAgentHour, 0, 0, 23),
+        worldAgentScheduleCount: obj.worldAgentScheduleCount == null
+          ? null
+          : integerInRange(obj.worldAgentScheduleCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoActivatedCount: obj.worldInfoActivatedCount == null ? null : integerInRange(obj.worldInfoActivatedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
@@ -426,6 +705,26 @@ export function resolveControllerTarget(settings: LumiWorldSettings, connection:
   const model = settings.modelOverride.trim() || connection.model.trim();
   if (!model) {
     return { ok: false, reason: "The selected LumiWorld controller connection has no model configured." };
+  }
+  return {
+    ok: true,
+    connectionId: connection.id,
+    connectionName: connection.name,
+    provider: connection.provider,
+    model,
+  };
+}
+
+export function resolveWorldAgentTarget(settings: WorldAgentSettings, connection: ConnectionLike | null | undefined): ControllerTargetResult {
+  if (!settings.connectionId) {
+    return { ok: false, reason: "Choose a LumiWorld World Agent connection first." };
+  }
+  if (!connection) {
+    return { ok: false, reason: "The selected LumiWorld World Agent connection could not be found." };
+  }
+  const model = settings.modelOverride.trim() || connection.model.trim();
+  if (!model) {
+    return { ok: false, reason: "The selected LumiWorld World Agent connection has no model configured." };
   }
   return {
     ok: true,
@@ -656,6 +955,55 @@ export function selectChatHistoryMessagesForController(messages: LlmMessageLike[
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
 
+function rawRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function activeChatMessageContent(message: ChatMutationMessageLike): string {
+  if (typeof message.content === "string" && message.content.trim()) return message.content;
+  if (!Array.isArray(message.swipes) || message.swipes.length === 0) return "";
+  const index = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id)
+    ? Math.max(0, Math.min(message.swipes.length - 1, Math.floor(message.swipe_id)))
+    : 0;
+  const swipe = message.swipes[index];
+  return typeof swipe === "string" ? swipe : "";
+}
+
+function chatMutationRole(message: ChatMutationMessageLike): MessageRole {
+  return message.role === "system" || message.role === "assistant" || message.role === "user"
+    ? message.role
+    : message.is_user === true
+      ? "user"
+      : "assistant";
+}
+
+function isHiddenChatMutationMessage(message: ChatMutationMessageLike): boolean {
+  return rawRecord(message.extra).hidden === true || rawRecord(message.metadata).hidden === true;
+}
+
+export function selectChatMutationMessagesForController(messages: ChatMutationMessageLike[], limit: number): LlmMessageLike[] {
+  const cappedLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_SETTINGS.historyMessageLimit));
+  if (cappedLimit <= 0) return [];
+  return messages
+    .filter((message) => !isHiddenChatMutationMessage(message))
+    .map((message): LlmMessageLike | null => {
+      const content = activeChatMessageContent(message).trim();
+      if (!content) return null;
+      const selected: LlmMessageLike = {
+        role: chatMutationRole(message),
+        content,
+        __isChatHistory: true,
+      };
+      if (typeof message.id === "string" && message.id.trim()) selected.sourceMessageId = message.id.trim();
+      if (typeof message.index_in_chat === "number" && Number.isFinite(message.index_in_chat)) {
+        selected.sourceIndexInChat = Math.floor(message.index_in_chat);
+      }
+      return selected;
+    })
+    .filter((message): message is LlmMessageLike => !!message)
+    .slice(-cappedLimit);
+}
+
 export function selectControllerMessagesForController(
   messages: LlmMessageLike[],
   settings: LumiWorldSettings,
@@ -730,7 +1078,7 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function renderTemplate(template: string, vars: ControllerTemplateContext): string {
+export function renderTemplate(template: string, vars: ControllerTemplateContext | Record<string, string>): string {
   let rendered = template;
   for (const [key, value] of Object.entries(vars)) {
     rendered = rendered.replace(new RegExp(`{{\\s*${escapeRegex(key)}\\s*}}`, "g"), value);
@@ -778,6 +1126,11 @@ function stripCodeFence(value: string): string {
   const trimmed = value.trim();
   const match = trimmed.match(/^```(?:json|text)?\s*([\s\S]*?)\s*```$/i);
   return (match ? match[1] : trimmed).trim();
+}
+
+function extractFirstCodeFence(value: string): string | null {
+  const match = value.match(/```(?:json|text)?\s*([\s\S]*?)\s*```/i);
+  return match ? match[1].trim() : null;
 }
 
 function findJsonObject(value: string): unknown | null {
@@ -953,6 +1306,28 @@ export function describeEmptyControllerResponse(response: unknown): string {
   ].join(" ");
 }
 
+export function describeEmptyWorldAgentResponse(response: unknown): string {
+  const reasoning = extractControllerReasoningText(response);
+  const reasoningTokens = readNumberAtPath(response, ["usage", "completion_tokens_details", "reasoning_tokens"]);
+  const finishReason = readStringAtPath(response, ["finish_reason"]) ?? readStringAtPath(response, ["choices", 0, "finish_reason"]);
+  const suffix = [
+    reasoningTokens != null ? `${Math.round(reasoningTokens)} reasoning tokens` : null,
+    finishReason ? `finish_reason=${finishReason}` : null,
+  ].filter(Boolean).join(", ");
+
+  if (reasoning) {
+    return [
+      `LumiWorld World Agent returned reasoning-only output${suffix ? ` (${suffix})` : ""}.`,
+      "No schedule or state update was applied because LumiWorld only uses final response content.",
+    ].join(" ");
+  }
+
+  return [
+    `LumiWorld World Agent returned no final schedule or state update${suffix ? ` (${suffix})` : ""}.`,
+    "No schedule or state update was applied.",
+  ].join(" ");
+}
+
 export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
 }
@@ -971,4 +1346,402 @@ export function makeDirectivePreview(directive: string | null | undefined, maxCh
   const singleLine = directive.replace(/\s+/g, " ").trim();
   if (!singleLine) return null;
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1).trimEnd()}...`;
+}
+
+export function normalizeWorldAgentState(value: unknown, chatId: string, patch: Partial<WorldAgentState> = {}): WorldAgentState {
+  const obj = asRecord(value);
+  const now = Date.now();
+  const storedSchedule = normalizeWorldAgentSchedule(obj.schedule);
+  const rawHistory = Array.isArray(obj.history) ? obj.history : [];
+  const history = rawHistory
+    .map((item): WorldAgentHistoryEntry | null => {
+      const record = asRecord(item);
+      const timestamp = numberInRange(record.timestamp, 0, 0, Number.MAX_SAFE_INTEGER);
+      const action = cleanString(record.action);
+      if (!timestamp || !action) return null;
+      return {
+        id: cleanString(record.id) || `${timestamp}-${action}`,
+        timestamp,
+        day: integerInRange(record.day, 1, 1, Number.MAX_SAFE_INTEGER),
+        hour: integerInRange(record.hour, 0, 0, 23),
+        action,
+        preview: cleanNullableString(record.preview),
+        error: cleanNullableString(record.error),
+      };
+    })
+    .filter((item): item is WorldAgentHistoryEntry => !!item)
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, WORLD_AGENT_HISTORY_LIMIT);
+
+  const state: WorldAgentState = {
+    chatId: cleanString(obj.chatId, chatId) || chatId,
+    day: integerInRange(obj.day, 1, 1, Number.MAX_SAFE_INTEGER),
+    hour: integerInRange(obj.hour, 8, 0, 23),
+    running: typeof obj.running === "boolean" ? obj.running : false,
+    lastTickAt: obj.lastTickAt == null ? null : numberInRange(obj.lastTickAt, now, 0, Number.MAX_SAFE_INTEGER),
+    activeCharacterId: cleanNullableString(obj.activeCharacterId),
+    activePersonaId: cleanNullableString(obj.activePersonaId),
+    scheduleDay: obj.scheduleDay == null ? null : integerInRange(obj.scheduleDay, 1, 1, Number.MAX_SAFE_INTEGER),
+    schedule: storedSchedule,
+    location: cleanString(obj.location, "Unspecified"),
+    mood: cleanString(obj.mood, "Neutral"),
+    activity: cleanString(obj.activity, "Idle"),
+    thought: cleanString(obj.thought),
+    goal: cleanString(obj.goal),
+    updatedAt: numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER),
+    history,
+  };
+
+  const schedule = patch.schedule !== undefined ? normalizeWorldAgentSchedule(patch.schedule) : state.schedule;
+  const scheduleDay = schedule.length === WORLD_AGENT_SCHEDULE_HOURS
+    ? (patch.scheduleDay === null ? null : integerInRange(patch.scheduleDay, state.scheduleDay ?? state.day, 1, Number.MAX_SAFE_INTEGER))
+    : null;
+
+  return {
+    ...state,
+    ...patch,
+    chatId,
+    day: integerInRange(patch.day, state.day, 1, Number.MAX_SAFE_INTEGER),
+    hour: integerInRange(patch.hour, state.hour, 0, 23),
+    scheduleDay,
+    schedule,
+    history: patch.history ? normalizeWorldAgentState({ ...state, history: patch.history }, chatId).history : state.history,
+  };
+}
+
+export function makeDefaultWorldAgentState(chatId: string, identity?: { characterId?: string | null; personaId?: string | null }): WorldAgentState {
+  const now = Date.now();
+  return normalizeWorldAgentState(
+    {
+      chatId,
+      day: 1,
+      hour: 8,
+      running: false,
+      lastTickAt: null,
+      activeCharacterId: identity?.characterId ?? null,
+      activePersonaId: identity?.personaId ?? null,
+      scheduleDay: null,
+      schedule: [],
+      location: "Unspecified",
+      mood: "Neutral",
+      activity: "Idle",
+      thought: "",
+      goal: "",
+      updatedAt: now,
+      history: [],
+    },
+    chatId,
+  );
+}
+
+function parseJsonishValue(value: unknown): unknown | null {
+  if (typeof value !== "string") return value ?? null;
+  const stripped = stripCodeFence(value);
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const fenced = extractFirstCodeFence(value);
+    if (fenced && fenced !== stripped) {
+      try {
+        return JSON.parse(fenced);
+      } catch {
+        // fall through to loose extraction
+      }
+    }
+    const arrayMatch = stripped.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch {
+        // fall through to object extraction
+      }
+    }
+    return findJsonObject(stripped);
+  }
+}
+
+function parseScheduleHour(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const hour = Math.round(value);
+    return hour >= 0 && hour < WORLD_AGENT_SCHEDULE_HOURS ? hour : null;
+  }
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!match) return null;
+  const sourceHour = Number(match[1]);
+  const minute = match[2] == null ? 0 : Number(match[2]);
+  const period = match[3]?.toLowerCase();
+  if (!Number.isInteger(sourceHour) || minute < 0 || minute > 59) return null;
+  if (!period) return sourceHour >= 0 && sourceHour < WORLD_AGENT_SCHEDULE_HOURS ? sourceHour : null;
+  if (sourceHour < 1 || sourceHour > 12) return null;
+  if (period === "am") return sourceHour === 12 ? 0 : sourceHour;
+  return sourceHour === 12 ? 12 : sourceHour + 12;
+}
+
+function parseLooseJsonObjectFragment(value: string): unknown | null {
+  const repaired = value
+    .replace(/,\s*}/g, "}")
+    .replace(/([{,]\s*)([A-Za-z_][\w-]*)(\s*:)/g, '$1"$2"$3');
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return null;
+  }
+}
+
+function extractLooseScheduleRecords(value: string): unknown[] {
+  const stripped = stripCodeFence(value);
+  const matches = stripped.match(/\{[^{}]*\b(?:hour|time|start_hour|startHour)\b[^{}]*\}/gi) ?? [];
+  return matches
+    .map(parseLooseJsonObjectFragment)
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+}
+
+function strictScheduleItem(value: unknown): WorldAgentScheduleItem | null {
+  const obj = asRecord(value);
+  const hour = parseScheduleHour(obj.hour ?? obj.time ?? obj.start_hour ?? obj.startHour);
+  if (hour == null) return null;
+  const activity = cleanString(obj.activity ?? obj.event ?? obj.task ?? obj.summary ?? obj.description ?? obj.note ?? obj.plan);
+  const location = cleanString(obj.location ?? obj.place ?? obj.where);
+  if (!activity && !location) return null;
+  return {
+    hour,
+    label: cleanString(obj.label ?? obj.title) || undefined,
+    location: location || undefined,
+    activity: activity || `At ${location}`,
+  };
+}
+
+function scheduleCandidate(raw: unknown): unknown[] {
+  const parsed = parseJsonishValue(raw);
+  const obj = asRecord(parsed);
+  const scheduleValue = obj.schedule ?? obj.dailySchedule ?? obj.daily_schedule ?? obj.plan;
+  return (
+    Array.isArray(parsed) ? parsed
+      : Array.isArray(scheduleValue) ? scheduleValue
+        : scheduleValue && typeof scheduleValue === "object" ? [scheduleValue]
+              : []
+  );
+}
+
+export function parseWorldAgentScheduleResult(raw: unknown): WorldAgentScheduleParseResult {
+  const candidate = scheduleCandidate(raw);
+  if (!candidate.length && typeof raw === "string") {
+    const loose = extractLooseScheduleRecords(raw);
+    if (loose.length) candidate.push(...loose);
+  }
+  if (!candidate.length) {
+    return { schedule: [], error: "World Agent did not return a structured schedule." };
+  }
+  const items = candidate.map(strictScheduleItem);
+  if (items.some((item) => item == null)) {
+    return { schedule: [], error: "World Agent schedule entries need an hour plus a location or activity." };
+  }
+  const schedule = items as WorldAgentScheduleItem[];
+  const hours = new Set(schedule.map((item) => item.hour));
+  if (schedule.length !== WORLD_AGENT_SCHEDULE_HOURS || hours.size !== WORLD_AGENT_SCHEDULE_HOURS) {
+    return { schedule: [], error: "World Agent must return exactly one structured schedule entry for every hour from 0 through 23." };
+  }
+  return { schedule: schedule.sort((left, right) => left.hour - right.hour), error: null };
+}
+
+export function parseWorldAgentSchedule(raw: unknown): WorldAgentScheduleItem[] {
+  return parseWorldAgentScheduleResult(raw).schedule;
+}
+
+export function normalizeWorldAgentSchedule(value: unknown): WorldAgentScheduleItem[] {
+  return parseWorldAgentScheduleResult({ schedule: value }).schedule;
+}
+
+export function parseWorldAgentUpdate(raw: unknown): WorldAgentUpdate {
+  const parsed = parseJsonishValue(raw);
+  const obj = asRecord(parsed);
+  const update: WorldAgentUpdate = {
+    location: cleanString(obj.location ?? obj.place ?? obj.where) || undefined,
+    mood: cleanString(obj.mood ?? obj.emotion ?? obj.affect) || undefined,
+    activity: cleanString(obj.activity ?? obj.action ?? obj.current_activity ?? obj.currentActivity) || undefined,
+    thought: cleanString(obj.thought ?? obj.current_thought ?? obj.currentThought ?? obj.inner_monologue) || undefined,
+    goal: cleanString(obj.goal ?? obj.intent ?? obj.objective ?? obj.current_goal ?? obj.currentGoal) || undefined,
+  };
+  if (Object.values(update).some(Boolean)) return update;
+  if (typeof raw === "string") {
+    const trimmed = stripCodeFence(raw).trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return {};
+    const fallback = normalizeDirectiveText(raw, 900);
+    if (fallback) return { thought: fallback };
+  }
+  return {};
+}
+
+export function appendWorldAgentHistory(
+  state: WorldAgentState,
+  action: string,
+  preview?: string | null,
+  error?: string | null,
+  timestamp = Date.now(),
+): WorldAgentState {
+  const entry: WorldAgentHistoryEntry = {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${timestamp}-${Math.random()}`,
+    timestamp,
+    day: state.day,
+    hour: state.hour,
+    action,
+    preview: makeDirectivePreview(preview, 240),
+    error: makeDirectivePreview(error, 240),
+  };
+  return {
+    ...state,
+    updatedAt: timestamp,
+    history: [entry, ...state.history].slice(0, WORLD_AGENT_HISTORY_LIMIT),
+  };
+}
+
+export function advanceWorldAgentHour(state: WorldAgentState, timestamp = Date.now()): WorldAgentState {
+  const nextHour = (state.hour + 1) % 24;
+  const nextDay = nextHour === 0 ? state.day + 1 : state.day;
+  return {
+    ...state,
+    day: nextDay,
+    hour: nextHour,
+    lastTickAt: timestamp,
+    scheduleDay: nextDay !== state.day ? null : state.scheduleDay,
+    schedule: nextDay !== state.day ? [] : state.schedule,
+    updatedAt: timestamp,
+  };
+}
+
+export function isWorldAgentHourDue(
+  state: WorldAgentState,
+  settings: WorldAgentSettings,
+  now = Date.now(),
+  visible = true,
+): { due: boolean; shouldResetLastTick: boolean; reason?: string } {
+  if (!settings.enabled) return { due: false, shouldResetLastTick: false, reason: "disabled" };
+  if (!state.running) return { due: false, shouldResetLastTick: false, reason: "paused" };
+  if (settings.autoTickVisibleOnly && !visible) {
+    return { due: false, shouldResetLastTick: false, reason: "hidden" };
+  }
+  if (state.lastTickAt == null) return { due: false, shouldResetLastTick: true, reason: "initialized" };
+  return {
+    due: now - state.lastTickAt >= settings.hourDurationMs,
+    shouldResetLastTick: false,
+  };
+}
+
+export function applyWorldAgentUpdate(state: WorldAgentState, update: WorldAgentUpdate, timestamp = Date.now()): WorldAgentState {
+  return {
+    ...state,
+    location: cleanString(update.location, state.location),
+    mood: cleanString(update.mood, state.mood),
+    activity: cleanString(update.activity, state.activity),
+    thought: cleanString(update.thought, state.thought),
+    goal: cleanString(update.goal, state.goal),
+    updatedAt: timestamp,
+  };
+}
+
+export function formatWorldAgentClock(day: number, hour: number): string {
+  return `Day ${Math.max(1, Math.round(day))}, ${String(Math.max(0, Math.min(23, Math.round(hour)))).padStart(2, "0")}:00`;
+}
+
+export function formatWorldAgentHourLabel(hour: number): string {
+  const normalized = Math.max(0, Math.min(23, Math.round(hour)));
+  const period = normalized < 12 ? "am" : "pm";
+  const displayHour = normalized % 12 || 12;
+  return `${displayHour}:00${period}`;
+}
+
+export function currentScheduleItems(state: WorldAgentState): WorldAgentScheduleItem[] {
+  return state.schedule.filter((item) => item.hour === state.hour);
+}
+
+export function formatWorldAgentSchedule(schedule: WorldAgentScheduleItem[]): string {
+  if (!schedule.length) return "No schedule generated.";
+  return schedule
+    .map((item) => {
+      const pieces = [
+        formatWorldAgentHourLabel(item.hour),
+        item.location ? `Location: ${item.location}` : null,
+        `Activity: ${item.activity}`,
+      ].filter(Boolean);
+      return `- ${pieces.join(" | ")}`;
+    })
+    .join("\n");
+}
+
+export function formatWorldAgentStateForPrompt(state: WorldAgentState): string {
+  const currentSchedule = currentScheduleItems(state);
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    `Running: ${state.running ? "yes" : "paused"}`,
+    `Location: ${state.location || "Unspecified"}`,
+    `Mood: ${state.mood || "Neutral"}`,
+    `Activity: ${state.activity || "Idle"}`,
+    state.thought ? `Current thought: ${state.thought}` : null,
+    state.goal ? `Goal: ${state.goal}` : null,
+    "",
+    "Current schedule slot:",
+    currentSchedule.length ? formatWorldAgentSchedule(currentSchedule) : "No matching schedule slot.",
+    "",
+    "Daily schedule:",
+    formatWorldAgentSchedule(state.schedule),
+  ].filter((line) => line !== null).join("\n");
+}
+
+function compactWorldText(value: string | null | undefined, fallback: string, limit = 320): string {
+  const text = cleanString(value, fallback) || fallback;
+  return text.length <= limit ? text : `${text.slice(0, Math.max(1, limit - 3)).trimEnd()}...`;
+}
+
+function upcomingScheduleItems(state: WorldAgentState, count = WORLD_AGENT_INJECTION_HORIZON): WorldAgentScheduleItem[] {
+  const byHour = new Map(state.schedule.map((item) => [item.hour, item]));
+  const items: WorldAgentScheduleItem[] = [];
+  for (let offset = 0; offset < count; offset += 1) {
+    const hour = (state.hour + offset) % WORLD_AGENT_SCHEDULE_HOURS;
+    const item = byHour.get(hour);
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+export function formatCompactWorldAgentStateForInjection(state: WorldAgentState): string {
+  const upcoming = upcomingScheduleItems(state);
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    `Location: ${compactWorldText(state.location, "Unspecified")}`,
+    `Mood: ${compactWorldText(state.mood, "Neutral")}`,
+    `Activity: ${compactWorldText(state.activity, "Idle")}`,
+    state.thought ? `Current thought: ${compactWorldText(state.thought, "", 360)}` : null,
+    state.goal ? `Goal: ${compactWorldText(state.goal, "", 360)}` : null,
+    "",
+    "Current and upcoming schedule:",
+    upcoming.length
+      ? upcoming.map((item) => {
+        const pieces = [
+          formatWorldAgentHourLabel(item.hour),
+          item.location ? `Location: ${compactWorldText(item.location, "", 180)}` : null,
+          `Activity: ${compactWorldText(item.activity, "Unspecified activity", 220)}`,
+        ].filter(Boolean);
+        return `- ${pieces.join(" | ")}`;
+      }).join("\n")
+      : "No matching schedule slots.",
+  ].filter((line) => line !== null).join("\n");
+}
+
+export function buildWorldAgentStateInjection(state: WorldAgentState): string {
+  return [
+    "[LumiWorld World Agent]",
+    "Use this private simulation state to keep the next visible reply aligned with the ongoing world clock. Do not mention LumiWorld, the World Agent, the clock system, or this note.",
+    "",
+    formatCompactWorldAgentStateForInjection(state),
+  ].join("\n");
+}
+
+export function makeWorldAgentPreview(state: WorldAgentState): string {
+  return [
+    formatWorldAgentClock(state.day, state.hour),
+    state.location ? `at ${state.location}` : null,
+    state.activity ? `doing ${state.activity}` : null,
+    state.mood ? `mood ${state.mood}` : null,
+  ].filter(Boolean).join(" / ");
 }

@@ -1,25 +1,44 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  KeyedOperationLock,
+  MAX_DIRECTOR_TIMEOUT_MS,
+  PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
+  PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+  PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE,
+  PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
+  advanceWorldAgentHour,
   appendRunLog,
   buildControllerMessages,
   buildInjectedDirective,
+  buildWorldAgentStateInjection,
   describeEmptyControllerResponse,
+  describeEmptyWorldAgentResponse,
   extractControllerResponseText,
   formatPromptForController,
+  formatWorldAgentClock,
+  formatWorldAgentHourLabel,
+  isWorldAgentHourDue,
+  makeDefaultWorldAgentState,
   normalizeRunLog,
   normalizeSettings,
+  normalizeWorldAgentState,
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
+  parseWorldAgentSchedule,
+  parseWorldAgentScheduleResult,
+  parseWorldAgentUpdate,
   resolveControllerTarget,
+  resolveWorldAgentTarget,
   resolveWorldInfoContextMessages,
   extractActivatedWorldInfoEntries,
   resolveIdentityMacros,
   selectChatHistoryMessagesForController,
+  selectChatMutationMessagesForController,
   selectControllerMessagesForController,
   serializeMessageContent,
   shouldInterceptGeneration,
@@ -90,8 +109,127 @@ describe("settings normalization", () => {
     expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
   });
 
-  test("does not cap controller timeout at legacy 55 seconds", () => {
-    expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(600000);
+  test("uses Lumiverse's real five-minute interceptor ceiling", () => {
+    expect(normalizeSettings({ timeoutMs: 600000 }).timeoutMs).toBe(MAX_DIRECTOR_TIMEOUT_MS);
+  });
+
+  test("migrates 0.2 settings into nested 0.3 world agent defaults", () => {
+    const settings = normalizeSettings({
+      enabled: true,
+      connectionId: "director",
+      worldAgent: {
+        enabled: true,
+        connectionId: "world",
+        modelOverride: "sim-model",
+        temperature: 0.9,
+        maxTokens: 32000,
+        timeoutMs: 180000,
+        hourDurationMs: 120000,
+        injectState: false,
+        autoTickVisibleOnly: false,
+        scheduleTemplate: "schedule {{char}}",
+        updateTemplate: "update {{user}}",
+      },
+    });
+
+    expect(settings.enabled).toBe(true);
+    expect(settings.worldAgent).toMatchObject({
+      enabled: true,
+      connectionId: "world",
+      modelOverride: "sim-model",
+      temperature: 0.9,
+      maxTokens: 32000,
+      timeoutMs: 180000,
+      hourDurationMs: 120000,
+      historyMessageLimit: DEFAULT_SETTINGS.worldAgent.historyMessageLimit,
+      includeUserPersona: true,
+      includeCharacter: true,
+      injectState: false,
+      autoTickVisibleOnly: false,
+      scheduleTemplate: "schedule {{char}}",
+      updateTemplate: "update {{user}}",
+    });
+
+    expect(normalizeSettings({}).worldAgent.enabled).toBe(false);
+  });
+
+  test("normalizes World Agent context settings independently", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        historyMessageLimit: -3,
+        includeUserPersona: false,
+        includeCharacter: false,
+      },
+    });
+
+    expect(settings.worldAgent.historyMessageLimit).toBe(0);
+    expect(settings.worldAgent.includeUserPersona).toBe(false);
+    expect(settings.worldAgent.includeCharacter).toBe(false);
+    expect(settings.includeUserPersona).toBe(true);
+    expect(settings.includeCharacter).toBe(true);
+  });
+
+  test("migrates the previous stock World Agent schedule template to the full-day version", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        scheduleTemplate: PREVIOUS_DEFAULT_WORLD_AGENT_SCHEDULE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
+    expect(settings.worldAgent.scheduleTemplate).toContain("exactly 24 hourly entries");
+    expect(settings.worldAgent.scheduleTemplate).toContain("one entry for every hour");
+    expect(settings.worldAgent.scheduleTemplate).not.toContain("\"mood\"");
+  });
+
+  test("migrates the mood-writing full-day World Agent schedule template", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        scheduleTemplate: PREVIOUS_FULL_DAY_WORLD_AGENT_SCHEDULE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
+    expect(settings.worldAgent.scheduleTemplate).toContain("Do not decide mood");
+    expect(settings.worldAgent.scheduleTemplate).not.toContain("\"goal\"");
+  });
+
+  test("migrates the sparse-block World Agent schedule template", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        scheduleTemplate: PREVIOUS_BLOCK_WORLD_AGENT_SCHEDULE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.scheduleTemplate).toBe(DEFAULT_SETTINGS.worldAgent.scheduleTemplate);
+    expect(settings.worldAgent.scheduleTemplate).toContain("repeat the same location and activity for each hour");
+  });
+
+  test("migrates the mood-writing World Agent update template", () => {
+    const settings = normalizeSettings({
+      worldAgent: {
+        updateTemplate: PREVIOUS_DEFAULT_WORLD_AGENT_UPDATE_TEMPLATE,
+      },
+    });
+
+    expect(settings.worldAgent.updateTemplate).toBe(DEFAULT_SETTINGS.worldAgent.updateTemplate);
+    expect(settings.worldAgent.updateTemplate).toContain("location, activity, current thought");
+    expect(settings.worldAgent.updateTemplate).not.toContain("mood");
+  });
+});
+
+describe("operation locks", () => {
+  test("allows unrelated chats while blocking duplicate chat and scheduler work", () => {
+    const lock = new KeyedOperationLock();
+    expect(lock.acquire("user-a:chat-1")).toBe(true);
+    expect(lock.acquire("user-a:chat-1")).toBe(false);
+    expect(lock.acquire("user-a:chat-2")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(false);
+    lock.release("user-a:chat-1");
+    lock.release("sweep");
+    expect(lock.acquire("user-a:chat-1")).toBe(true);
+    expect(lock.acquire("sweep")).toBe(true);
   });
 });
 
@@ -137,6 +275,28 @@ describe("connection/model resolution", () => {
         hasApiKey: true,
       }).ok,
     ).toBe(false);
+  });
+
+  test("resolves the World Agent connection independently", () => {
+    const settings = normalizeSettings({
+      connectionId: "director",
+      modelOverride: "director-model",
+      worldAgent: { connectionId: "world", modelOverride: "world-model" },
+    });
+    const target = resolveWorldAgentTarget(settings.worldAgent, {
+      id: "world",
+      name: "World",
+      provider: "custom",
+      model: "default-world",
+      isDefault: false,
+      hasApiKey: true,
+    });
+
+    expect(target.ok).toBe(true);
+    if (target.ok) {
+      expect(target.connectionId).toBe("world");
+      expect(target.model).toBe("world-model");
+    }
   });
 });
 
@@ -187,6 +347,21 @@ describe("message serialization and prompt trimming", () => {
     const selected = selectChatHistoryMessagesForController(messages, 2);
     expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
+
+  test("selects recent raw chat messages from chat mutation reads", () => {
+    const selected = selectChatMutationMessagesForController([
+      { id: "hidden", role: "user", content: "hidden user", index_in_chat: 1, extra: { hidden: true } },
+      { id: "empty", role: "assistant", content: "   ", index_in_chat: 2 },
+      { id: "old", role: "user", content: "old user", index_in_chat: 3 },
+      { id: "swipe", role: "assistant", content: "", swipes: ["draft", "active swipe"], swipe_id: 1, index_in_chat: 4 },
+      { id: "new", is_user: true, content: "new user", index_in_chat: 5 },
+    ], 2);
+
+    expect(selected.map((message) => message.content)).toEqual(["active swipe", "new user"]);
+    expect(selected.map((message) => message.role)).toEqual(["assistant", "user"]);
+    expect(selected.map((message) => message.sourceMessageId)).toEqual(["swipe", "new"]);
+    expect(selectChatMutationMessagesForController(selected, 0)).toEqual([]);
   });
 
   test("builds controller input from resolved context blocks and recent chat history", () => {
@@ -306,6 +481,138 @@ describe("activated World Info context", () => {
   });
 });
 
+describe("World Agent state and parsing", () => {
+  test("rejects incomplete persisted schedules and trims history", () => {
+    const state = normalizeWorldAgentState(
+      {
+        day: -1,
+        hour: 99,
+        running: true,
+        schedule: [
+          { hour: 23, activity: "Watch the station", location: "Platform" },
+          { hour: 23, activity: "Watch the station", location: "Platform" },
+          { hour: "7:00", note: "Check the signal" },
+        ],
+        history: Array.from({ length: 30 }, (_, index) => ({
+          id: `h-${index}`,
+          timestamp: index + 1,
+          day: 1,
+          hour: index,
+          action: "tick",
+          preview: "x",
+        })),
+      },
+      "chat-1",
+    );
+
+    expect(state.chatId).toBe("chat-1");
+    expect(state.day).toBe(1);
+    expect(state.hour).toBe(23);
+    expect(state.schedule).toEqual([]);
+    expect(state.scheduleDay).toBeNull();
+    expect(state.history).toHaveLength(24);
+    expect(state.history[0].timestamp).toBe(30);
+  });
+
+  test("advances one simulated hour and clears schedule on day rollover", () => {
+    const state = normalizeWorldAgentState({ day: 2, hour: 23, scheduleDay: 2, schedule: [{ hour: 23, activity: "Sleep" }] }, "chat-1");
+    const next = advanceWorldAgentHour(state, 1000);
+
+    expect(formatWorldAgentClock(next.day, next.hour)).toBe("Day 3, 00:00");
+    expect(next.lastTickAt).toBe(1000);
+    expect(next.scheduleDay).toBeNull();
+    expect(next.schedule).toEqual([]);
+  });
+
+  test("checks due hours without catch-up behavior", () => {
+    const settings = normalizeSettings({
+      worldAgent: { enabled: true, hourDurationMs: 1000, autoTickVisibleOnly: true },
+    }).worldAgent;
+    const state = normalizeWorldAgentState({ running: true, lastTickAt: 1000 }, "chat-1");
+
+    expect(isWorldAgentHourDue(state, settings, 1500, true).due).toBe(false);
+    expect(isWorldAgentHourDue(state, settings, 2500, true).due).toBe(true);
+    expect(isWorldAgentHourDue(state, settings, 2500, false)).toMatchObject({ due: false, shouldResetLastTick: false, reason: "hidden" });
+    expect(isWorldAgentHourDue(normalizeWorldAgentState({ running: true, lastTickAt: null }, "chat-1"), settings, 2500, true)).toMatchObject({
+      due: false,
+      shouldResetLastTick: true,
+      reason: "initialized",
+    });
+  });
+
+  test("requires a complete structured hourly schedule and accepts AM/PM labels", () => {
+    const fullDay = Array.from({ length: 24 }, (_, hour) => ({ hour, location: `Room ${hour}`, activity: `Task ${hour}` }));
+    fullDay[0] = { hour: "12:00am" as unknown as number, location: "Room 0", activity: "Task 0" };
+    fullDay[13] = { hour: "1:00pm" as unknown as number, location: "Room 13", activity: "Task 13" };
+    const parsed = parseWorldAgentScheduleResult(JSON.stringify({ schedule: fullDay }));
+    expect(parsed.error).toBeNull();
+    expect(parsed.schedule).toHaveLength(24);
+    expect(parsed.schedule[0]).toEqual({ hour: 0, location: "Room 0", activity: "Task 0" });
+    expect(parsed.schedule[13]).toEqual({ hour: 13, location: "Room 13", activity: "Task 13" });
+    expect(parseWorldAgentSchedule('{"schedule":[{"hour":9,"location":"Cafe","activity":"Write notes"}]}')).toEqual([]);
+    expect(parseWorldAgentScheduleResult("A loose private day plan.").error).toContain("structured schedule");
+    expect(parseWorldAgentScheduleResult(JSON.stringify({ schedule: [...fullDay.slice(0, 23), fullDay[22]] })).error).toContain("exactly one structured schedule entry");
+    const legacySavedSchedule = '{"schedule":[{"hour":0,"location":"Residential Quarters","activity":"Sleeping"},{"hour":7,"location":"Kitchen","activity":"Breakfast"}]}';
+    const rejectedPersistedSchedule = normalizeWorldAgentState({ schedule: [{ hour: 0, activity: legacySavedSchedule }] }, "chat-1").schedule;
+    expect(rejectedPersistedSchedule).toEqual([]);
+    const truncatedJsonSchedule = parseWorldAgentSchedule('{"schedule":[{"hour":0,"location":"Home"');
+    expect(truncatedJsonSchedule).toEqual([]);
+    const savedJsonBlobSchedule = normalizeWorldAgentState({
+      schedule: [{
+        hour: 0,
+        activity: '{"schedule":[{"hour":0,"location":"Home","activity":"Sleeping"},{"hour":7,"location":"Kitchen","activity":"Breakfast"}]}',
+      }],
+    }, "chat-1").schedule;
+    expect(savedJsonBlobSchedule).toEqual([]);
+    expect(parseWorldAgentSchedule("A loose private day plan.")).toEqual([]);
+    expect(formatWorldAgentHourLabel(0)).toBe("12:00am");
+    expect(formatWorldAgentHourLabel(13)).toBe("1:00pm");
+    expect(formatWorldAgentHourLabel(22)).toBe("10:00pm");
+    expect(parseWorldAgentUpdate('{"location":"Library","mood":"focused","activity":"reading","thought":"The key is missing","goal":"find it"}')).toEqual({
+      location: "Library",
+      mood: "focused",
+      activity: "reading",
+      thought: "The key is missing",
+      goal: "find it",
+    });
+    expect(parseWorldAgentUpdate("She keeps watching the north window.")).toEqual({
+      thought: "She keeps watching the north window.",
+    });
+    expect(parseWorldAgentUpdate("{}")).toEqual({});
+  });
+
+  test("formats private World Agent injection without raw logs", () => {
+    const state = makeDefaultWorldAgentState("chat-1");
+    const schedule = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      location: `Place ${hour}`,
+      activity: `Activity ${hour} ${"x".repeat(120)}`,
+    }));
+    const injected = buildWorldAgentStateInjection({
+      ...state,
+      day: 4,
+      hour: 14,
+      location: "Archive",
+      mood: "wary",
+      activity: "cataloging broken seals",
+      thought: "Someone moved the brass case.",
+      goal: "confirm who entered after midnight",
+      schedule,
+      history: [{ id: "hidden", timestamp: 1, day: 4, hour: 14, action: "update", preview: "private raw output" }],
+    });
+
+    expect(injected).toContain("[LumiWorld World Agent]");
+    expect(injected).toContain("Day 4, 14:00");
+    expect(injected).toContain("Archive");
+    expect(injected).not.toContain("private raw output");
+    expect(injected).toContain("Activity 14");
+    expect(injected).toContain("Activity 15");
+    expect(injected).toContain("Activity 16");
+    expect(injected).not.toContain("Activity 17");
+    expect(injected).not.toContain("Activity 2");
+  });
+});
+
 describe("controller prompt and directive parsing", () => {
   test("renders controller templates", () => {
     const messages = buildControllerMessages(
@@ -379,6 +686,19 @@ describe("controller prompt and directive parsing", () => {
 
     expect(message).toContain("reasoning-only output");
     expect(message).toContain("820 reasoning tokens");
+    expect(message).not.toContain("/no_think");
+    expect(message).not.toContain("model-specific");
+  });
+
+  test("describes reasoning-only World Agent responses without model-specific advice", () => {
+    const message = describeEmptyWorldAgentResponse({
+      choices: [{ message: { content: "", reasoning_content: "analysis only" }, finish_reason: "stop" }],
+      usage: { completion_tokens_details: { reasoning_tokens: 820 } },
+    });
+
+    expect(message).toContain("World Agent returned reasoning-only output");
+    expect(message).toContain("820 reasoning tokens");
+    expect(message).toContain("final response content");
     expect(message).not.toContain("/no_think");
     expect(message).not.toContain("model-specific");
   });
