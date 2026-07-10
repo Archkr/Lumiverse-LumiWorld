@@ -7,7 +7,7 @@ LumiWorld is a Lumiverse Spindle extension with two private world-simulation cha
 
 LumiWorld uses Lumiverse connection profiles through `spindle.generate.raw()`. It never reads or stores API keys.
 
-## Version 0.3.1
+## Version 0.3.0
 
 The desktop surface is a compact floating CRT status widget. Its upper knob opens settings and its lower knob switches channels. A normal Lumiverse drawer tab remains available as the mobile-friendly control surface.
 
