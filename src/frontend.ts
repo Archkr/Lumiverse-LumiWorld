@@ -17,6 +17,7 @@ type ModalView = "overview" | LumiWorldChannel;
 type WorldAgentOperationStatus = "success" | "warning" | "error";
 type RunLogStatus = "success" | "error" | "timeout" | "skipped" | "test_success" | "test_error";
 type MountedHandle = { destroy(): void };
+type PendingMount = { mount(): MountedHandle; fallback(): void };
 
 interface WorldAgentSettings {
   enabled: boolean;
@@ -421,6 +422,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const drawerHandles: MountedHandle[] = [];
   const modalHandles: MountedHandle[] = [];
   let mountingHandles: MountedHandle[] = drawerHandles;
+  let pendingMounts: PendingMount[] = [];
   let state: FrontendState | null = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
   let activeChannel: LumiWorldChannel = "director";
@@ -455,6 +457,23 @@ export function setup(ctx: SpindleFrontendContext) {
     while (handles.length) {
       try { handles.pop()?.destroy(); } catch { /* Host components may already be detached. */ }
     }
+  }
+
+  function queueMount(mount: () => MountedHandle, fallback: () => void): void {
+    pendingMounts.push({ mount, fallback });
+  }
+
+  function flushMounts(): void {
+    let firstError: unknown = null;
+    while (pendingMounts.length) {
+      const task = pendingMounts.shift()!;
+      try { mountingHandles.push(task.mount()); }
+      catch (error) {
+        firstError ??= error;
+        try { task.fallback(); } catch { /* Keep rendering the remaining controls. */ }
+      }
+    }
+    if (firstError) console.warn("[LumiWorld] A shared control failed to mount; using native fallbacks.", firstError);
   }
 
   function setNotice(next: Notice | null, ttlMs = 9000): void {
@@ -527,36 +546,48 @@ export function setup(ctx: SpindleFrontendContext) {
   function numberField(label: string, value: number, min: number, max: number, step: number, onChange: (next: number) => void, hint?: string): HTMLElement {
     const slot = element("div", "lw-control-slot");
     const components = (ctx as any).components;
+    const fallback = () => { slot.replaceChildren(); slot.appendChild(nativeNumber(value, min, max, step, onChange)); };
     if (components?.mountNumberStepper) {
-      mountingHandles.push(components.mountNumberStepper(slot, { value, min, max, step, onChange: (next: number | null) => { if (typeof next === "number") onChange(next); } }));
-    } else slot.appendChild(nativeNumber(value, min, max, step, onChange));
+      queueMount(
+        () => components.mountNumberStepper(slot, { value, min, max, step, onChange: (next: number | null) => { if (typeof next === "number") onChange(next); } }),
+        fallback,
+      );
+    } else fallback();
     return field(label, slot, hint);
   }
 
   function rangeField(label: string, value: number, min: number, max: number, step: number, onChange: (next: number) => void, hint?: string, suffix = ""): HTMLElement {
     const slot = element("div", "lw-range-slot");
     const components = (ctx as any).components;
+    const fallback = () => {
+      slot.replaceChildren();
+      const input = element("input", "lw-range-fallback") as HTMLInputElement;
+      input.type = "range"; input.value = String(value); input.min = String(min); input.max = String(max); input.step = String(step);
+      const valueReadout = element("span", "lw-range-value", `${value}${suffix}`);
+      input.addEventListener("input", () => { const next = Number(input.value); valueReadout.textContent = `${next}${suffix}`; onChange(next); });
+      const fallbackControl = element("div", "lw-range-fallback-wrap");
+      fallbackControl.append(input, valueReadout);
+      slot.appendChild(field(label, fallbackControl, hint));
+    };
     if (components?.mountRangeSlider) {
       const decimals = step < 1 ? Math.max(0, String(step).split(".")[1]?.length ?? 0) : 0;
-      mountingHandles.push(components.mountRangeSlider(slot, {
-        label,
-        min,
-        max,
-        step,
-        value,
-        hint,
-        format: { decimals, suffix },
-        onCommit: (next: number) => onChange(next),
-      }));
+      queueMount(
+        () => components.mountRangeSlider(slot, {
+          label,
+          min,
+          max,
+          step,
+          value,
+          hint,
+          format: { decimals, suffix },
+          onCommit: (next: number) => onChange(next),
+        }),
+        fallback,
+      );
       return slot;
     }
-    const input = element("input", "lw-range-fallback") as HTMLInputElement;
-    input.type = "range"; input.value = String(value); input.min = String(min); input.max = String(max); input.step = String(step);
-    const valueReadout = element("span", "lw-range-value", `${value}${suffix}`);
-    input.addEventListener("input", () => { const next = Number(input.value); valueReadout.textContent = `${next}${suffix}`; onChange(next); });
-    const fallback = element("div", "lw-range-fallback-wrap");
-    fallback.append(input, valueReadout);
-    return field(label, fallback, hint);
+    fallback();
+    return slot;
   }
 
   function textField(label: string, value: string, onChange: (next: string) => void, hint?: string): HTMLElement {
@@ -575,12 +606,14 @@ export function setup(ctx: SpindleFrontendContext) {
     const row = element("div", "lw-setting");
     const slot = element("div", "lw-switch-slot");
     const components = (ctx as any).components;
-    if (components?.mountSwitch && !disabled) mountingHandles.push(components.mountSwitch(slot, { checked, size: "md", ariaLabel: label, onChange }));
-    else {
+    const fallback = () => {
+      slot.replaceChildren();
       const input = element("input") as HTMLInputElement;
       input.type = "checkbox"; input.checked = checked; input.disabled = disabled; input.addEventListener("change", () => onChange(input.checked));
       slot.appendChild(input);
-    }
+    };
+    if (components?.mountSwitch && !disabled) queueMount(() => components.mountSwitch(slot, { checked, size: "md", ariaLabel: label, onChange }), fallback);
+    else fallback();
     const copy = element("div", "lw-setting-copy");
     copy.appendChild(element("div", "lw-setting-title", label));
     if (hint) copy.appendChild(element("div", "lw-setting-hint", hint));
@@ -599,19 +632,24 @@ export function setup(ctx: SpindleFrontendContext) {
     }));
     if (value && !options.some((option) => option.value === value)) options.unshift({ value, label: "Saved connection not found", sublabel: value, group: "Unavailable", leading: { type: "initial", text: "!" } });
     const components = (ctx as any).components;
-    if (components?.mountSelect) {
-      mountingHandles.push(components.mountSelect(slot, {
-        value: value ?? "", options, placeholder: "Select connection...", searchPlaceholder: "Search LLM connections...",
-        emptyMessage: state?.connectionError || "No LLM connection profiles found.", noResultsMessage: "No matching LLM connection profiles.",
-        clearable: true, clearLabel: "No connection", ariaLabel: label,
-        onChange: (next: string | null) => { onChange(next || null); renderInteractive(); },
-      }));
-    } else {
+    const fallback = () => {
+      slot.replaceChildren();
       const select = element("select", "lw-select") as HTMLSelectElement;
       select.appendChild(new Option("Select connection...", ""));
       for (const connection of state?.connections ?? []) select.appendChild(new Option(`${connection.name} / ${connection.provider} / ${connection.model}`, connection.id));
       select.value = value ?? ""; select.addEventListener("change", () => { onChange(select.value || null); renderInteractive(); }); slot.appendChild(select);
-    }
+    };
+    if (components?.mountSelect) {
+      queueMount(
+        () => components.mountSelect(slot, {
+          value: value ?? "", options, placeholder: "Select connection...", searchPlaceholder: "Search LLM connections...",
+          emptyMessage: state?.connectionError || "No LLM connection profiles found.", noResultsMessage: "No matching LLM connection profiles.",
+          clearable: true, clearLabel: "No connection", ariaLabel: label,
+          onChange: (next: string | null) => { onChange(next || null); renderInteractive(); },
+        }),
+        fallback,
+      );
+    } else fallback();
     return field(label, slot);
   }
 
@@ -619,15 +657,20 @@ export function setup(ctx: SpindleFrontendContext) {
     const slot = element("div", "lw-control-slot");
     const selected = selectedConnection(connectionId);
     const components = (ctx as any).components;
-    if (selected && components?.mountModelCombobox) {
-      mountingHandles.push(components.mountModelCombobox(slot, {
-        value, connection: { kind: "llm", id: selected.id }, appearance: "standard", placeholder: selected.model || "model id",
-        browseHint: selected.model ? `Connection default: ${selected.model}` : "No default model is configured.", onChange,
-      }));
-    } else {
+    const fallback = () => {
+      slot.replaceChildren();
       const input = element("input", "lw-input") as HTMLInputElement;
       input.placeholder = selected?.model || "model id"; input.value = value; input.disabled = !selected; input.addEventListener("input", () => onChange(input.value)); slot.appendChild(input);
-    }
+    };
+    if (selected && components?.mountModelCombobox) {
+      queueMount(
+        () => components.mountModelCombobox(slot, {
+          value, connection: { kind: "llm", id: selected.id }, appearance: "standard", placeholder: selected.model || "model id",
+          browseHint: selected.model ? `Connection default: ${selected.model}` : "No default model is configured.", onChange,
+        }),
+        fallback,
+      );
+    } else fallback();
     return field(label, slot);
   }
 
@@ -646,13 +689,22 @@ export function setup(ctx: SpindleFrontendContext) {
   function collapsible(title: string, build: (body: HTMLElement) => void): HTMLElement {
     const host = element("div", "lw-control-slot");
     const components = (ctx as any).components;
+    const fallback = () => {
+      host.replaceChildren();
+      const details = element("details", "lw-details");
+      details.appendChild(element("summary", undefined, title));
+      const body = element("div", "lw-details-body"); build(body); details.appendChild(body); host.appendChild(details);
+    };
     if (components?.mountCollapsibleSection) {
-      const handle = components.mountCollapsibleSection(host, { title, defaultExpanded: false }) as MountedHandle & { body: HTMLElement };
-      mountingHandles.push(handle); build(handle.body); return host;
+      queueMount(() => {
+        const handle = components.mountCollapsibleSection(host, { title, defaultExpanded: false }) as MountedHandle & { body: HTMLElement };
+        build(handle.body);
+        return handle;
+      }, fallback);
+      return host;
     }
-    const details = element("details", "lw-details");
-    details.appendChild(element("summary", undefined, title));
-    const body = element("div", "lw-details-body"); build(body); details.appendChild(body); host.appendChild(details); return host;
+    fallback();
+    return host;
   }
 
   function renderNotice(target: HTMLElement): void {
@@ -920,7 +972,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderDrawer(): void {
-    destroyHandles(drawerHandles); mountingHandles = drawerHandles; drawer.root.replaceChildren();
+    destroyHandles(drawerHandles); mountingHandles = drawerHandles; pendingMounts = []; drawer.root.replaceChildren();
     const root = element("div", "lw-drawer");
     const header = element("div", "lw-drawer-header");
     const title = element("div", "lw-drawer-title"); const icon = element("span", "lw-drawer-icon"); icon.innerHTML = ICON; title.append(icon, document.createTextNode(EXTENSION_NAME));
@@ -930,6 +982,7 @@ export function setup(ctx: SpindleFrontendContext) {
     // Shared host controls may only mount below a registered placement root.
     drawer.root.appendChild(root);
     renderChannel(body);
+    flushMounts();
   }
 
   function channelTabs(): HTMLElement {
@@ -994,7 +1047,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function renderModal(): void {
     if (!modal) return;
-    destroyHandles(modalHandles); mountingHandles = modalHandles; modal.root.replaceChildren();
+    destroyHandles(modalHandles); mountingHandles = modalHandles; pendingMounts = []; modal.root.replaceChildren();
     const shell = element("div", "lw-workbench");
     const header = element("div", "lw-console-header");
     const brand = element("div", "lw-console-header-brand");
@@ -1016,6 +1069,7 @@ export function setup(ctx: SpindleFrontendContext) {
     // Attach the complete shell before mounting shared controls into its content.
     modal.root.appendChild(shell);
     renderModalContent(content);
+    flushMounts();
   }
 
   function openModal(): void {

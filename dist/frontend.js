@@ -277,6 +277,7 @@ function setup(ctx) {
   const drawerHandles = [];
   const modalHandles = [];
   let mountingHandles = drawerHandles;
+  let pendingMounts = [];
   let state = null;
   let draft = cloneSettings(DEFAULT_SETTINGS);
   let activeChannel = "director";
@@ -310,6 +311,25 @@ function setup(ctx) {
         handles.pop()?.destroy();
       } catch {}
     }
+  }
+  function queueMount(mount, fallback) {
+    pendingMounts.push({ mount, fallback });
+  }
+  function flushMounts() {
+    let firstError = null;
+    while (pendingMounts.length) {
+      const task = pendingMounts.shift();
+      try {
+        mountingHandles.push(task.mount());
+      } catch (error) {
+        firstError ??= error;
+        try {
+          task.fallback();
+        } catch {}
+      }
+    }
+    if (firstError)
+      console.warn("[LumiWorld] A shared control failed to mount; using native fallbacks.", firstError);
   }
   function setNotice(next, ttlMs = 9000) {
     if (noticeTimer)
@@ -389,21 +409,43 @@ function setup(ctx) {
   function numberField(label, value, min, max, step, onChange, hint) {
     const slot = element("div", "lw-control-slot");
     const components = ctx.components;
+    const fallback = () => {
+      slot.replaceChildren();
+      slot.appendChild(nativeNumber(value, min, max, step, onChange));
+    };
     if (components?.mountNumberStepper) {
-      mountingHandles.push(components.mountNumberStepper(slot, { value, min, max, step, onChange: (next) => {
+      queueMount(() => components.mountNumberStepper(slot, { value, min, max, step, onChange: (next) => {
         if (typeof next === "number")
           onChange(next);
-      } }));
+      } }), fallback);
     } else
-      slot.appendChild(nativeNumber(value, min, max, step, onChange));
+      fallback();
     return field(label, slot, hint);
   }
   function rangeField(label, value, min, max, step, onChange, hint, suffix = "") {
     const slot = element("div", "lw-range-slot");
     const components = ctx.components;
+    const fallback = () => {
+      slot.replaceChildren();
+      const input = element("input", "lw-range-fallback");
+      input.type = "range";
+      input.value = String(value);
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      const valueReadout = element("span", "lw-range-value", `${value}${suffix}`);
+      input.addEventListener("input", () => {
+        const next = Number(input.value);
+        valueReadout.textContent = `${next}${suffix}`;
+        onChange(next);
+      });
+      const fallbackControl = element("div", "lw-range-fallback-wrap");
+      fallbackControl.append(input, valueReadout);
+      slot.appendChild(field(label, fallbackControl, hint));
+    };
     if (components?.mountRangeSlider) {
       const decimals = step < 1 ? Math.max(0, String(step).split(".")[1]?.length ?? 0) : 0;
-      mountingHandles.push(components.mountRangeSlider(slot, {
+      queueMount(() => components.mountRangeSlider(slot, {
         label,
         min,
         max,
@@ -412,24 +454,11 @@ function setup(ctx) {
         hint,
         format: { decimals, suffix },
         onCommit: (next) => onChange(next)
-      }));
+      }), fallback);
       return slot;
     }
-    const input = element("input", "lw-range-fallback");
-    input.type = "range";
-    input.value = String(value);
-    input.min = String(min);
-    input.max = String(max);
-    input.step = String(step);
-    const valueReadout = element("span", "lw-range-value", `${value}${suffix}`);
-    input.addEventListener("input", () => {
-      const next = Number(input.value);
-      valueReadout.textContent = `${next}${suffix}`;
-      onChange(next);
-    });
-    const fallback = element("div", "lw-range-fallback-wrap");
-    fallback.append(input, valueReadout);
-    return field(label, fallback, hint);
+    fallback();
+    return slot;
   }
   function textField(label, value, onChange, hint) {
     const input = element("input", "lw-input");
@@ -449,16 +478,19 @@ function setup(ctx) {
     const row = element("div", "lw-setting");
     const slot = element("div", "lw-switch-slot");
     const components = ctx.components;
-    if (components?.mountSwitch && !disabled)
-      mountingHandles.push(components.mountSwitch(slot, { checked, size: "md", ariaLabel: label, onChange }));
-    else {
+    const fallback = () => {
+      slot.replaceChildren();
       const input = element("input");
       input.type = "checkbox";
       input.checked = checked;
       input.disabled = disabled;
       input.addEventListener("change", () => onChange(input.checked));
       slot.appendChild(input);
-    }
+    };
+    if (components?.mountSwitch && !disabled)
+      queueMount(() => components.mountSwitch(slot, { checked, size: "md", ariaLabel: label, onChange }), fallback);
+    else
+      fallback();
     const copy = element("div", "lw-setting-copy");
     copy.appendChild(element("div", "lw-setting-title", label));
     if (hint)
@@ -478,8 +510,21 @@ function setup(ctx) {
     if (value && !options.some((option) => option.value === value))
       options.unshift({ value, label: "Saved connection not found", sublabel: value, group: "Unavailable", leading: { type: "initial", text: "!" } });
     const components = ctx.components;
+    const fallback = () => {
+      slot.replaceChildren();
+      const select = element("select", "lw-select");
+      select.appendChild(new Option("Select connection...", ""));
+      for (const connection of state?.connections ?? [])
+        select.appendChild(new Option(`${connection.name} / ${connection.provider} / ${connection.model}`, connection.id));
+      select.value = value ?? "";
+      select.addEventListener("change", () => {
+        onChange(select.value || null);
+        renderInteractive();
+      });
+      slot.appendChild(select);
+    };
     if (components?.mountSelect) {
-      mountingHandles.push(components.mountSelect(slot, {
+      queueMount(() => components.mountSelect(slot, {
         value: value ?? "",
         options,
         placeholder: "Select connection...",
@@ -493,42 +538,35 @@ function setup(ctx) {
           onChange(next || null);
           renderInteractive();
         }
-      }));
-    } else {
-      const select = element("select", "lw-select");
-      select.appendChild(new Option("Select connection...", ""));
-      for (const connection of state?.connections ?? [])
-        select.appendChild(new Option(`${connection.name} / ${connection.provider} / ${connection.model}`, connection.id));
-      select.value = value ?? "";
-      select.addEventListener("change", () => {
-        onChange(select.value || null);
-        renderInteractive();
-      });
-      slot.appendChild(select);
-    }
+      }), fallback);
+    } else
+      fallback();
     return field(label, slot);
   }
   function modelField(label, connectionId, value, onChange) {
     const slot = element("div", "lw-control-slot");
     const selected = selectedConnection(connectionId);
     const components = ctx.components;
-    if (selected && components?.mountModelCombobox) {
-      mountingHandles.push(components.mountModelCombobox(slot, {
-        value,
-        connection: { kind: "llm", id: selected.id },
-        appearance: "standard",
-        placeholder: selected.model || "model id",
-        browseHint: selected.model ? `Connection default: ${selected.model}` : "No default model is configured.",
-        onChange
-      }));
-    } else {
+    const fallback = () => {
+      slot.replaceChildren();
       const input = element("input", "lw-input");
       input.placeholder = selected?.model || "model id";
       input.value = value;
       input.disabled = !selected;
       input.addEventListener("input", () => onChange(input.value));
       slot.appendChild(input);
-    }
+    };
+    if (selected && components?.mountModelCombobox) {
+      queueMount(() => components.mountModelCombobox(slot, {
+        value,
+        connection: { kind: "llm", id: selected.id },
+        appearance: "standard",
+        placeholder: selected.model || "model id",
+        browseHint: selected.model ? `Connection default: ${selected.model}` : "No default model is configured.",
+        onChange
+      }), fallback);
+    } else
+      fallback();
     return field(label, slot);
   }
   function panel(title, className = "") {
@@ -547,18 +585,24 @@ function setup(ctx) {
   function collapsible(title, build) {
     const host = element("div", "lw-control-slot");
     const components = ctx.components;
+    const fallback = () => {
+      host.replaceChildren();
+      const details = element("details", "lw-details");
+      details.appendChild(element("summary", undefined, title));
+      const body = element("div", "lw-details-body");
+      build(body);
+      details.appendChild(body);
+      host.appendChild(details);
+    };
     if (components?.mountCollapsibleSection) {
-      const handle = components.mountCollapsibleSection(host, { title, defaultExpanded: false });
-      mountingHandles.push(handle);
-      build(handle.body);
+      queueMount(() => {
+        const handle = components.mountCollapsibleSection(host, { title, defaultExpanded: false });
+        build(handle.body);
+        return handle;
+      }, fallback);
       return host;
     }
-    const details = element("details", "lw-details");
-    details.appendChild(element("summary", undefined, title));
-    const body = element("div", "lw-details-body");
-    build(body);
-    details.appendChild(body);
-    host.appendChild(details);
+    fallback();
     return host;
   }
   function renderNotice(target) {
@@ -832,6 +876,7 @@ function setup(ctx) {
   function renderDrawer() {
     destroyHandles(drawerHandles);
     mountingHandles = drawerHandles;
+    pendingMounts = [];
     drawer.root.replaceChildren();
     const root = element("div", "lw-drawer");
     const header = element("div", "lw-drawer-header");
@@ -844,6 +889,7 @@ function setup(ctx) {
     root.append(header, body);
     drawer.root.appendChild(root);
     renderChannel(body);
+    flushMounts();
   }
   function channelTabs() {
     const tabs = element("div", "lw-channel-tabs");
@@ -927,6 +973,7 @@ function setup(ctx) {
       return;
     destroyHandles(modalHandles);
     mountingHandles = modalHandles;
+    pendingMounts = [];
     modal.root.replaceChildren();
     const shell = element("div", "lw-workbench");
     const header = element("div", "lw-console-header");
@@ -960,6 +1007,7 @@ function setup(ctx) {
     shell.appendChild(body);
     modal.root.appendChild(shell);
     renderModalContent(content);
+    flushMounts();
   }
   function openModal() {
     if (!modal) {
