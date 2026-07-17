@@ -41,6 +41,14 @@ World Agent reads the configured recent stored chat messages for every schedule 
 
 When injection is enabled, `LumiWorld World Agent` appears in Prompt Breakdown. The main model receives only the current state plus the current and next two schedule slots. The full day remains available to World Agent calls and the settings UI.
 
+## LumiState interoperability
+
+LumiWorld publishes a public, read-only `agent_world.state.current` snapshot for LumiState and other compatible extensions. It contains only the active chat ID, source-local revision, freshness, and the simulation day, hour, and running status.
+
+The public snapshot never includes the World Agent schedule, location, mood, activity, thought, goal, or history. Those remain private LumiWorld state.
+
+`agent_world.contract.v1` describes the endpoint and LumiState v1 capability metadata. Missing readers do not affect LumiWorld, and publishing makes no model call.
+
 ## Permissions
 
 LumiWorld requests:

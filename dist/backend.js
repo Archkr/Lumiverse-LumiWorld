@@ -1028,7 +1028,11 @@ function normalizeWorldAgentState(value, chatId, patch = {}) {
       error: cleanNullableString(record.error)
     };
   }).filter((item) => !!item).sort((left, right) => right.timestamp - left.timestamp).slice(0, WORLD_AGENT_HISTORY_LIMIT);
+  const updatedAt = numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER);
+  const legacyRevision = obj.revision == null && obj.updatedAt != null ? Math.max(1, Math.round(updatedAt)) : 0;
   const state = {
+    schemaVersion: 1,
+    revision: integerInRange(obj.revision, legacyRevision, 0, Number.MAX_SAFE_INTEGER),
     chatId: cleanString(obj.chatId, chatId) || chatId,
     day: integerInRange(obj.day, 1, 1, Number.MAX_SAFE_INTEGER),
     hour: integerInRange(obj.hour, 8, 0, 23),
@@ -1043,7 +1047,7 @@ function normalizeWorldAgentState(value, chatId, patch = {}) {
     activity: cleanString(obj.activity, "Idle"),
     thought: cleanString(obj.thought),
     goal: cleanString(obj.goal),
-    updatedAt: numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER),
+    updatedAt,
     history
   };
   const schedule = patch.schedule !== undefined ? normalizeWorldAgentSchedule(patch.schedule) : state.schedule;
@@ -1051,6 +1055,8 @@ function normalizeWorldAgentState(value, chatId, patch = {}) {
   return {
     ...state,
     ...patch,
+    schemaVersion: 1,
+    revision: integerInRange(patch.revision, state.revision, 0, Number.MAX_SAFE_INTEGER),
     chatId,
     day: integerInRange(patch.day, state.day, 1, Number.MAX_SAFE_INTEGER),
     hour: integerInRange(patch.hour, state.hour, 0, 23),
@@ -1062,6 +1068,8 @@ function normalizeWorldAgentState(value, chatId, patch = {}) {
 function makeDefaultWorldAgentState(chatId, identity) {
   const now = Date.now();
   return normalizeWorldAgentState({
+    schemaVersion: 1,
+    revision: 0,
     chatId,
     day: 1,
     hour: 8,
@@ -1361,12 +1369,61 @@ function makeWorldAgentPreview(state) {
   ].filter(Boolean).join(" / ");
 }
 
+// src/lumi-state.ts
+var LUMI_STATE_PROTOCOL = "lumi_state.v1";
+var LUMI_STATE_SCHEMA_VERSION = 1;
+var LUMI_WORLD_STATE_ENDPOINT = "agent_world.state.current";
+function makeWorldLumiStateSnapshot(chatId, state, extensionVersion, generatedAt = Date.now()) {
+  const hasState = !!chatId && !!state;
+  const scene = {
+    locations: [],
+    times: hasState ? [{
+      id: "simulation-clock",
+      subject: { kind: "scene" },
+      clock: "simulation",
+      date: null,
+      time: null,
+      day: state.day,
+      hour: state.hour,
+      running: state.running,
+      timezone: null,
+      provenance: {
+        extensionId: "agent_world",
+        method: "simulation",
+        observedAt: state.updatedAt,
+        confidence: 1
+      }
+    }] : [],
+    cast: [],
+    objects: [],
+    conditions: [],
+    threads: []
+  };
+  return {
+    protocol: LUMI_STATE_PROTOCOL,
+    schemaVersion: LUMI_STATE_SCHEMA_VERSION,
+    source: {
+      extensionId: "agent_world",
+      extensionVersion,
+      endpoint: LUMI_WORLD_STATE_ENDPOINT
+    },
+    chatId,
+    revision: hasState ? state.revision : 0,
+    freshness: hasState ? "fresh" : "unavailable",
+    generatedAt,
+    updatedAt: hasState ? state.updatedAt : null,
+    visibility: "public",
+    state: scene
+  };
+}
+
 // src/backend.ts
 var SETTINGS_PATH = "global/settings.json";
 var RUNS_PATH = "global/runs.json";
 var WORLD_AGENT_DIR = "world-agent/chats";
 var INTERCEPTOR_PRIORITY = 150;
 var WORLD_AGENT_TICK_INTERVAL_MS = 1000;
+var EXTENSION_VERSION = "0.3.2";
 var lastFrontendUserId = null;
 var chatUserIds = new Map;
 var activeChats = new Map;
@@ -1505,6 +1562,14 @@ function rememberActiveChat(chatId, userId, characterId) {
     characterId: characterId && characterId.trim() ? characterId.trim() : activeChats.get(userId)?.characterId ?? null,
     lastSeenAt: Date.now()
   });
+}
+function forgetActiveChat(userId) {
+  if (!userId)
+    return;
+  const previous = activeChats.get(userId);
+  if (previous)
+    worldAgentHiddenChats.delete(worldAgentBusyKey(userId, previous.chatId));
+  activeChats.delete(userId);
 }
 function resolveUserId(chatId) {
   if (chatId) {
@@ -1698,10 +1763,19 @@ async function loadExistingWorldAgentState(chatId, userId, identity) {
 }
 async function saveWorldAgentState(state, userId) {
   await ensureFolders(userId);
-  const normalized = normalizeWorldAgentState(state, state.chatId);
+  const current = normalizeWorldAgentState(state, state.chatId);
+  const normalized = normalizeWorldAgentState(current, state.chatId, {
+    revision: current.revision + 1,
+    updatedAt: Date.now()
+  });
   await storageApi().setJson(worldAgentStatePath(normalized.chatId), normalized, { indent: 2, userId: userId ?? undefined });
+  if (userId && activeChats.get(userId)?.chatId === normalized.chatId)
+    publishWorldState(normalized.chatId, normalized);
   send({ type: "world_state", state: normalized }, userId ?? undefined);
   return normalized;
+}
+function publishWorldState(chatId, state) {
+  spindle.rpcPool.sync("state.current", makeWorldLumiStateSnapshot(chatId, state, EXTENSION_VERSION), { requires: [] });
 }
 async function recordRun(entry, userId, settings) {
   try {
@@ -1848,7 +1922,11 @@ async function buildState(userId, chatId, characterId) {
   };
 }
 async function pushState(userId, chatId, characterId) {
-  send({ type: "state", state: await buildState(userId, chatId, characterId) }, userId ?? undefined);
+  const state = await buildState(userId, chatId, characterId);
+  send({ type: "state", state }, userId ?? undefined);
+  const resolvedChatId = state.worldState?.chatId ?? await resolveActiveChatId(userId, chatId);
+  const publishedState = resolvedChatId ? await loadExistingWorldAgentState(resolvedChatId, userId, { characterId }) : null;
+  publishWorldState(resolvedChatId, publishedState);
 }
 function makeRunBase(status, startedAt, patch = {}) {
   return {
@@ -2379,7 +2457,9 @@ async function refreshWorldStateForMessage(message, userId) {
     return null;
   const characterId = readCharacterIdFromMessage(message);
   rememberActiveChat(chatId, userId, characterId);
-  const state = await loadExistingWorldAgentState(chatId, userId, { characterId }) ?? await loadWorldAgentState(chatId, userId, { characterId });
+  const existing = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  const state = existing ?? await loadWorldAgentState(chatId, userId, { characterId });
+  publishWorldState(chatId, existing);
   send({ type: "world_state", state }, userId);
   return state;
 }
@@ -2594,6 +2674,22 @@ function worldAgentError(action, message) {
 function sendWorldAgentResult(result, userId) {
   send({ type: "world_agent_result", ok: result.status !== "error", result }, userId);
 }
+spindle.rpcPool.sync("contract.v1", {
+  schemaVersion: 1,
+  protocol: "lumi_state.v1",
+  extension: "agent_world",
+  extensionVersion: EXTENSION_VERSION,
+  capabilities: ["simulation_clock", "private_world_agent", "private_schedule"],
+  endpoints: { public: "agent_world.state.current" },
+  channels: [{
+    endpoint: "agent_world.state.current",
+    schema: "lumi_state.snapshot.v1",
+    visibility: "public",
+    requires: [],
+    mode: "sync"
+  }]
+}, { requires: [] });
+publishWorldState(null, null);
 tryRegisterInterceptor();
 setInterval(() => {
   checkWorldAgentTimers();
@@ -2601,7 +2697,18 @@ setInterval(() => {
 permissionsApi()?.onChanged?.(({ permission, granted }) => {
   if (permission === "interceptor" && granted)
     tryRegisterInterceptor();
-  pushState();
+  pushState(lastFrontendUserId);
+});
+spindle.on?.("CHAT_SWITCHED", (payload, eventUserId) => {
+  const userId = eventUserId || lastFrontendUserId;
+  if (!userId)
+    return;
+  const chatId = extractChatId(payload);
+  if (chatId)
+    rememberActiveChat(chatId, userId);
+  else
+    forgetActiveChat(userId);
+  pushState(userId, chatId);
 });
 permissionsApi()?.onDenied?.(({ permission, operation }) => {
   spindle.log.warn(`LumiWorld permission denied for ${operation}: ${permission}`);
@@ -2609,7 +2716,12 @@ permissionsApi()?.onDenied?.(({ permission, operation }) => {
 spindle.onFrontendMessage(async (raw, userId) => {
   lastFrontendUserId = userId;
   const message = raw;
-  rememberActiveChat(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
+  const messageChatId = readChatIdFromMessage(message);
+  const explicitlyTracksActiveChat = message.type === "ready" || message.type === "refresh_state" || message.type === "refresh_world_state";
+  if (explicitlyTracksActiveChat && "chatId" in message && !messageChatId)
+    forgetActiveChat(userId);
+  else
+    rememberActiveChat(messageChatId, userId, readCharacterIdFromMessage(message));
   try {
     await ensureFolders(userId);
     switch (message.type) {
