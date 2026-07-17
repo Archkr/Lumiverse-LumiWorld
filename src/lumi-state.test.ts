@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { makeWorldLumiStateSnapshot } from "./lumi-state";
-import { makeDefaultWorldAgentState } from "./shared";
+import { makeDefaultWorldAgentState, normalizeWorldAgentState } from "./shared";
 
 describe("LumiState world publisher", () => {
   test("publishes only the simulation clock", () => {
@@ -41,5 +41,12 @@ describe("LumiState world publisher", () => {
     expect(snapshot.revision).toBe(0);
     expect(snapshot.freshness).toBe("unavailable");
     expect(snapshot.state.times).toEqual([]);
+  });
+
+  test("migrates legacy persisted state to a monotonic revision baseline", () => {
+    const legacy = normalizeWorldAgentState({ chatId: "chat-1", day: 2, hour: 11, updatedAt: 12345 }, "chat-1");
+    expect(legacy.schemaVersion).toBe(1);
+    expect(legacy.revision).toBe(12345);
+    expect(makeDefaultWorldAgentState("new-chat").revision).toBe(0);
   });
 });

@@ -7,7 +7,7 @@ LumiWorld is a Lumiverse Spindle extension with two private world-simulation cha
 
 LumiWorld uses Lumiverse connection profiles through `spindle.generate.raw()`. It never reads or stores API keys.
 
-## Version 0.3.1
+## Version 0.3.2
 
 The desktop surface is a compact floating CRT status widget. Its upper knob opens settings and its lower knob switches channels. A normal Lumiverse drawer tab remains available as the mobile-friendly control surface.
 
@@ -40,6 +40,14 @@ Each generated schedule must be structured JSON with exactly one entry for every
 World Agent reads the configured recent stored chat messages for every schedule and hourly update. Hidden messages are excluded and the active swipe is used. If Lumiverse cannot provide history, LumiWorld says so and does not substitute stale cached context.
 
 When injection is enabled, `LumiWorld World Agent` appears in Prompt Breakdown. The main model receives only the current state plus the current and next two schedule slots. The full day remains available to World Agent calls and the settings UI.
+
+## LumiState interoperability
+
+LumiWorld publishes a public, read-only `agent_world.state.current` snapshot for LumiState and other compatible extensions. It contains only the active chat ID, source-local revision, freshness, and the simulation day, hour, and running status.
+
+The public snapshot never includes the World Agent schedule, location, mood, activity, thought, goal, or history. Those remain private LumiWorld state.
+
+`agent_world.contract.v1` describes the endpoint and LumiState v1 capability metadata. Missing readers do not affect LumiWorld, and publishing makes no model call.
 
 ## Permissions
 
