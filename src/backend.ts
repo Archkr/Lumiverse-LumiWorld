@@ -53,12 +53,14 @@ import {
   type WorldInfoContextDiagnostics,
 } from "./shared";
 import type { BackendToFrontend, FrontendState, FrontendToBackend, PermissionState } from "./types";
+import { makeWorldLumiStateSnapshot } from "./lumi-state";
 
 const SETTINGS_PATH = "global/settings.json";
 const RUNS_PATH = "global/runs.json";
 const WORLD_AGENT_DIR = "world-agent/chats";
 const INTERCEPTOR_PRIORITY = 150;
 const WORLD_AGENT_TICK_INTERVAL_MS = 1000;
+const EXTENSION_VERSION = "0.3.2";
 
 let lastFrontendUserId: string | null = null;
 // Routing metadata from free frontend events plus read-only interceptor context.
@@ -211,6 +213,13 @@ function rememberActiveChat(chatId: string | null | undefined, userId: string | 
     characterId: characterId && characterId.trim() ? characterId.trim() : activeChats.get(userId)?.characterId ?? null,
     lastSeenAt: Date.now(),
   });
+}
+
+function forgetActiveChat(userId: string | null | undefined): void {
+  if (!userId) return;
+  const previous = activeChats.get(userId);
+  if (previous) worldAgentHiddenChats.delete(worldAgentBusyKey(userId, previous.chatId));
+  activeChats.delete(userId);
 }
 
 function resolveUserId(chatId?: string | null): string | null {
@@ -430,10 +439,23 @@ async function loadExistingWorldAgentState(
 
 async function saveWorldAgentState(state: WorldAgentState, userId?: string | null): Promise<WorldAgentState> {
   await ensureFolders(userId);
-  const normalized = normalizeWorldAgentState(state, state.chatId);
+  const current = normalizeWorldAgentState(state, state.chatId);
+  const normalized = normalizeWorldAgentState(current, state.chatId, {
+    revision: current.revision + 1,
+    updatedAt: Date.now(),
+  });
   await storageApi().setJson(worldAgentStatePath(normalized.chatId), normalized, { indent: 2, userId: userId ?? undefined });
+  if (userId && activeChats.get(userId)?.chatId === normalized.chatId) publishWorldState(normalized.chatId, normalized);
   send({ type: "world_state", state: normalized }, userId ?? undefined);
   return normalized;
+}
+
+function publishWorldState(chatId: string | null, state: WorldAgentState | null): void {
+  spindle.rpcPool.sync(
+    "state.current",
+    makeWorldLumiStateSnapshot(chatId, state, EXTENSION_VERSION),
+    { requires: [] },
+  );
 }
 
 async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: LumiWorldSettings): Promise<void> {
@@ -601,7 +623,11 @@ async function buildState(userId?: string | null, chatId?: string | null, charac
 }
 
 async function pushState(userId?: string | null, chatId?: string | null, characterId?: string | null): Promise<void> {
-  send({ type: "state", state: await buildState(userId, chatId, characterId) }, userId ?? undefined);
+  const state = await buildState(userId, chatId, characterId);
+  send({ type: "state", state }, userId ?? undefined);
+  const resolvedChatId = state.worldState?.chatId ?? await resolveActiveChatId(userId, chatId);
+  const publishedState = resolvedChatId ? await loadExistingWorldAgentState(resolvedChatId, userId, { characterId }) : null;
+  publishWorldState(resolvedChatId, publishedState);
 }
 
 function makeRunBase(status: RunLogEntry["status"], startedAt: number, patch: Partial<RunLogEntry> = {}): RunLogEntry {
@@ -1262,8 +1288,10 @@ async function refreshWorldStateForMessage(message: FrontendToBackend, userId: s
   if (!chatId) return null;
   const characterId = readCharacterIdFromMessage(message);
   rememberActiveChat(chatId, userId, characterId);
-  const state = await loadExistingWorldAgentState(chatId, userId, { characterId }) ??
+  const existing = await loadExistingWorldAgentState(chatId, userId, { characterId });
+  const state = existing ??
     await loadWorldAgentState(chatId, userId, { characterId });
+  publishWorldState(chatId, existing);
   send({ type: "world_state", state }, userId);
   return state;
 }
@@ -1547,6 +1575,23 @@ function sendWorldAgentResult(result: WorldAgentOperationResult, userId: string)
   send({ type: "world_agent_result", ok: result.status !== "error", result }, userId);
 }
 
+spindle.rpcPool.sync("contract.v1", {
+  schemaVersion: 1,
+  protocol: "lumi_state.v1",
+  extension: "agent_world",
+  extensionVersion: EXTENSION_VERSION,
+  capabilities: ["simulation_clock", "private_world_agent", "private_schedule"],
+  endpoints: { public: "agent_world.state.current" },
+  channels: [{
+    endpoint: "agent_world.state.current",
+    schema: "lumi_state.snapshot.v1",
+    visibility: "public",
+    requires: [],
+    mode: "sync",
+  }],
+}, { requires: [] });
+publishWorldState(null, null);
+
 tryRegisterInterceptor();
 
 setInterval(() => {
@@ -1555,7 +1600,16 @@ setInterval(() => {
 
 permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; granted: boolean }) => {
   if (permission === "interceptor" && granted) tryRegisterInterceptor();
-  void pushState();
+  void pushState(lastFrontendUserId);
+});
+
+(spindle as any).on?.("CHAT_SWITCHED", (payload: unknown, eventUserId?: string) => {
+  const userId = eventUserId || lastFrontendUserId;
+  if (!userId) return;
+  const chatId = extractChatId(payload);
+  if (chatId) rememberActiveChat(chatId, userId);
+  else forgetActiveChat(userId);
+  void pushState(userId, chatId);
 });
 
 permissionsApi()?.onDenied?.(({ permission, operation }: { permission: string; operation: string }) => {
@@ -1565,7 +1619,10 @@ permissionsApi()?.onDenied?.(({ permission, operation }: { permission: string; o
 spindle.onFrontendMessage(async (raw, userId) => {
   lastFrontendUserId = userId;
   const message = raw as FrontendToBackend;
-  rememberActiveChat(readChatIdFromMessage(message), userId, readCharacterIdFromMessage(message));
+  const messageChatId = readChatIdFromMessage(message);
+  const explicitlyTracksActiveChat = message.type === "ready" || message.type === "refresh_state" || message.type === "refresh_world_state";
+  if (explicitlyTracksActiveChat && "chatId" in message && !messageChatId) forgetActiveChat(userId);
+  else rememberActiveChat(messageChatId, userId, readCharacterIdFromMessage(message));
 
   try {
     await ensureFolders(userId);
