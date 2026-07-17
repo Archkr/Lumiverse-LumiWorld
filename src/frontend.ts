@@ -924,7 +924,12 @@ export function setup(ctx: SpindleFrontendContext) {
     const root = element("div", "lw-drawer");
     const header = element("div", "lw-drawer-header");
     const title = element("div", "lw-drawer-title"); const icon = element("span", "lw-drawer-icon"); icon.innerHTML = ICON; title.append(icon, document.createTextNode(EXTENSION_NAME));
-    header.append(title, channelTabs()); root.append(header); const body = element("div", "lw-drawer-body"); renderChannel(body); root.appendChild(body); drawer.root.appendChild(root);
+    header.append(title, channelTabs());
+    const body = element("div", "lw-drawer-body");
+    root.append(header, body);
+    // Shared host controls may only mount below a registered placement root.
+    drawer.root.appendChild(root);
+    renderChannel(body);
   }
 
   function channelTabs(): HTMLElement {
@@ -1006,8 +1011,11 @@ export function setup(ctx: SpindleFrontendContext) {
     const body = element("div", "lw-modal-body");
     const layout = element("div", "lw-console-layout");
     layout.appendChild(renderModalNavigation());
-    const content = element("main", "lw-console-main"); renderModalContent(content); layout.appendChild(content);
-    body.appendChild(layout); shell.appendChild(body); modal.root.appendChild(shell);
+    const content = element("main", "lw-console-main"); layout.appendChild(content);
+    body.appendChild(layout); shell.appendChild(body);
+    // Attach the complete shell before mounting shared controls into its content.
+    modal.root.appendChild(shell);
+    renderModalContent(content);
   }
 
   function openModal(): void {

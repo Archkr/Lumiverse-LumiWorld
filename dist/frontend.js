@@ -840,11 +840,10 @@ function setup(ctx) {
     icon.innerHTML = ICON;
     title.append(icon, document.createTextNode(EXTENSION_NAME));
     header.append(title, channelTabs());
-    root.append(header);
     const body = element("div", "lw-drawer-body");
-    renderChannel(body);
-    root.appendChild(body);
+    root.append(header, body);
     drawer.root.appendChild(root);
+    renderChannel(body);
   }
   function channelTabs() {
     const tabs = element("div", "lw-channel-tabs");
@@ -956,11 +955,11 @@ function setup(ctx) {
     const layout = element("div", "lw-console-layout");
     layout.appendChild(renderModalNavigation());
     const content = element("main", "lw-console-main");
-    renderModalContent(content);
     layout.appendChild(content);
     body.appendChild(layout);
     shell.appendChild(body);
     modal.root.appendChild(shell);
+    renderModalContent(content);
   }
   function openModal() {
     if (!modal) {
