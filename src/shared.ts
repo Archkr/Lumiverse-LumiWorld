@@ -234,6 +234,8 @@ export interface WorldAgentHistoryEntry {
 }
 
 export interface WorldAgentState {
+  schemaVersion: 1;
+  revision: number;
   chatId: string;
   day: number;
   hour: number;
@@ -1373,7 +1375,11 @@ export function normalizeWorldAgentState(value: unknown, chatId: string, patch: 
     .sort((left, right) => right.timestamp - left.timestamp)
     .slice(0, WORLD_AGENT_HISTORY_LIMIT);
 
+  const updatedAt = numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER);
+  const legacyRevision = obj.revision == null && obj.updatedAt != null ? Math.max(1, Math.round(updatedAt)) : 0;
   const state: WorldAgentState = {
+    schemaVersion: 1,
+    revision: integerInRange(obj.revision, legacyRevision, 0, Number.MAX_SAFE_INTEGER),
     chatId: cleanString(obj.chatId, chatId) || chatId,
     day: integerInRange(obj.day, 1, 1, Number.MAX_SAFE_INTEGER),
     hour: integerInRange(obj.hour, 8, 0, 23),
@@ -1388,7 +1394,7 @@ export function normalizeWorldAgentState(value: unknown, chatId: string, patch: 
     activity: cleanString(obj.activity, "Idle"),
     thought: cleanString(obj.thought),
     goal: cleanString(obj.goal),
-    updatedAt: numberInRange(obj.updatedAt, now, 0, Number.MAX_SAFE_INTEGER),
+    updatedAt,
     history,
   };
 
@@ -1400,6 +1406,8 @@ export function normalizeWorldAgentState(value: unknown, chatId: string, patch: 
   return {
     ...state,
     ...patch,
+    schemaVersion: 1,
+    revision: integerInRange(patch.revision, state.revision, 0, Number.MAX_SAFE_INTEGER),
     chatId,
     day: integerInRange(patch.day, state.day, 1, Number.MAX_SAFE_INTEGER),
     hour: integerInRange(patch.hour, state.hour, 0, 23),
@@ -1413,6 +1421,8 @@ export function makeDefaultWorldAgentState(chatId: string, identity?: { characte
   const now = Date.now();
   return normalizeWorldAgentState(
     {
+      schemaVersion: 1,
+      revision: 0,
       chatId,
       day: 1,
       hour: 8,

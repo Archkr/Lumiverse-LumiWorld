@@ -3,7 +3,7 @@ import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 // This file intentionally has no local imports so the complete UI can be handed to a
 // design-focused model without dragging backend code along with it.
 const EXTENSION_NAME = "LumiWorld";
-const EXTENSION_VERSION = "v0.3.1";
+const EXTENSION_VERSION = "v0.3.2";
 const VISIBLE_GENERATION_TYPES = ["normal", "continue", "regenerate", "swipe", "impersonate"] as const;
 const MAX_DIRECTOR_TIMEOUT_MS = 300_000;
 const MAX_WORLD_AGENT_TIMEOUT_MS = 2_147_483_647;

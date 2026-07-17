@@ -6,7 +6,7 @@
       "name": "lumiverse-lumi-world",
       "devDependencies": {
         "@types/bun": "^1.3.14",
-        "lumiverse-spindle-types": "0.4.39",
+        "lumiverse-spindle-types": "0.5.30",
         "typescript": "^5.9.3",
       },
     },
@@ -18,7 +18,7 @@
 
     "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
-    "lumiverse-spindle-types": ["lumiverse-spindle-types@0.4.39", "", {}, "sha512-mCb6MGze9e+CEYWxukio2tZTrRdxvXK/hVtbEEh5flETZFBc8ub91xQ8YI31wot0dhZRbqGffokzHogXhsrHeg=="],
+    "lumiverse-spindle-types": ["lumiverse-spindle-types@0.5.30", "", {}, "sha512-mfJcrY/tKlTCyCx/qvHNM0DE/JGWf01lDpQrF5rcoD3wMOfFItqoe3DAfJPrZT9Wx5dS6doIt/sTFGb6EFMlKw=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
