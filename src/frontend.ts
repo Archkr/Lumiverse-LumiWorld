@@ -452,7 +452,6 @@ export function setup(ctx: SpindleFrontendContext) {
       switchField("Character", draft.includeCharacter, (includeCharacter) => mutate({ includeCharacter })),
       switchField("User persona", draft.includeUserPersona, (includeUserPersona) => mutate({ includeUserPersona })),
       switchField("Activated World Info", draft.includeWorldInfoEntries, (includeWorldInfoEntries) => mutate({ includeWorldInfoEntries })),
-      el("p", "lw-hint", "Shared privately with the Director."),
     ); context.append(contextRows); shell.append(context);
 
     const notes = el("details", "lw-details"); notes.open = notesOpen;
