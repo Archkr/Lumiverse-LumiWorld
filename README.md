@@ -4,9 +4,9 @@ LumiWorld is a Lumiverse Spindle extension that prepares private Director notes 
 
 ## Version 0.4.0
 
-LumiWorld has one drawer tab for Director status, connection and model selection, context settings, a test action, and recent activity. Response settings and prompt templates are expandable in the same tab. The controls follow the active Lumiverse theme and use host shared components where available.
+LumiWorld has one compact drawer tab for Director status, connection and model selection, reply types, context settings, and a test action. Private notes and advanced settings expand in place; prompt templates are inside advanced settings. Changes save automatically, with a retry action if saving fails. The controls follow the active Lumiverse theme and use host shared components where available.
 
-The former floating widget and World Agent simulation have been removed. Existing World Agent files and saved settings are left in extension storage for recovery by an older release. LumiWorld v0.4 does not read or run that data. Historical World Agent run entries remain stored but are hidden from Director activity. The former `agent_world.state.current` LumiState endpoint is no longer published.
+The former floating widget and World Agent simulation have been removed. Existing World Agent files and saved settings are left in extension storage for recovery by an older release. LumiWorld v0.4 does not read or run that data. Historical run entries remain stored. The drawer does not include an activity view. The former `agent_world.state.current` LumiState endpoint is no longer published.
 
 ## Director Note
 

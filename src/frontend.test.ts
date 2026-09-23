@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { directorRuns, normalizeFrontendSettings, SettingsSaveQueue } from "./frontend";
-import type { RunLogEntry } from "./shared";
+import { normalizeFrontendSettings, SettingsSaveQueue } from "./frontend";
 
 describe("Director settings", () => {
   test("clamps timeout to Lumiverse's interceptor ceiling", () => {
@@ -51,17 +50,5 @@ describe("serialized autosave queue", () => {
     expect(queue.acknowledge(1)).toBe(true);
     expect(queue.isInFlight).toBe(true);
     expect(queue.acknowledge(2)).toBe(false);
-  });
-});
-
-describe("Director activity", () => {
-  test("filters historical World Agent runs without deleting them", () => {
-    const runs: RunLogEntry[] = [
-      { id: "world", timestamp: 3, status: "success", channel: "world_agent" },
-      { id: "director", timestamp: 2, status: "success", channel: "director" },
-      { id: "legacy", timestamp: 1, status: "test_success" },
-    ];
-    expect(directorRuns(runs).map((run) => run.id)).toEqual(["director", "legacy"]);
-    expect(runs).toHaveLength(3);
   });
 });

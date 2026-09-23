@@ -209,69 +209,86 @@ var LABELS = {
   impersonate: "Impersonate"
 };
 var CSS = `
-.lw-root { box-sizing:border-box; width:100%; padding:16px; color:var(--lumiverse-text); background:var(--lumiverse-bg,transparent); font:13px/1.5 var(--lumiverse-font-family,system-ui,sans-serif); }
-.lw-root * { box-sizing:border-box; }
-.lw-shell { max-width:720px; margin:0 auto; display:grid; gap:14px; }
-.lw-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-.lw-statuses { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; }
-.lw-brand { display:flex; align-items:center; gap:10px; min-width:0; }
-.lw-icon { display:grid; place-items:center; width:32px; height:32px; flex:none; border-radius:10px; color:var(--lumiverse-accent); background:var(--lumiverse-fill-subtle); border:1px solid var(--lumiverse-border); }
-.lw-icon svg { width:22px; height:22px; }
-.lw-title { margin:0; font-size:16px; line-height:1.2; font-weight:700; }
-.lw-version { color:var(--lumiverse-text-dim); font-size:11px; }
-.lw-intro { margin:0; color:var(--lumiverse-text-dim); }
-.lw-card { min-width:0; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,12px); background:var(--lumiverse-fill,transparent); }
-.lw-card h2 { margin:0 0 11px; font-size:13px; font-weight:700; }
-.lw-stack { display:grid; gap:12px; }
-.lw-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.lw-root { box-sizing:border-box; container:director / inline-size; width:100%; padding:8px 6px 0; color:var(--lumiverse-text); font:13px/1.5 var(--lumiverse-font-family,system-ui,sans-serif); }
+.lw-root *, .lw-root *::before, .lw-root *::after { box-sizing:border-box; }
+.lw-root [hidden] { display:none; }
+.lw-shell { max-width:720px; margin:0 auto; }
+.lw-header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:4px 0 18px; }
+.lw-brand { display:flex; align-items:center; gap:12px; min-width:0; }
+.lw-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:12px; color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
+.lw-icon svg { width:25px; height:25px; }
+.lw-title { margin:0; font-size:22px; line-height:1.2; font-weight:650; letter-spacing:-.5px; }
+.lw-status { display:flex; align-items:center; gap:6px; margin-top:4px; color:var(--lumiverse-text-muted); font-size:12px; }
+.lw-status::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--lumiverse-text-muted); }
+.lw-status[data-tone="success"]::before { background:var(--lumiverse-success); }
+.lw-status[data-tone="warning"]::before { background:var(--lumiverse-warning); }
+.lw-header > .lw-row .lw-row-copy { display:none; }
+.lw-intro { margin:0 0 18px; color:var(--lumiverse-text-muted); font-size:12px; line-height:1.6; }
+.lw-setup { display:grid; gap:14px; padding:16px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
+.lw-section { padding:20px 0; border-bottom:1px solid var(--lumiverse-border); }
+.lw-section-title { margin:0 0 10px; color:var(--lumiverse-text-muted); font-size:11px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; }
+.lw-row { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:38px; }
 .lw-row-copy { min-width:0; }
-.lw-row-title { font-weight:650; }
-.lw-hint { margin-top:3px; color:var(--lumiverse-text-dim); font-size:12px; }
-.lw-field { display:grid; gap:5px; min-width:0; }
-.lw-field > label, .lw-field > legend { color:var(--lumiverse-text); font-weight:600; }
-.lw-fields { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr)); }
+.lw-row-title { font-weight:500; }
+.lw-row > .lw-control { flex:none; }
+.lw-hint { margin:0; color:var(--lumiverse-text-muted); font-size:12px; line-height:1.5; }
+.lw-field { display:grid; gap:6px; min-width:0; }
+.lw-field > :first-child { font-size:12px; font-weight:550; }
+.lw-fields { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); }
 .lw-control { min-width:0; }
-.lw-input, .lw-textarea, .lw-select { width:100%; min-height:36px; padding:8px 10px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,9px); background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); font:inherit; }
-.lw-textarea { min-height:112px; resize:vertical; }
-.lw-template { min-height:200px; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; }
-.lw-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-.lw-button { min-height:36px; padding:8px 12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,9px); color:var(--lumiverse-text); background:var(--lumiverse-fill-subtle); font:inherit; font-weight:600; cursor:pointer; }
-.lw-button:hover:not(:disabled) { background:var(--lumiverse-fill-hover,var(--lumiverse-fill)); }
-.lw-button:disabled { opacity:.5; cursor:not-allowed; }
-.lw-button-primary { border-color:var(--lumiverse-accent); background:var(--lumiverse-accent); color:var(--lumiverse-primary-contrast,#fff); }
-.lw-button-primary:hover:not(:disabled) { background:var(--lumiverse-primary-hover,var(--lumiverse-accent)); }
-.lw-badge { display:inline-flex; align-items:center; min-height:24px; padding:2px 8px; border-radius:999px; border:1px solid var(--lumiverse-border); background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-dim); font-size:11px; font-weight:650; white-space:nowrap; }
-.lw-badge[data-tone="success"] { color:var(--lumiverse-success,#22a66b); }
-.lw-badge[data-tone="error"] { color:var(--lumiverse-danger,#ef4444); }
-.lw-badge[data-tone="warning"] { color:var(--lumiverse-warning,#d99a20); }
-.lw-notice { padding:10px 12px; border:1px solid var(--lumiverse-border); border-left:3px solid var(--lumiverse-accent); border-radius:8px; background:var(--lumiverse-fill-subtle); overflow-wrap:anywhere; }
-.lw-notice[data-tone="error"] { border-left-color:var(--lumiverse-danger,#ef4444); }
-.lw-notice[data-tone="warning"] { border-left-color:var(--lumiverse-warning,#d99a20); }
-.lw-notice[data-tone="success"] { border-left-color:var(--lumiverse-success,#22a66b); }
-.lw-notice + .lw-notice { margin-top:8px; }
-.lw-options { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr)); }
-.lw-option { display:flex; align-items:center; gap:7px; min-height:36px; padding:7px 9px; border:1px solid var(--lumiverse-border); border-radius:9px; cursor:pointer; }
-.lw-option:has(input:checked) { border-color:var(--lumiverse-accent); background:var(--lumiverse-fill-subtle); }
-.lw-option input { accent-color:var(--lumiverse-accent); }
-.lw-activity { display:grid; gap:0; }
-.lw-run { display:grid; grid-template-columns:1fr auto; gap:2px 8px; padding:9px 0; border-top:1px solid var(--lumiverse-border); }
-.lw-run:first-child { border-top:0; padding-top:0; }
-.lw-run-title { font-weight:600; }
-.lw-run-time, .lw-run-detail, .lw-empty { color:var(--lumiverse-text-dim); font-size:12px; }
-.lw-run-detail { grid-column:1/-1; overflow-wrap:anywhere; }
-.lw-details { border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,12px); background:var(--lumiverse-fill,transparent); }
-.lw-details > summary { padding:13px 14px; cursor:pointer; font-weight:700; }
-.lw-details > .lw-details-body { padding:0 14px 14px; display:grid; gap:14px; }
-.lw-loading { padding:16px; color:var(--lumiverse-text-dim); }
-.lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-accent); outline-offset:2px; }
-@media (max-width:420px) { .lw-root { padding:12px; } .lw-card { padding:12px; } .lw-header { align-items:flex-start; } }
+.lw-input, .lw-textarea, .lw-select { width:100%; min-height:38px; padding:9px 11px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:inherit; }
+.lw-input::placeholder, .lw-textarea::placeholder { color:var(--lumiverse-text-muted); opacity:1; }
+.lw-input:disabled { cursor:not-allowed; }
+.lw-textarea { min-height:90px; resize:vertical; }
+.lw-template { min-height:200px; font:12px/1.6 var(--lumiverse-font-mono,monospace); }
+.lw-actions { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+.lw-test-hint { text-align:center; font-size:11px; }
+.lw-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:38px; padding:8px 12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); color:var(--lumiverse-text); background:var(--lumiverse-fill-subtle); font:inherit; font-weight:600; cursor:pointer; }
+.lw-button:hover:not(:disabled) { background:var(--lumiverse-fill-hover); }
+.lw-button-primary { border-color:var(--lumiverse-primary-muted); background:var(--lumiverse-primary-soft); color:var(--lumiverse-primary-text); }
+.lw-button-primary:hover:not(:disabled) { background:var(--lumiverse-primary-020); border-color:var(--lumiverse-primary); }
+.lw-button:disabled { color:var(--lumiverse-text-muted); border-color:var(--lumiverse-border); background:var(--lumiverse-fill-subtle); cursor:not-allowed; }
+.lw-button svg { width:15px; height:15px; flex:none; }
+.lw-save { display:flex; align-items:center; gap:5px; font-size:11px; }
+.lw-save::before { content:"✓"; }
+.lw-save[data-tone="error"] { color:var(--lumiverse-danger); }
+.lw-save[data-tone="error"]::before { content:"!"; }
+.lw-save[data-tone="warning"]::before { content:"·"; }
+.lw-notice { margin-bottom:14px; padding:11px 12px; border:1px solid var(--lumiverse-border); border-left:3px solid var(--lumiverse-primary); border-radius:8px; background:var(--lumiverse-fill-subtle); overflow-wrap:anywhere; font-size:12px; }
+.lw-notice[data-tone="error"] { border-left-color:var(--lumiverse-danger); }
+.lw-notice[data-tone="warning"] { border-left-color:var(--lumiverse-warning); }
+.lw-notice[data-tone="success"] { border-left-color:var(--lumiverse-success); }
+.lw-options { display:flex; flex-wrap:wrap; gap:7px; margin:0; padding:0; border:0; min-width:0; }
+.lw-option { position:relative; display:flex; align-items:center; cursor:pointer; }
+.lw-option input { position:absolute; width:1px; height:1px; opacity:0; }
+.lw-option span { display:flex; align-items:center; gap:6px; min-height:34px; padding:6px 10px; border:1px solid var(--lumiverse-border); border-radius:7px; color:var(--lumiverse-text-muted); font-size:12px; transition:background .15s,border-color .15s; }
+.lw-option span::before { content:""; width:11px; height:11px; border:1px solid var(--lumiverse-text-muted); border-radius:3px; }
+.lw-option input:checked + span { border-color:var(--lumiverse-primary-muted); color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
+.lw-option input:checked + span::before { content:"✓"; display:grid; place-items:center; border:0; font-size:12px; font-weight:750; }
+.lw-option:hover span { border-color:var(--lumiverse-primary); background:var(--lumiverse-primary-light); }
+.lw-option input:focus-visible + span { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
+.lw-context { display:grid; gap:2px; }
+.lw-context .lw-hint { margin-top:8px; }
+.lw-details { border-bottom:1px solid var(--lumiverse-border); }
+.lw-details > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 0; list-style:none; cursor:pointer; font-size:13px; font-weight:550; }
+.lw-details > summary::-webkit-details-marker { display:none; }
+.lw-details > summary::after { content:""; width:7px; height:7px; margin:0 4px 0 8px; flex:none; border-right:1.5px solid var(--lumiverse-text-muted); border-bottom:1.5px solid var(--lumiverse-text-muted); transform:rotate(45deg) translateY(-2px); }
+.lw-details[open] > summary::after { transform:rotate(225deg) translate(-2px,-1px); }
+.lw-summary-copy { display:grid; gap:2px; }
+.lw-summary-copy .lw-hint { font-size:11px; font-weight:400; }
+.lw-details-body { display:grid; gap:16px; padding:0 0 18px; }
+.lw-details .lw-details { border:0; border-top:1px solid var(--lumiverse-border); }
+.lw-details .lw-details-body .lw-details-body { padding-bottom:0; }
+.lw-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:16px 0 8px; color:var(--lumiverse-text-muted); font-size:11px; }
+.lw-footer .lw-button { min-height:28px; padding:3px 8px; font-size:11px; }
+.lw-footer-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.lw-loading { padding:16px 0; color:var(--lumiverse-text-muted); }
+.lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
+@container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
 function normalizeFrontendSettings(value) {
   return normalizeSettings(value);
-}
-function directorRuns(runs, limit = 5) {
-  return runs.filter((run) => run.channel !== "world_agent").sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
 }
 
 class SettingsSaveQueue {
@@ -341,6 +358,7 @@ function setup(ctx) {
   let testPending = false;
   let advancedOpen = false;
   let templatesOpen = false;
+  let notesOpen = false;
   let nextFieldId = 0;
   cleanups.push(ctx.dom.addStyle(CSS));
   const drawer = ctx.ui.registerDrawerTab({
@@ -379,7 +397,7 @@ function setup(ctx) {
   function updateSaveStatus() {
     const badge = drawer.root.querySelector("[data-lw-save-status]");
     if (badge) {
-      badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "Saved";
+      badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "All changes saved";
       badge.dataset.tone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
     }
     const retry = drawer.root.querySelector("[data-lw-retry]");
@@ -392,7 +410,7 @@ function setup(ctx) {
     if (!badge)
       return;
     const ready = draft.enabled && !!state?.permissions.interceptor && canTest() && draft.generationTypes.length > 0;
-    badge.textContent = !draft.enabled ? "Off" : ready ? "Ready" : "Needs setup";
+    badge.textContent = !draft.enabled ? "Disabled" : ready ? "Ready for replies" : "Setup needed";
     badge.dataset.tone = ready ? "success" : draft.enabled ? "warning" : "neutral";
   }
   function showNotice(next, ttl = 1e4) {
@@ -434,6 +452,9 @@ function setup(ctx) {
     draft = normalizeFrontendSettings({ ...draft, ...patch });
     queue.markDirty();
     scheduleSave();
+    const notesHint = drawer.root.querySelector("[data-lw-notes-hint]");
+    if (notesHint)
+      notesHint.textContent = draft.additionalNotes.trim() ? "Your extra guidance" : "Optional guidance for the next reply";
     if (rerender)
       render();
     else {
@@ -527,6 +548,7 @@ function setup(ctx) {
       input.placeholder = selected?.model || "Model ID";
       input.value = draft.modelOverride;
       input.disabled = !selected;
+      input.setAttribute("aria-label", "Director model");
       input.addEventListener("input", () => mutate({ modelOverride: input.value }));
       slot.replaceChildren(input);
     };
@@ -541,7 +563,7 @@ function setup(ctx) {
       }), fallback);
     else
       fallback();
-    return field("Model override", slot, "Leave blank to use the connection’s default model.");
+    return field("Model", slot, selected?.model ? "Leave blank to use the connection’s default." : selected ? "Choose a model for this connection." : "Select a connection to choose a model.");
   }
   function numberField(label, key, value, min, max, step, hint) {
     const slot = el("div", "lw-control");
@@ -552,6 +574,7 @@ function setup(ctx) {
       input.min = String(min);
       input.max = String(max);
       input.step = String(step);
+      input.setAttribute("aria-label", label);
       input.addEventListener("change", () => {
         if (input.value !== "")
           mutate({ [key]: Number(input.value) });
@@ -576,6 +599,8 @@ function setup(ctx) {
   function textAreaField(label, key, value, hint) {
     const input = el("textarea", `lw-textarea${key === "additionalNotes" ? "" : " lw-template"}`);
     input.value = value;
+    if (key === "additionalNotes")
+      input.placeholder = "What should the Director keep in mind?";
     input.spellcheck = key === "additionalNotes";
     input.addEventListener("input", () => mutate({ [key]: input.value }));
     return field(label, input, hint);
@@ -599,31 +624,16 @@ function setup(ctx) {
     const node = drawer.root.querySelector("[data-lw-test]");
     if (node) {
       node.disabled = testPending || !canTest();
-      node.textContent = testPending ? "Testing…" : "Test Director";
+      node.setAttribute("aria-busy", String(testPending));
+      node.replaceChildren();
+      const icon = el("span");
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="m7 4 9 6-9 6V4Z"/></svg>`;
+      node.append(icon, document.createTextNode(testPending ? "Testing Director…" : "Test Director"));
     }
-  }
-  function renderActivity() {
-    const target = drawer.root.querySelector("[data-lw-activity]");
-    if (!target)
-      return;
-    target.replaceChildren();
-    const runs = directorRuns(state?.runs ?? []);
-    if (!runs.length) {
-      target.appendChild(el("div", "lw-empty", "No Director activity yet."));
-      return;
-    }
-    for (const run of runs) {
-      const row = el("div", "lw-run");
-      const title = run.status.startsWith("test") ? "Director test" : run.generationType ? LABELS[run.generationType] || run.generationType : "Director run";
-      row.append(el("div", "lw-run-title", title));
-      const badge = el("span", "lw-badge", run.status.replaceAll("_", " "));
-      badge.dataset.tone = run.status === "success" || run.status === "test_success" ? "success" : run.status === "error" || run.status === "test_error" || run.status === "timeout" ? "error" : "warning";
-      row.append(badge);
-      row.append(el("div", "lw-run-time", new Date(run.timestamp).toLocaleString()));
-      const detail = run.error || run.directivePreview || [run.connectionName, run.model].filter(Boolean).join(" · ");
-      if (detail)
-        row.append(el("div", "lw-run-detail", detail));
-      target.append(row);
+    const hint = drawer.root.querySelector("[data-lw-test-hint]");
+    if (hint) {
+      hint.textContent = !selectedConnection() ? "Choose a connection to test the Director." : !state?.permissions.generation ? "Generation permission is required to test." : !canTest() ? "Choose a model to test the Director." : "Uses a sample prompt. Your chat stays unchanged.";
     }
   }
   function renderWarnings(target) {
@@ -672,18 +682,18 @@ function setup(ctx) {
     const brand = el("div", "lw-brand");
     const icon = el("div", "lw-icon");
     icon.innerHTML = ICON;
+    icon.setAttribute("aria-hidden", "true");
     const title = el("div");
-    title.append(el("h1", "lw-title", "Director"), el("div", "lw-version", `LumiWorld v${VERSION}`));
-    brand.append(icon, title);
-    const statuses = el("div", "lw-statuses");
-    const directorStatus = el("span", "lw-badge");
+    title.append(el("h1", "lw-title", "Director"));
+    const directorStatus = el("span", "lw-status");
     directorStatus.dataset.lwDirectorStatus = "";
-    const saveStatus = el("span", "lw-badge");
-    saveStatus.dataset.lwSaveStatus = "";
-    statuses.append(directorStatus, saveStatus);
-    header.append(brand, statuses);
+    title.append(directorStatus);
+    brand.append(icon, title);
+    header.append(brand);
+    if (state)
+      header.append(switchField("Enable Director", draft.enabled, (enabled) => mutate({ enabled })));
     shell.append(header);
-    shell.append(el("p", "lw-intro", "Shape the next reply with a private world-state note."));
+    shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
     const notices = el("div");
     notices.dataset.lwNotice = "";
     shell.append(notices);
@@ -694,57 +704,70 @@ function setup(ctx) {
     if (!state) {
       shell.append(el("div", "lw-loading", "Loading Director settings…"));
       updateDirectorStatus();
-      updateSaveStatus();
       renderNotice();
       return;
     }
-    const core = el("section", "lw-card lw-stack");
-    core.append(switchField("Enable Director", draft.enabled, (enabled) => mutate({ enabled }), "Runs before selected visible reply types."));
+    const core = el("section", "lw-setup");
+    core.setAttribute("aria-label", "Director connection");
     const fields = el("div", "lw-fields");
     fields.append(connectionField(), modelField());
     core.append(fields);
     const actions = el("div", "lw-actions");
     const test = button("Test Director", testDirector, true);
     test.dataset.lwTest = "";
-    actions.append(test);
-    const retry = button("Retry save", () => scheduleSave(0));
-    retry.dataset.lwRetry = "";
-    actions.append(retry);
+    const testHint = el("div", "lw-hint lw-test-hint");
+    testHint.dataset.lwTestHint = "";
+    testHint.id = "lw-test-hint";
+    test.setAttribute("aria-describedby", testHint.id);
+    actions.append(test, testHint);
     core.append(actions);
     shell.append(core);
-    const runsCard = el("section", "lw-card");
-    runsCard.append(el("h2", undefined, "Recent activity"));
-    const activity = el("div", "lw-activity");
-    activity.dataset.lwActivity = "";
-    runsCard.append(activity);
-    shell.append(runsCard);
-    const generation = el("section", "lw-card");
-    generation.append(el("h2", undefined, "Runs on"));
-    const options = el("div", "lw-options");
+    const generation = el("section", "lw-section");
+    const options = el("fieldset", "lw-options");
+    options.append(el("legend", "lw-section-title", "Run before"));
     for (const type of VISIBLE_GENERATION_TYPES) {
       const label = el("label", "lw-option");
       const input = el("input");
       input.type = "checkbox";
       input.checked = draft.generationTypes.includes(type);
-      input.addEventListener("change", () => mutate({ generationTypes: input.checked ? [...draft.generationTypes, type] : draft.generationTypes.filter((item) => item !== type) }, true));
-      label.append(input, document.createTextNode(LABELS[type]));
+      input.addEventListener("change", () => mutate({ generationTypes: input.checked ? [...draft.generationTypes, type] : draft.generationTypes.filter((item) => item !== type) }));
+      label.append(input, el("span", undefined, LABELS[type]));
       options.append(label);
     }
     generation.append(options);
     shell.append(generation);
-    const context = el("section", "lw-card lw-stack");
-    context.append(el("h2", undefined, "Director context"));
-    context.append(switchField("Activated World Info", draft.includeWorldInfoEntries, (includeWorldInfoEntries) => mutate({ includeWorldInfoEntries }), "Send activated entries only to the Director."), switchField("User persona", draft.includeUserPersona, (includeUserPersona) => mutate({ includeUserPersona })), switchField("Character", draft.includeCharacter, (includeCharacter) => mutate({ includeCharacter })));
+    const context = el("section", "lw-section");
+    context.append(el("h2", "lw-section-title", "Include in context"));
+    const contextRows = el("div", "lw-context");
+    contextRows.append(switchField("Character", draft.includeCharacter, (includeCharacter) => mutate({ includeCharacter })), switchField("User persona", draft.includeUserPersona, (includeUserPersona) => mutate({ includeUserPersona })), switchField("Activated World Info", draft.includeWorldInfoEntries, (includeWorldInfoEntries) => mutate({ includeWorldInfoEntries })), el("p", "lw-hint", "Shared privately with the Director."));
+    context.append(contextRows);
     shell.append(context);
-    const notes = el("section", "lw-card lw-stack");
-    notes.append(el("h2", undefined, "Additional notes"), textAreaField("Private notes", "additionalNotes", draft.additionalNotes, "Extra guidance sent only to the Director."));
+    const notes = el("details", "lw-details");
+    notes.open = notesOpen;
+    notes.addEventListener("toggle", () => {
+      notesOpen = notes.open;
+    });
+    const notesSummary = el("summary");
+    const notesCopy = el("span", "lw-summary-copy");
+    const notesHint = el("span", "lw-hint", draft.additionalNotes.trim() ? "Your extra guidance" : "Optional guidance for the next reply");
+    notesHint.dataset.lwNotesHint = "";
+    notesCopy.append(el("span", undefined, "Director notes"), notesHint);
+    notesSummary.append(notesCopy);
+    notes.append(notesSummary);
+    const notesBody = el("div", "lw-details-body");
+    notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
+    notes.append(notesBody);
     shell.append(notes);
     const advanced = el("details", "lw-details");
     advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => {
       advancedOpen = advanced.open;
     });
-    advanced.append(el("summary", undefined, "Response settings"));
+    const advancedSummary = el("summary");
+    const advancedCopy = el("span", "lw-summary-copy");
+    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Response limits & prompt templates"));
+    advancedSummary.append(advancedCopy);
+    advanced.append(advancedSummary);
     const advancedBody = el("div", "lw-details-body");
     const parameters = el("div", "lw-fields");
     parameters.append(numberField("Temperature", "temperature", draft.temperature, 0, 2, 0.05), numberField("Max tokens", "maxTokens", draft.maxTokens, 64, Number.MAX_SAFE_INTEGER, 1), numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."), numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1), numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000), numberField("Run log limit", "runLogLimit", draft.runLogLimit, 0, 50, 1));
@@ -760,12 +783,22 @@ function setup(ctx) {
     const templateBody = el("div", "lw-details-body");
     templateBody.append(textAreaField("System template", "systemTemplate", draft.systemTemplate), textAreaField("User template", "userTemplate", draft.userTemplate));
     templates.append(templateBody);
-    shell.append(templates);
+    advancedBody.append(templates);
+    const footer = el("footer", "lw-footer");
+    footer.append(el("span", undefined, `LumiWorld ${VERSION}`));
+    const footerStatus = el("div", "lw-footer-status");
+    const saveStatus = el("span", "lw-save");
+    saveStatus.dataset.lwSaveStatus = "";
+    saveStatus.setAttribute("role", "status");
+    const retry = button("Retry save", () => scheduleSave(0));
+    retry.dataset.lwRetry = "";
+    footerStatus.append(saveStatus, retry);
+    footer.append(footerStatus);
+    shell.append(footer);
     flushMounts();
     updateDirectorStatus();
     updateSaveStatus();
     updateTestButton();
-    renderActivity();
     renderNotice();
   }
   cleanups.push(ctx.onBackendMessage((payload) => {
@@ -775,7 +808,6 @@ function setup(ctx) {
       if (!queue.isDirty && !saveTimer)
         draft = normalizeFrontendSettings(message.state.settings);
       if (drawer.root.contains(document.activeElement) && document.activeElement?.matches("input,textarea,select,[role=combobox]")) {
-        renderActivity();
         updateWarnings();
         updateDirectorStatus();
         updateSaveStatus();
@@ -803,13 +835,6 @@ function setup(ctx) {
       saveState = "error";
       showNotice({ tone: "error", text: `Settings were not saved: ${message.message}` }, 0);
       updateSaveStatus();
-      return;
-    }
-    if (message.type === "run_logged") {
-      if (message.run.channel !== "world_agent" && state) {
-        state = { ...state, runs: directorRuns([message.run, ...state.runs.filter((run) => run.id !== message.run.id)], draft.runLogLimit) };
-        renderActivity();
-      }
       return;
     }
     if (message.type === "test_result") {
@@ -841,7 +866,6 @@ function setup(ctx) {
 }
 export {
   SettingsSaveQueue,
-  directorRuns,
   normalizeFrontendSettings,
   setup
 };
