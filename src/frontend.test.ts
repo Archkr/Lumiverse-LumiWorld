@@ -1,32 +1,54 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeFrontendSettings, SettingsSaveQueue } from "./frontend";
 
-describe("frontend settings contract", () => {
-  test("keeps the Director timeout aligned with Lumiverse's interceptor ceiling", () => {
-    const settings = normalizeFrontendSettings({ timeoutMs: 900000, worldAgent: { timeoutMs: 900000 } });
-    expect(settings.timeoutMs).toBe(300000);
-    expect(settings.worldAgent.timeoutMs).toBe(900000);
+describe("Director settings", () => {
+  test("clamps timeout to Lumiverse's interceptor ceiling", () => {
+    expect(normalizeFrontendSettings({ timeoutMs: 900000 }).timeoutMs).toBe(300000);
   });
 
-  test("keeps World Agent history and context settings independent", () => {
-    const settings = normalizeFrontendSettings({
-      worldAgent: { historyMessageLimit: 33, includeUserPersona: false, includeCharacter: false },
-    });
-    expect(settings.worldAgent.historyMessageLimit).toBe(33);
-    expect(settings.worldAgent.includeUserPersona).toBe(false);
-    expect(settings.worldAgent.includeCharacter).toBe(false);
+  test("keeps an explicit empty generation selection", () => {
+    expect(normalizeFrontendSettings({ generationTypes: [] }).generationTypes).toEqual([]);
+  });
+
+  test("ignores legacy World Agent settings", () => {
+    const settings = normalizeFrontendSettings({ connectionId: "director", worldAgent: { enabled: true } });
+    expect(settings.connectionId).toBe("director");
+    expect("worldAgent" in settings).toBe(false);
   });
 });
 
 describe("serialized autosave queue", () => {
-  test("does not dispatch a second write until the first acknowledgement arrives", () => {
+  test("sends newer edits after the previous acknowledgement", () => {
     const queue = new SettingsSaveQueue();
     queue.markDirty();
     expect(queue.begin()).toBe(1);
     queue.markDirty();
     expect(queue.begin()).toBeNull();
-    expect(queue.acknowledge()).toBe(true);
+    expect(queue.acknowledge(1)).toBe(true);
     expect(queue.begin()).toBe(2);
-    expect(queue.acknowledge()).toBe(false);
+    expect(queue.acknowledge(2)).toBe(false);
+    expect(queue.isDirty).toBe(false);
+  });
+
+  test("retains the unsaved revision for retry after failure", () => {
+    const queue = new SettingsSaveQueue();
+    queue.markDirty();
+    expect(queue.begin()).toBe(1);
+    expect(queue.fail(1)).toBe(true);
+    expect(queue.isDirty).toBe(true);
+    expect(queue.begin()).toBe(1);
+    expect(queue.acknowledge(1)).toBe(false);
+  });
+
+  test("ignores stale acknowledgements", () => {
+    const queue = new SettingsSaveQueue();
+    queue.markDirty();
+    expect(queue.begin()).toBe(1);
+    queue.fail(1);
+    queue.markDirty();
+    expect(queue.begin()).toBe(2);
+    expect(queue.acknowledge(1)).toBe(true);
+    expect(queue.isInFlight).toBe(true);
+    expect(queue.acknowledge(2)).toBe(false);
   });
 });

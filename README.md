@@ -1,73 +1,40 @@
 # LumiWorld
 
-LumiWorld is a Lumiverse Spindle extension with two private world-simulation channels.
+LumiWorld is a Lumiverse Spindle extension that prepares private Director notes before visible chat replies. It uses the selected Lumiverse connection profile through `spindle.generate.raw()` and does not read or store API keys.
 
-- **Director Note** runs late in prompt assembly and injects a concise world-state directive before the visible reply.
-- **World Agent** keeps a per-chat clock, a complete 24-hour character schedule, and current private simulation state.
+## Version 0.4.0
 
-LumiWorld uses Lumiverse connection profiles through `spindle.generate.raw()`. It never reads or stores API keys.
+LumiWorld has one compact drawer tab for Director status, connection and model selection, reply types, context settings, and a test action. Private notes and advanced settings expand in place; prompt templates are inside advanced settings. Changes save automatically, with a retry action if saving fails. The controls follow the active Lumiverse theme and use host shared components where available.
 
-## Version 0.3.0
-
-The desktop surface is a compact floating CRT status widget. Its upper knob opens settings and its lower knob switches channels. A normal Lumiverse drawer tab remains available as the mobile-friendly control surface.
-
-Settings use Lumiverse shared controls for connection and model selection, so dropdowns follow the active Lumiverse theme and can open outside the settings scroll area.
+The former floating widget and World Agent simulation have been removed. Existing World Agent files and saved settings are left in extension storage for recovery by an older release. LumiWorld v0.4 does not read or run that data. Historical run entries remain stored. The drawer does not include an activity view. The former `agent_world.state.current` LumiState endpoint is no longer published.
 
 ## Director Note
 
-For enabled visible generations (`normal`, `continue`, `regenerate`, `swipe`, and `impersonate`), LumiWorld:
+For enabled visible generation types (`normal`, `continue`, `regenerate`, `swipe`, and `impersonate`), LumiWorld:
 
-1. Builds controller-only context from the selected history, persona, character, activated World Info, notes, and optional World Agent state.
-2. Sends it to the selected controller connection.
+1. Builds controller-only context from the assembled prompt, recent chat history, and selected persona, character, activated World Info, and additional notes.
+2. Sends that context to the selected Director connection.
 3. Injects the returned note as a top system block named `LumiWorld Director` in Prompt Breakdown.
 
-Controller calls are isolated per user and chat. A duplicate call for the same chat passes through rather than delaying the visible reply; unrelated chats do not block one another.
+A duplicate Director call for the same user and chat passes through without delaying the visible reply; unrelated chats can proceed. Lumiverse caps prompt interceptors at five minutes, and the Director timeout setting follows that ceiling. If every generation type is unchecked, the Director does not run.
 
-Lumiverse limits interceptors to five minutes. The Director timeout field reflects that actual host ceiling. World Agent calls have their own independent timeout setting.
-
-## World Agent
-
-World Agent state is stored per user and chat at:
-
-```text
-world-agent/chats/{chatId}.json
-```
-
-It stores the simulated day/hour, running state, active character/persona IDs, 24-hour schedule, location, mood, activity, thought, goal, and a short privacy-safe activity history.
-
-Each generated schedule must be structured JSON with exactly one entry for every hour `0` through `23`. Incomplete, duplicate, malformed, or plain-text schedules are rejected without replacing the previous valid day. The settings UI exposes the raw controller output through a copy action when a generation fails.
-
-World Agent reads the configured recent stored chat messages for every schedule and hourly update. Hidden messages are excluded and the active swipe is used. If Lumiverse cannot provide history, LumiWorld says so and does not substitute stale cached context.
-
-When injection is enabled, `LumiWorld World Agent` appears in Prompt Breakdown. The main model receives only the current state plus the current and next two schedule slots. The full day remains available to World Agent calls and the settings UI.
-
-## LumiState interoperability
-
-LumiWorld publishes a public, read-only `agent_world.state.current` snapshot for LumiState and other compatible extensions. It contains only the active chat ID, source-local revision, freshness, and the simulation day, hour, and running status.
-
-The public snapshot never includes the World Agent schedule, location, mood, activity, thought, goal, or history. Those remain private LumiWorld state.
-
-`agent_world.contract.v1` describes the endpoint and LumiState v1 capability metadata. Missing readers do not affect LumiWorld, and publishing makes no model call.
+The **Test Director** action uses a short sample prompt and the current draft settings. It does not add a chat message or alter the active chat.
 
 ## Permissions
 
 LumiWorld requests:
 
-- `interceptor` to inspect assembled prompts and inject private system blocks.
-- `generation` to list connection profiles and run Director/World Agent calls.
-- `chats` to resolve the active chat and character routing.
-- `chat_mutation` because Lumiverse gates read-only raw message history behind `spindle.chat.getMessages(chatId)`.
+- `interceptor` to inspect assembled prompts and inject the private system block.
+- `generation` to list connection profiles and run Director calls.
+- `chats` to resolve character routing where needed.
 - `characters` and `personas` to read enabled context cards.
-- `world_books` to read activated World Info metadata and entry content.
-- `ui_panels` for the desktop CRT widget.
+- `world_books` to read activated World Info metadata and entries.
 
-Despite the `chat_mutation` permission name, LumiWorld only calls `getMessages()`; it does not append, update, delete, hide, or swipe chat messages.
+The drawer tab does not require `ui_panels`. LumiWorld no longer requests `chat_mutation`.
 
 ## Privacy
 
-LumiWorld stores settings, privacy-safe run metadata, and World Agent state. It does not store full prompts, raw controller inputs, API keys, complete controller outputs, or World Info content in run logs.
-
-The selected controller connections receive whichever context sources the user enables. Treat those model connections with the same privacy expectations as any other chat model connection.
+LumiWorld stores Director settings and privacy-safe run metadata. It does not store full prompts, raw controller inputs, API keys, complete controller outputs, or World Info content in run logs. The chosen Director connection receives the context sources that the user enables.
 
 ## Development
 
@@ -78,4 +45,4 @@ bun test
 bun run build
 ```
 
-Built `dist/` files are committed so Lumiverse can load the extension directly.
+Built `dist/` files are committed so Lumiverse can load the extension directly. Extension API usage follows the developer docs in the main Lumiverse repository.
