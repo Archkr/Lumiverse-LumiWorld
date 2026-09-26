@@ -47,6 +47,9 @@ var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 var DEFAULT_JEV_SETTINGS = {
   enabled: false,
   provider: "typesafe",
+  includeCharacter: true,
+  includeUserPersona: true,
+  includeWorldInfoEntries: false,
   model: "",
   baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
@@ -296,12 +299,15 @@ function normalizeGatePolicy(value) {
   }
   return normalized;
 }
-function normalizeJevSettings(value) {
+function normalizeJevSettings(value, legacyContext = DEFAULT_SETTINGS) {
   const obj = asRecord(value);
   const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
     provider,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
     model: cleanString(obj.model),
     baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
@@ -422,6 +428,9 @@ function makeJevDiagnostics(patch = {}) {
 }
 function normalizeSettings(value) {
   const obj = asRecord(value);
+  const includeWorldInfoEntries = typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries;
+  const includeUserPersona = typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona;
+  const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
@@ -437,15 +446,15 @@ function normalizeSettings(value) {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
-    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
-    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
-    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
+    includeWorldInfoEntries,
+    includeUserPersona,
+    includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
-    jev: normalizeJevSettings(obj.jev)
+    jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object" ? { includeWorldInfoEntries, includeUserPersona, includeCharacter } : DEFAULT_SETTINGS)
   };
 }
 function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
@@ -1317,6 +1326,28 @@ var GATE_CATALOG = withCore([
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+function directorGuidanceFromGates(records) {
+  const lines = [];
+  for (const record of records) {
+    const definition = GATE_BY_ID.get(record.gateId);
+    if (!definition || definition.phase !== "gate" || definition.category === "director_control" && ["smart_trigger", "context_filter", "model_route"].includes(definition.id) || definition.codeOnly || record.usedFallback || record.value === null)
+      continue;
+    const criteria = definition.criteria;
+    let meaning;
+    if (definition.primitive === "score" && Array.isArray(criteria) && typeof record.value === "number") {
+      meaning = criteria[Math.max(0, Math.min(criteria.length - 1, Math.round(record.value)))];
+    } else if (definition.primitive === "noul" && typeof record.value === "boolean" && criteria && !Array.isArray(criteria)) {
+      meaning = criteria[String(record.value)];
+    } else if (definition.primitive === "choice" && typeof record.value === "string" && criteria && !Array.isArray(criteria)) {
+      meaning = criteria[record.value];
+    }
+    if (meaning)
+      lines.push(`- ${definition.label}: ${meaning}.`);
+  }
+  return lines.length ? `Jev's accepted decisions for this turn. Use these as direction when writing the private note; keep continuity and the player's agency intact.
+${lines.join(`
+`)}` : null;
+}
 function resolveGatePolicy(definition, settings) {
   const override = settings.gatePolicy[definition.id];
   const enabled = override?.enabled ?? definition.enabledByDefault;
@@ -1362,12 +1393,12 @@ function gateApplies(definition, context) {
     case "callback":
       return context.hasHistory;
     case "foreshadowing":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "reveal_control":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "world_movement":
     case "consequence_propagation":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "scene_state_tracking":
     case "scene_state_diff":
       return context.worldStateEnabled;
@@ -2862,21 +2893,29 @@ async function prepareController(settings, messages, context, chatId, userId, ge
   const identity = makeIdentity(persona, character);
   const includesCharacter = settings.includeCharacter && !!character;
   const includesPersona = settings.includeUserPersona && !!persona;
+  const jevIncludesCharacter = settings.jev.includeCharacter && !!character;
+  const jevIncludesPersona = settings.jev.includeUserPersona && !!persona;
   const contextMessages = [
     includesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
     includesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
   ].filter((message) => !!message);
+  const jevContextMessages = [
+    jevIncludesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    jevIncludesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
+  ].filter((message) => !!message);
   const worldBooks = worldBooksApi();
+  const includeDirectorWorldInfo = preserveWorldInfo && settings.includeWorldInfoEntries;
+  const includeJevWorldInfo = preserveWorldInfo && settings.jev.enabled && settings.jev.includeWorldInfoEntries;
   const worldInfoContext = await resolveWorldInfoContextMessages({
     messages,
-    settings: preserveWorldInfo ? settings : { ...settings, includeWorldInfoEntries: false },
+    settings: { ...settings, includeWorldInfoEntries: includeDirectorWorldInfo || includeJevWorldInfo },
     context,
     canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
     fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
     fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
     identity
   });
-  const selected = selectControllerMessagesForController(messages, settings, [...contextMessages, ...worldInfoContext.messages]);
+  const selected = selectControllerMessagesForController(messages, settings, [...contextMessages, ...includeDirectorWorldInfo ? worldInfoContext.messages : []]);
   const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType,
@@ -2886,17 +2925,19 @@ async function prepareController(settings, messages, context, chatId, userId, ge
     char: identity.characterName || "Character"
   });
   const worldStateText = projectWorldState(worldState);
+  const jevHistory = selectChatHistoryMessagesForController(messages, settings.jev.historyMessageLimit);
   return {
     controllerMessages,
     promptSnapshot,
-    contextMessages: [...contextMessages, ...worldInfoContext.messages],
+    contextMessages: [...contextMessages, ...includeDirectorWorldInfo ? worldInfoContext.messages : []],
     worldState,
     worldInfoDiagnostics: worldInfoContext.diagnostics,
     turnContext: {
-      hasHistory: !!promptSnapshot.prompt.trim(),
-      hasCharacter: includesCharacter,
-      hasPersona: includesPersona,
-      hasWorldInfo: preserveWorldInfo && worldInfoContext.messages.length > 0,
+      hasHistory: jevHistory.length > 0,
+      hasCharacter: includesCharacter && jevIncludesCharacter,
+      hasPersona: includesPersona && jevIncludesPersona,
+      hasWorldInfo: includeDirectorWorldInfo && includeJevWorldInfo && worldInfoContext.messages.length > 0,
+      jevHasWorldInfo: includeJevWorldInfo && worldInfoContext.messages.length > 0,
       hasDirectorNotes: !!settings.additionalNotes.trim(),
       worldStateEnabled: settings.jev.worldStateEnabled,
       generationType
@@ -2905,10 +2946,10 @@ async function prepareController(settings, messages, context, chatId, userId, ge
       settings: { historyMessageLimit: settings.jev.historyMessageLimit, maxStateChars: settings.jev.maxStateChars },
       generationType,
       chatId: chatId ?? "",
-      history: selectChatHistoryMessagesForController(messages, settings.jev.historyMessageLimit),
-      personaSummary: contextMessageSummary(contextMessages, "User Persona"),
-      characterSummary: contextMessageSummary(contextMessages, "Character"),
-      worldInfoSummary: summaryOfMessages(worldInfoContext.messages, 6000),
+      history: jevHistory,
+      personaSummary: contextMessageSummary(jevContextMessages, "User Persona"),
+      characterSummary: contextMessageSummary(jevContextMessages, "Character"),
+      worldInfoSummary: includeJevWorldInfo ? summaryOfMessages(worldInfoContext.messages, 6000) : null,
       directorNotes: resolveIdentityMacros(settings.additionalNotes, identity).trim() || null,
       worldState: worldState.turn > 0 ? worldStateText : null
     }
@@ -2934,17 +2975,16 @@ function applyContextFilter(base, settings, messages, context, generationType, d
     chatId: base.stateContext.chatId,
     connectionId: extractConnectionId(context)
   });
-  const worldInfoKept = decision.keepWorldInfo && contextMessages.some((message) => message[CONTROLLER_CONTEXT_LABEL_KEY] !== undefined && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "User Persona" && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "Character");
   return {
     ...base,
     controllerMessages,
     promptSnapshot,
     turnContext: {
       ...base.turnContext,
-      hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
+      hasHistory: decision.keepHistory && base.turnContext.hasHistory,
       hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
       hasPersona: decision.keepPersona && base.turnContext.hasPersona,
-      hasWorldInfo: worldInfoKept
+      hasWorldInfo: decision.keepWorldInfo && base.turnContext.hasWorldInfo
     }
   };
 }
@@ -3084,8 +3124,9 @@ async function handleInterceptor(messages, context) {
   const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
   try {
     const jevRun = await prepareJev(settings, userId);
-    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, false);
+    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, jevRun.enabled && settings.jev.includeWorldInfoEntries);
     worldState = prepared.worldState;
+    worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     let gateRecords = [];
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
@@ -3117,14 +3158,24 @@ async function handleInterceptor(messages, context) {
       jevDiagnostics.status = "degraded";
       jevDiagnostics.error = jevRun.error;
     }
-    const filterDecision = contextFilterDecision(gateRecords);
+    const proposedFilter = contextFilterDecision(gateRecords);
+    const filterDecision = proposedFilter && {
+      ...proposedFilter,
+      keepHistory: proposedFilter.keepHistory || settings.jev.historyMessageLimit === 0,
+      keepCharacter: proposedFilter.keepCharacter || settings.includeCharacter && !settings.jev.includeCharacter,
+      keepPersona: proposedFilter.keepPersona || settings.includeUserPersona && !settings.jev.includeUserPersona,
+      keepWorldInfo: proposedFilter.keepWorldInfo || settings.includeWorldInfoEntries && !settings.jev.includeWorldInfoEntries
+    };
     const keepWorldInfo = settings.includeWorldInfoEntries && (!filterDecision || filterDecision.keepWorldInfo);
-    if (keepWorldInfo) {
+    if (keepWorldInfo && !(jevRun.enabled && settings.jev.includeWorldInfoEntries)) {
       const withWorldInfo = await prepareController(settings, messages, context, chatId, userId, generationType, true);
       worldInfoDiagnostics = withWorldInfo.worldInfoDiagnostics;
       prepared = withWorldInfo;
     }
     prepared = applyContextFilter(prepared, settings, messages, context, generationType, filterDecision);
+    const gateGuidance = directorGuidanceFromGates(gateRecords);
+    if (gateGuidance)
+      prepared.controllerMessages.splice(1, 0, { role: "system", content: gateGuidance });
     target = await resolveTurnTarget(settings, gateRecords, userId);
     if (!target) {
       await recordRun(makeRunBase("skipped", startedAt, {
@@ -3225,7 +3276,7 @@ function resolveJevModelForDiagnostics(settings) {
   return settings.jev.model.trim() || provider.defaultModel;
 }
 async function regenerateDirective(userId, settings, target, prepared, repair, records) {
-  const violated = records.filter((record) => record.usedFallback || record.value === "violation" || record.value === "repeats" || record.value === true).map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`).join(`
+  const violated = records.filter((record) => !record.usedFallback && ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value)).map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`).join(`
 `);
   const repairMessages = [
     ...prepared.controllerMessages,

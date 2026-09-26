@@ -4,7 +4,7 @@ import {
   type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord,
   type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type ConnectionOption, type RunLogEntry,
 } from "./shared";
-import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER } from "./gates";
+import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
 const VERSION = "0.5.0-experimental";
@@ -781,6 +781,19 @@ export function setup(ctx: SpindleFrontendContext) {
     core.append(actions);
     section.append(core);
 
+    const context = el("section", "lw-section");
+    context.setAttribute("aria-label", "Jev context");
+    context.append(el("h2", "lw-section-title", "Include in Jev state"));
+    context.append(el("p", "lw-hint", "Choose what Jev sees when deciding. These switches are independent of the Director's context switches."));
+    const contextRows = el("div", "lw-context");
+    contextRows.append(
+      switchField("Character", draft.jev.includeCharacter, (includeCharacter) => mutateJev({ includeCharacter })),
+      switchField("User persona", draft.jev.includeUserPersona, (includeUserPersona) => mutateJev({ includeUserPersona })),
+      switchField("Activated World Info", draft.jev.includeWorldInfoEntries, (includeWorldInfoEntries) => mutateJev({ includeWorldInfoEntries })),
+    );
+    context.append(contextRows);
+    section.append(context);
+
     // --- Advanced settings: the shape of the batched request ------------------
     const advanced = el("details", "lw-details");
     advanced.open = jevAdvancedOpen;
@@ -979,18 +992,24 @@ export function setup(ctx: SpindleFrontendContext) {
         onCommit: (next: number) => mutateGate(definition.id, { threshold: next }),
       }), sliderFallback);
     } else sliderFallback();
+    const guidanceGate = definition.phase === "gate"
+      && !["smart_trigger", "context_filter", "model_route"].includes(definition.id);
     sheet.append(track);
-    sheet.append(el("div", "lw-hint",
-      "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
-
-    const fallbackHead = el("div", "lw-sheet-label");
-    fallbackHead.append(el("span", undefined, "When it cannot answer"));
-    sheet.append(fallbackHead, selectControl(
-      policy.fallback,
-      GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
-      `${definition.label} fallback`,
-      (next) => mutateGate(definition.id, { fallback: next as GateFallback }),
-    ));
+    sheet.append(el("div", "lw-hint", guidanceGate
+      ? "Answers below this are left out of the Director's guidance."
+      : "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
+    if (guidanceGate) {
+      sheet.append(el("div", "lw-hint", "The Director still runs without this decision."));
+    } else {
+      const fallbackHead = el("div", "lw-sheet-label");
+      fallbackHead.append(el("span", undefined, "When it cannot answer"));
+      sheet.append(fallbackHead, selectControl(
+        policy.fallback,
+        GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
+        `${definition.label} fallback`,
+        (next) => mutateGate(definition.id, { fallback: next as GateFallback }),
+      ));
+    }
 
     if (isCustom) sheet.append(gateReset(definition));
     return sheet;
@@ -1015,9 +1034,12 @@ export function setup(ctx: SpindleFrontendContext) {
 
     return collapsible({
       title: "Last recorded Jev turn",
-      badge: diagnostics ? (diagnostics.status === "ok" ? "answered" : diagnostics.status) : undefined,
+      badge: diagnostics ? (diagnostics.status === "ok"
+        ? diagnostics.fallbackCount > 0 ? "partial" : "answered"
+        : diagnostics.status) : undefined,
       badgeTone: diagnostics
-        ? (diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error")
+        ? (diagnostics.status === "ok" && diagnostics.fallbackCount === 0 ? "success"
+          : diagnostics.status === "degraded" || diagnostics.fallbackCount > 0 ? "warning" : "error")
         : "neutral",
       expanded: diagnosticsOpen,
       onToggle: (open) => { diagnosticsOpen = open; },
@@ -1114,9 +1136,16 @@ export function setup(ctx: SpindleFrontendContext) {
       meta.append(confidence);
     }
     if (record.usedFallback && !informational && !unused) {
-      const fallback = el("span", "lw-badge", GATE_FALLBACK_LABELS[record.fallback]);
+      const guidanceGate = record.phase === "gate"
+        && !["smart_trigger", "context_filter", "model_route"].includes(record.gateId);
+      const fallbackLabel = guidanceGate || record.fallback === "run" && record.gateId !== "smart_trigger"
+        ? "Decision ignored"
+        : GATE_FALLBACK_LABELS[record.fallback];
+      const fallback = el("span", "lw-badge", fallbackLabel);
       fallback.dataset.tone = "warning";
       meta.append(fallback);
+    } else if (!informational && !unused && directorGuidanceFromGates([record])) {
+      meta.append(el("span", "lw-badge", "Sent to Director"));
     }
     row.append(head, meta);
     if (record.note && !unused) row.append(el("span", "lw-diag-note", record.note));

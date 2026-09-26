@@ -130,6 +130,10 @@ export const DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 export interface JevSettings {
   enabled: boolean;
   provider: JevProvider;
+  /** Context sent to Jev, independently of the Director's context switches. */
+  includeCharacter: boolean;
+  includeUserPersona: boolean;
+  includeWorldInfoEntries: boolean;
   /** Blank means "use the provider default model". */
   model: string;
   /** Blank means "use the provider default base URL". */
@@ -149,6 +153,9 @@ export interface JevSettings {
 export const DEFAULT_JEV_SETTINGS: JevSettings = {
   enabled: false,
   provider: "typesafe",
+  includeCharacter: true,
+  includeUserPersona: true,
+  includeWorldInfoEntries: false,
   model: "",
   baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
@@ -636,12 +643,18 @@ export function normalizeGatePolicy(value: unknown): Record<string, GatePolicy> 
   return normalized;
 }
 
-export function normalizeJevSettings(value: unknown): JevSettings {
+export function normalizeJevSettings(
+  value: unknown,
+  legacyContext: Pick<LumiWorldSettings, "includeCharacter" | "includeUserPersona" | "includeWorldInfoEntries"> = DEFAULT_SETTINGS,
+): JevSettings {
   const obj = asRecord(value);
   const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
     provider,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
     model: cleanString(obj.model),
     baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
@@ -779,6 +792,9 @@ export function summarizeJevDiagnostics(diagnostics: JevTurnDiagnostics | null |
 
 export function normalizeSettings(value: unknown): LumiWorldSettings {
   const obj = asRecord(value);
+  const includeWorldInfoEntries = typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries;
+  const includeUserPersona = typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona;
+  const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate =
@@ -807,15 +823,17 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
-    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
-    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
-    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
+    includeWorldInfoEntries,
+    includeUserPersona,
+    includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
-    jev: normalizeJevSettings(obj.jev),
+    jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object"
+      ? { includeWorldInfoEntries, includeUserPersona, includeCharacter }
+      : DEFAULT_SETTINGS),
   };
 }
 

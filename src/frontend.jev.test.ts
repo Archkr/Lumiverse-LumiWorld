@@ -172,6 +172,33 @@ describe("Jev drawer section", () => {
     harness.destroy();
   });
 
+  test("saves Jev's three context switches without changing the Director switches", () => {
+    const harness = mount(makeState({ settings: settings({
+      includeCharacter: false, includeUserPersona: false, includeWorldInfoEntries: false,
+      jev: { ...DEFAULT_SETTINGS.jev, enabled: true },
+    }) }));
+    const context = harness.root.querySelector<HTMLElement>('[aria-label="Jev context"]')!;
+    const character = labelled(context, "Character") as HTMLInputElement;
+    const persona = labelled(context, "User persona") as HTMLInputElement;
+    const worldInfo = labelled(context, "Activated World Info") as HTMLInputElement;
+    expect([character.checked, persona.checked, worldInfo.checked]).toEqual([true, true, false]);
+    character.checked = false; character.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    persona.checked = false; persona.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    worldInfo.checked = true; worldInfo.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    harness.advanceSave();
+    const save = harness.sent.filter((entry) => entry.type === "save_settings").pop();
+    expect(save?.type).toBe("save_settings");
+    if (save?.type === "save_settings") {
+      expect(save.settings.jev?.includeCharacter).toBe(false);
+      expect(save.settings.jev?.includeUserPersona).toBe(false);
+      expect(save.settings.jev?.includeWorldInfoEntries).toBe(true);
+      expect(save.settings.includeCharacter).toBe(false);
+      expect(save.settings.includeUserPersona).toBe(false);
+      expect(save.settings.includeWorldInfoEntries).toBe(false);
+    }
+    harness.destroy();
+  });
+
   test("shows the OpenRouter guidance when that provider is selected", () => {
     const harness = mount(makeState({
       settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, provider: "openrouter" } }),
@@ -602,7 +629,7 @@ describe("Jev decisions editor", () => {
     expect(card().dataset.open).toBe("false");
     expandGate(harness.root, "callback");
     expect(card().dataset.open).toBe("true");
-    expect(labelled(harness.root, "Callback fallback")).not.toBeNull();
+    expect(card().textContent).toContain("Answers below this are left out of the Director's guidance.");
     // Opening a second gate must not disturb the first.
     expandGate(harness.root, "foreshadowing");
     expect(card().dataset.open).toBe("true");
@@ -724,6 +751,7 @@ describe("Jev diagnostics panel", () => {
     const root = harness.root;
     expect(root.textContent).toContain("2 requests");
     expect(root.textContent).toContain("1 fallback");
+    expect(root.textContent).toContain("partial");
     expect(root.textContent).toContain("1 escalated");
     expect(root.textContent).toContain("Smart Director triggering");
     expect(root.textContent).toContain("Continuity guard");
@@ -735,6 +763,27 @@ describe("Jev diagnostics panel", () => {
     expect(belowFloor?.textContent).toBe("0.30");
     const flagged = root.querySelector('[data-flag="true"]');
     expect(flagged?.textContent).toContain("Continuity guard");
+    harness.destroy();
+  });
+
+  test("distinguishes guidance sent to the Director from a dropped low-confidence choice", () => {
+    const accepted = {
+      gateId: "pacing_control", label: "Pacing control", primitive: "choice" as const, phase: "gate" as const,
+      value: "tighten", probability: 0.9, confidence: 0.9, confidenceDerived: false,
+      threshold: 0.55, escalated: false, usedFallback: false, fallback: "run" as const,
+    };
+    const ignored = {
+      ...accepted, gateId: "npc_autonomy", label: "NPC autonomy", value: "assist",
+      probability: 0.28, confidence: 0.28, escalated: true, usedFallback: true,
+    };
+    const harness = mount(makeState({
+      runs: [{ id: "run-guided", timestamp: 1, status: "success", channel: "director",
+        jev: { ...jevRun, gates: [accepted, ignored] } }],
+    }));
+    const row = (name: string) => [...harness.root.querySelectorAll<HTMLElement>(".lw-diag-row")]
+      .find((item) => item.textContent?.includes(name));
+    expect(row("Pacing control")?.textContent).toContain("Sent to Director");
+    expect(row("NPC autonomy")?.textContent).toContain("Decision ignored");
     harness.destroy();
   });
 

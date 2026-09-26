@@ -51,6 +51,9 @@ let worldInfoFetches = 0;
 let enclaveGetUsers: Array<string | undefined> = [];
 let generateUsers: Array<string | undefined> = [];
 const generatedModels: string[] = [];
+const generatedMessages: any[][] = [];
+let activePersona: any = null;
+let activeCharacter: any = null;
 /** Host lifecycle events the extension subscribed to. */
 const eventHandlers = new Map<string, (payload: unknown, userId?: string) => void>();
 function emitEvent(name: string, payload: unknown, userId?: string): void {
@@ -133,8 +136,9 @@ function latestRun(): any {
       ? { id, name: "Director", provider: "mock", model: "mock-model", has_api_key: true } : null,
   },
   permissions: { has: () => true, onChanged: () => {}, onDenied: () => {} },
-  personas: { getActive: async () => null },
-  chats: { get: async () => null },
+  personas: { getActive: async () => activePersona },
+  characters: { get: async () => activeCharacter },
+  chats: { get: async () => activeCharacter ? { character_id: "character-1" } : null },
   world_books: {
     getActivated: async () => {
       worldInfoFetches += 1;
@@ -160,6 +164,7 @@ function latestRun(): any {
       generations += 1;
       generateUsers.push(input?.userId);
       generatedModels.push(input?.model);
+      generatedMessages.push(input?.messages);
       return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] };
     },
   },
@@ -255,6 +260,9 @@ describe("v0.5 Jev turn flow", () => {
     jevRequests.length = 0;
     jevStates.length = 0;
     generatedModels.length = 0;
+    generatedMessages.length = 0;
+    activePersona = null;
+    activeCharacter = null;
     sent.length = 0;
     generations = 0;
     corsShouldThrow = false;
@@ -290,6 +298,63 @@ describe("v0.5 Jev turn flow", () => {
     expect(jevStates.length).toBeGreaterThan(0);
     expect(JSON.stringify(jevStates)).toContain("I open the observatory door.");
     expect(JSON.stringify(jevStates)).not.toContain("PRIVATE_PRESET_CANARY");
+  });
+
+  test("sends accepted craft decisions to the Director but omits uncertain answers", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+      pacing_control: { enabled: true }, npc_autonomy: { enabled: true },
+    } }) });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (id) => id === "pacing_control"
+      ? { type: "choice", choice: "tighten", probabilities: { tighten: 0.92 }, confidence: 0.92 }
+      : id === "npc_autonomy"
+        ? { type: "choice", choice: "assist", probabilities: { assist: 0.28 }, confidence: 0.28 }
+        : clean(id);
+    await runJevTurn();
+    const prompt = JSON.stringify(generatedMessages[0]);
+    expect(prompt).toContain("Increase pressure and shorten the scene's patience");
+    expect(prompt).not.toContain("An NPC helps, concedes, or offers something");
+    expect(generatedMessages).toHaveLength(1);
+  });
+
+  test("Jev context switches independently control its state", async () => {
+    activePersona = { id: "persona-1", name: "Aster", description: "PERSONA_PRIVATE_CANARY" };
+    activeCharacter = { id: "character-1", name: "Iris", description: "CHARACTER_PRIVATE_CANARY" };
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({
+      includeCharacter: true, includeUserPersona: false, includeWorldInfoEntries: true,
+    }) });
+    answerCleanTurn();
+    await runJevTurn();
+    const state = JSON.stringify(jevStates[0]);
+    const director = JSON.stringify(generatedMessages[0]);
+    expect(state).toContain("CHARACTER_PRIVATE_CANARY");
+    expect(state).toContain("sealed with salt and iron");
+    expect(state).not.toContain("PERSONA_PRIVATE_CANARY");
+    expect(director).not.toContain("CHARACTER_PRIVATE_CANARY");
+    expect(director).not.toContain("sealed with salt and iron");
+    expect(worldInfoFetches).toBe(1);
+  });
+
+  test("Jev cannot filter Director context that its switches hide", async () => {
+    activePersona = { id: "persona-1", name: "Aster", description: "PERSONA_VISIBLE_TO_DIRECTOR" };
+    activeCharacter = { id: "character-1", name: "Iris", description: "CHARACTER_VISIBLE_TO_DIRECTOR" };
+    stored.set("global/settings.json", { ...baseSettings,
+      includeCharacter: true, includeUserPersona: true, includeWorldInfoEntries: true,
+      jev: jevSettings({ includeCharacter: false, includeUserPersona: false, includeWorldInfoEntries: false }),
+    });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (id) => id === "context_filter"
+      ? { type: "choice", choice: "history_only", probabilities: { history_only: 0.9 }, confidence: 0.9 }
+      : clean(id);
+    await runJevTurn();
+    expect(JSON.stringify(jevStates[0])).not.toContain("PERSONA_VISIBLE_TO_DIRECTOR");
+    expect(JSON.stringify(jevStates[0])).not.toContain("CHARACTER_VISIBLE_TO_DIRECTOR");
+    const director = JSON.stringify(generatedMessages[0]);
+    expect(director).toContain("PERSONA_VISIBLE_TO_DIRECTOR");
+    expect(director).toContain("CHARACTER_VISIBLE_TO_DIRECTOR");
+    expect(director).toContain("sealed with salt and iron");
   });
 
   test("uses the configured strong Director model when Jev selects strong", async () => {
@@ -339,6 +404,15 @@ describe("v0.5 Jev turn flow", () => {
     const run = latestRun();
     expect(run.jev.status).toBe("degraded");
     expect(run.jev.error).toMatch(/no jev api key/i);
+  });
+
+  test("does not fetch Jev-only World Info when Jev cannot run", async () => {
+    stored.set("global/settings.json", { ...baseSettings,
+      jev: jevSettings({ includeWorldInfoEntries: true }),
+    });
+    enclave.clear();
+    await runJevTurn();
+    expect(worldInfoFetches).toBe(0);
   });
 
   test("does not consult Jev at all when Jev is disabled", async () => {
@@ -559,8 +633,9 @@ describe("v0.5 Jev turn flow", () => {
     expect(prompt).toContain("The sealed hatch");
   });
 
-  test("omits World Info from the Director prompt when the filter discards it", async () => {
-    stored.set("global/settings.json", { ...baseSettings, includeWorldInfoEntries: true, jev: jevSettings() });
+  test("omits World Info from the Director prompt when Jev saw it and the filter discards it", async () => {
+    stored.set("global/settings.json", { ...baseSettings, includeWorldInfoEntries: true,
+      jev: jevSettings({ includeWorldInfoEntries: true }) });
     answerCleanTurn();
     const clean = jevAnswerFor;
     jevAnswerFor = (gateId) => (gateId === "context_filter"
@@ -579,11 +654,11 @@ describe("v0.5 Jev turn flow", () => {
     expect(prompt).not.toContain("sealed with salt and iron");
   });
 
-  test("skips the World Info fetch when the filter gate discards lore", async () => {
+  test("fetches World Info once for Jev even when the filter discards it for the Director", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,
       includeWorldInfoEntries: true,
-      jev: jevSettings(),
+      jev: jevSettings({ includeWorldInfoEntries: true }),
     });
     answerCleanTurn();
     const clean = jevAnswerFor;
@@ -592,9 +667,8 @@ describe("v0.5 Jev turn flow", () => {
       : clean(gateId));
     const result = await runJevTurn();
     expect(directorRuns(result)).toBe(true);
-    // The gate said lore is irrelevant, so the expensive lookup never happens.
-    expect(worldInfoFetches).toBe(0);
-    expect(worldInfoEntryFetches).toBe(0);
+    expect(worldInfoFetches).toBe(1);
+    expect(worldInfoEntryFetches).toBe(1);
   });
 
   test("still fetches World Info when the filter gate keeps it", async () => {

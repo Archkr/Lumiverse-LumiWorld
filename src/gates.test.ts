@@ -7,6 +7,7 @@ import {
   contextFilterDecision,
   coreGateIds,
   decideRepair,
+  directorGuidanceFromGates,
   planGates,
   questionsFromPlan,
   resolveGateAnswer,
@@ -144,6 +145,15 @@ describe("gate planning", () => {
     expect(plan.gates.some((entry) => entry.policy.definition.id === "context_filter")).toBe(false);
   });
 
+  test("lets world gates use Jev-only lore without offering it as Director filter context", () => {
+    const plan = planGates("gate", settings({ gatePolicy: { foreshadowing: { enabled: true } } }), {
+      hasHistory: false, hasCharacter: false, hasPersona: false, hasWorldInfo: false,
+      jevHasWorldInfo: true, hasDirectorNotes: false, worldStateEnabled: false, generationType: "normal",
+    });
+    expect(plan.gates.some((entry) => entry.policy.definition.id === "foreshadowing")).toBe(true);
+    expect(plan.gates.some((entry) => entry.policy.definition.id === "context_filter")).toBe(false);
+  });
+
   test("applies per-gate threshold overrides", () => {
     const policy = resolveGatePolicy(GATE_BY_ID.get("smart_trigger")!, settings({ gatePolicy: { smart_trigger: { threshold: 0.9 } } }));
     expect(policy.threshold).toBe(0.9);
@@ -219,6 +229,23 @@ describe("decision helpers", () => {
     value: null, probability: null, confidence: null, confidenceDerived: false,
     threshold: 0.6, escalated: false, usedFallback: false, fallback: "run",
     ...patch,
+  });
+
+  test("turns accepted craft and world answers into Director guidance only", () => {
+    const guidance = directorGuidanceFromGates([
+      record({ gateId: "pacing_control", value: "tighten", primitive: "choice" }),
+      record({ gateId: "npc_autonomy", value: "assist", primitive: "choice", usedFallback: true }),
+      record({ gateId: "emotional_release", value: 3, primitive: "score" }),
+      record({ gateId: "foreshadowing", value: false }),
+      record({ gateId: "model_route", value: "strong", primitive: "choice" }),
+      record({ gateId: "continuity_guard", value: "violation", primitive: "choice", phase: "verify" }),
+    ]);
+    expect(guidance).toContain("Increase pressure and shorten the scene's patience");
+    expect(guidance).toContain("A short release would help the scene breathe");
+    expect(guidance).toContain("A planted detail would read as conspicuous");
+    expect(guidance).not.toContain("An NPC helps");
+    expect(guidance).not.toContain("strong");
+    expect(guidance).not.toContain("contradicts");
   });
 
   test("runs the Director when the trigger gate says yes", () => {

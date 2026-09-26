@@ -222,15 +222,26 @@ showing its type and when it runs, so the whole list stays scannable:
 The core loop — smart triggering, context filtering, model routing, verification,
 player agency, duplicate and continuity checking, intensity gating, confidence
 escalation, and graceful degradation — is on by default. The remaining gates
-shape craft and track state, and stay off until you turn them on.
+shape craft and track state, and stay off until you turn them on. Confident
+pre-Director craft and world decisions are sent as private guidance to the
+Director. An uncertain decision is omitted from that guidance; it does not
+cause a separate Director call. The Director still writes the specific action
+and may weigh the guidance against continuity and player agency.
+
+The **Include in Jev state** switches separately control whether Jev sees the
+active Character, User persona, and Activated World Info. They do not change
+what the Director receives. Existing Jev settings inherit the previous Director
+switch values when first loaded with this version.
 
 ### Reading the last turn
 
 **Last turn decisions** shows what Jev decided for the most recent Director call.
-The summary strip reports whether every gate answered, which model served it, the
-request count, how many answers fell back or escalated, the time spent in Jev, and
-token usage. Below it, each gate lists its answer, confidence, and the fallback it
-used if any.
+The summary strip reports whether the turn was answered fully or partially,
+which model served it, the request count, how many answers fell back or escalated,
+the time spent in Jev, and token usage. Below it, each gate lists its answer,
+confidence, and any fallback. A **Sent to Director** badge marks a confident craft or world
+decision that reached the Director prompt; **Decision ignored** marks one that
+fell below its confidence floor.
 
 A confidence shown with a `~` is derived rather than reported: Noul (yes/no)
 answers carry no confidence field, so LumiWorld computes `max(p, 1 - p)` and marks
@@ -327,6 +338,9 @@ is active. The Director tab flags only the case that would block a generation.
 | Director notes | Empty | Sends extra guidance as a separate system message to the Director. Supports `{{user}}` and `{{char}}`. |
 
 Context switches control what LumiWorld adds to the Director’s input. They do not remove context already present in the main model’s prompt.
+Jev has its own Character, User persona, and Activated World Info switches in
+the Jev view. Its context filter cannot discard a Director source that Jev did
+not see.
 
 ### Advanced settings (Director view)
 

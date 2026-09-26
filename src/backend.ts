@@ -15,7 +15,7 @@ import {
   type RunLogEntry, type WorldInfoContextDiagnostics,
 } from "./shared";
 import {
-  countJevFlags, contextFilterDecision, decideRepair, planGates, questionsFromPlan,
+  countJevFlags, contextFilterDecision, decideRepair, directorGuidanceFromGates, planGates, questionsFromPlan,
   resolveGateAnswers, shouldRunDirector, wantsStrongDirectorModel, withConfidenceGate, withDegradationGate,
 } from "./gates";
 import { buildJevState, buildJevSmokeRequest, callJev, exceedsJevTokenBudget, jevEndpoint, normalizeJevResponse, parseJevBody, readCorsResult, type JevAnswer, type JevQuestions } from "./jev";
@@ -712,15 +712,7 @@ interface PreparedController {
   contextMessages: LlmMessageLike[];
   worldState: WorldState;
   worldInfoDiagnostics: WorldInfoContextDiagnostics;
-  turnContext: {
-    hasHistory: boolean;
-    hasCharacter: boolean;
-    hasPersona: boolean;
-    hasWorldInfo: boolean;
-    hasDirectorNotes: boolean;
-    worldStateEnabled: boolean;
-    generationType: string;
-  };
+  turnContext: Parameters<typeof planGates>[2];
   stateContext: Parameters<typeof import("./jev").buildJevState>[0];
 }
 
@@ -746,18 +738,25 @@ async function prepareController(
   const identity = makeIdentity(persona, character);
   const includesCharacter = settings.includeCharacter && !!character;
   const includesPersona = settings.includeUserPersona && !!persona;
+  const jevIncludesCharacter = settings.jev.includeCharacter && !!character;
+  const jevIncludesPersona = settings.jev.includeUserPersona && !!persona;
 
   const contextMessages = [
     includesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
     includesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
   ].filter((message): message is LlmMessageLike => !!message);
+  const jevContextMessages = [
+    jevIncludesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    jevIncludesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
+  ].filter((message): message is LlmMessageLike => !!message);
 
   const worldBooks = worldBooksApi();
+  const includeDirectorWorldInfo = preserveWorldInfo && settings.includeWorldInfoEntries;
+  const includeJevWorldInfo = preserveWorldInfo && settings.jev.enabled && settings.jev.includeWorldInfoEntries;
   const worldInfoContext = await resolveWorldInfoContextMessages({
-    // Skipped entirely when the phase-A filter already decided lore is irrelevant,
-    // so an unnecessary World Info fetch never costs a round trip.
+    // Fetch only when Jev or the Director has opted into activated lore.
     messages: messages as LlmMessageLike[],
-    settings: preserveWorldInfo ? settings : { ...settings, includeWorldInfoEntries: false },
+    settings: { ...settings, includeWorldInfoEntries: includeDirectorWorldInfo || includeJevWorldInfo },
     context,
     canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
     fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
@@ -769,7 +768,7 @@ async function prepareController(
 
   const selected = selectControllerMessagesForController(
     messages as LlmMessageLike[], settings,
-    [...contextMessages, ...worldInfoContext.messages],
+    [...contextMessages, ...(includeDirectorWorldInfo ? worldInfoContext.messages : [])],
   );
   const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
@@ -779,17 +778,19 @@ async function prepareController(
   });
 
   const worldStateText = projectWorldState(worldState);
+  const jevHistory = selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.jev.historyMessageLimit);
   return {
     controllerMessages,
     promptSnapshot,
-    contextMessages: [...contextMessages, ...worldInfoContext.messages],
+    contextMessages: [...contextMessages, ...(includeDirectorWorldInfo ? worldInfoContext.messages : [])],
     worldState,
     worldInfoDiagnostics: worldInfoContext.diagnostics,
     turnContext: {
-      hasHistory: !!promptSnapshot.prompt.trim(),
-      hasCharacter: includesCharacter,
-      hasPersona: includesPersona,
-      hasWorldInfo: preserveWorldInfo && worldInfoContext.messages.length > 0,
+      hasHistory: jevHistory.length > 0,
+      hasCharacter: includesCharacter && jevIncludesCharacter,
+      hasPersona: includesPersona && jevIncludesPersona,
+      hasWorldInfo: includeDirectorWorldInfo && includeJevWorldInfo && worldInfoContext.messages.length > 0,
+      jevHasWorldInfo: includeJevWorldInfo && worldInfoContext.messages.length > 0,
       hasDirectorNotes: !!settings.additionalNotes.trim(),
       worldStateEnabled: settings.jev.worldStateEnabled,
       generationType,
@@ -798,10 +799,10 @@ async function prepareController(
       settings: { historyMessageLimit: settings.jev.historyMessageLimit, maxStateChars: settings.jev.maxStateChars },
       generationType,
       chatId: chatId ?? "",
-      history: selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.jev.historyMessageLimit),
-      personaSummary: contextMessageSummary(contextMessages, "User Persona"),
-      characterSummary: contextMessageSummary(contextMessages, "Character"),
-      worldInfoSummary: summaryOfMessages(worldInfoContext.messages, 6000),
+      history: jevHistory,
+      personaSummary: contextMessageSummary(jevContextMessages, "User Persona"),
+      characterSummary: contextMessageSummary(jevContextMessages, "Character"),
+      worldInfoSummary: includeJevWorldInfo ? summaryOfMessages(worldInfoContext.messages, 6000) : null,
       directorNotes: resolveIdentityMacros(settings.additionalNotes, identity).trim() || null,
       worldState: worldState.turn > 0 ? worldStateText : null,
     },
@@ -847,21 +848,16 @@ function applyContextFilter(
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType, chatId: base.stateContext.chatId, connectionId: extractConnectionId(context),
   });
-  const worldInfoKept = decision.keepWorldInfo
-    && contextMessages.some((message) => message[CONTROLLER_CONTEXT_LABEL_KEY] !== undefined
-      && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "User Persona"
-      && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "Character");
-
   return {
     ...base,
     controllerMessages,
     promptSnapshot,
     turnContext: {
       ...base.turnContext,
-      hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
+      hasHistory: decision.keepHistory && base.turnContext.hasHistory,
       hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
       hasPersona: decision.keepPersona && base.turnContext.hasPersona,
-      hasWorldInfo: worldInfoKept,
+      hasWorldInfo: decision.keepWorldInfo && base.turnContext.hasWorldInfo,
     },
   };
 }
@@ -1030,10 +1026,11 @@ async function handleInterceptor(
     const jevRun = await prepareJev(settings, userId);
 
     /* ---------------- Phase A: one batched gate request ---------------- */
-    // Identities and the scene state first; the World Info lookup is deferred
-    // until after the gate phase so a discarded lore source costs nothing.
-    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, false);
+    // Fetch lore in phase A only when Jev's own switch includes it. Otherwise
+    // the Director fetch can wait until after Jev has chosen its context filter.
+    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, jevRun.enabled && settings.jev.includeWorldInfoEntries);
     worldState = prepared.worldState;
+    worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     let gateRecords: JevGateRecord[] = [];
 
     if (jevRun.enabled) {
@@ -1071,18 +1068,29 @@ async function handleInterceptor(
     }
 
     /* ---------------- Director call ---------------- */
-    const filterDecision = contextFilterDecision(gateRecords);
+    const proposedFilter = contextFilterDecision(gateRecords);
+    // Jev may only discard a Director source it actually saw. Its context
+    // switches are independent, so preserve every source hidden from Jev.
+    const filterDecision = proposedFilter && {
+      ...proposedFilter,
+      keepHistory: proposedFilter.keepHistory || settings.jev.historyMessageLimit === 0,
+      keepCharacter: proposedFilter.keepCharacter || settings.includeCharacter && !settings.jev.includeCharacter,
+      keepPersona: proposedFilter.keepPersona || settings.includeUserPersona && !settings.jev.includeUserPersona,
+      keepWorldInfo: proposedFilter.keepWorldInfo || settings.includeWorldInfoEntries && !settings.jev.includeWorldInfoEntries,
+    };
     const keepWorldInfo = settings.includeWorldInfoEntries && (!filterDecision || filterDecision.keepWorldInfo);
 
-    // The gate phase deliberately skipped the World Info lookup, so it is resolved
-    // once here — and not at all when the filter already decided lore is irrelevant.
-    if (keepWorldInfo) {
+    // Resolve Director-only lore after filtering; reuse phase-A lore when Jev
+    // already fetched the same activated entries.
+    if (keepWorldInfo && !(jevRun.enabled && settings.jev.includeWorldInfoEntries)) {
       const withWorldInfo = await prepareController(settings, messages, context, chatId, userId, generationType, true);
       worldInfoDiagnostics = withWorldInfo.worldInfoDiagnostics;
       prepared = withWorldInfo;
     }
 
     prepared = applyContextFilter(prepared, settings, messages, context, generationType, filterDecision);
+    const gateGuidance = directorGuidanceFromGates(gateRecords);
+    if (gateGuidance) prepared.controllerMessages.splice(1, 0, { role: "system", content: gateGuidance });
     target = await resolveTurnTarget(settings, gateRecords, userId);
     if (!target) {
       await recordRun(makeRunBase("skipped", startedAt, {
@@ -1206,7 +1214,7 @@ async function regenerateDirective(
   records: JevGateRecord[],
 ): Promise<string | null> {
   const violated = records
-    .filter((record) => record.usedFallback || record.value === "violation" || record.value === "repeats" || record.value === true)
+    .filter((record) => !record.usedFallback && ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value as string | boolean))
     .map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`)
     .join("\n");
   const repairMessages: LlmMessageLike[] = [

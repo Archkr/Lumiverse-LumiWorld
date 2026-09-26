@@ -119,6 +119,21 @@ describe("settings normalization", () => {
     expect(settings.jev.worldStateEnabled).toBe(false);
   });
 
+  test("migrates old Jev context from Director settings, then keeps explicit Jev switches independent", () => {
+    const legacy = normalizeSettings({
+      includeCharacter: false, includeUserPersona: true, includeWorldInfoEntries: true,
+      jev: { enabled: true },
+    });
+    expect([legacy.jev.includeCharacter, legacy.jev.includeUserPersona, legacy.jev.includeWorldInfoEntries])
+      .toEqual([false, true, true]);
+    const independent = normalizeSettings({
+      ...legacy,
+      includeCharacter: true, includeUserPersona: false, includeWorldInfoEntries: false,
+    });
+    expect([independent.jev.includeCharacter, independent.jev.includeUserPersona, independent.jev.includeWorldInfoEntries])
+      .toEqual([false, true, true]);
+  });
+
   test("falls back to TypeSafe for an unknown Jev provider", () => {
     expect(normalizeSettings({ jev: { provider: "nonsense" } }).jev.provider).toBe("typesafe");
   });

@@ -36,6 +36,9 @@ var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 var DEFAULT_JEV_SETTINGS = {
   enabled: false,
   provider: "typesafe",
+  includeCharacter: true,
+  includeUserPersona: true,
+  includeWorldInfoEntries: false,
   model: "",
   baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
@@ -255,12 +258,15 @@ function normalizeGatePolicy(value) {
   }
   return normalized;
 }
-function normalizeJevSettings(value) {
+function normalizeJevSettings(value, legacyContext = DEFAULT_SETTINGS) {
   const obj = asRecord(value);
   const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
     provider,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
     model: cleanString(obj.model),
     baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
@@ -274,6 +280,9 @@ function normalizeJevSettings(value) {
 }
 function normalizeSettings(value) {
   const obj = asRecord(value);
+  const includeWorldInfoEntries = typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries;
+  const includeUserPersona = typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona;
+  const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
   const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
@@ -289,15 +298,15 @@ function normalizeSettings(value) {
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
-    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
-    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
-    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
+    includeWorldInfoEntries,
+    includeUserPersona,
+    includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
-    jev: normalizeJevSettings(obj.jev)
+    jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object" ? { includeWorldInfoEntries, includeUserPersona, includeCharacter } : DEFAULT_SETTINGS)
   };
 }
 
@@ -616,6 +625,28 @@ var GATE_CATALOG = withCore([
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+function directorGuidanceFromGates(records) {
+  const lines = [];
+  for (const record of records) {
+    const definition = GATE_BY_ID.get(record.gateId);
+    if (!definition || definition.phase !== "gate" || definition.category === "director_control" && ["smart_trigger", "context_filter", "model_route"].includes(definition.id) || definition.codeOnly || record.usedFallback || record.value === null)
+      continue;
+    const criteria = definition.criteria;
+    let meaning;
+    if (definition.primitive === "score" && Array.isArray(criteria) && typeof record.value === "number") {
+      meaning = criteria[Math.max(0, Math.min(criteria.length - 1, Math.round(record.value)))];
+    } else if (definition.primitive === "noul" && typeof record.value === "boolean" && criteria && !Array.isArray(criteria)) {
+      meaning = criteria[String(record.value)];
+    } else if (definition.primitive === "choice" && typeof record.value === "string" && criteria && !Array.isArray(criteria)) {
+      meaning = criteria[record.value];
+    }
+    if (meaning)
+      lines.push(`- ${definition.label}: ${meaning}.`);
+  }
+  return lines.length ? `Jev's accepted decisions for this turn. Use these as direction when writing the private note; keep continuity and the player's agency intact.
+${lines.join(`
+`)}` : null;
+}
 
 // src/frontend.ts
 var VERSION = "0.5.0-experimental";
@@ -1382,6 +1413,14 @@ function setup(ctx) {
     actions.append(test, hint);
     core.append(actions);
     section.append(core);
+    const context = el("section", "lw-section");
+    context.setAttribute("aria-label", "Jev context");
+    context.append(el("h2", "lw-section-title", "Include in Jev state"));
+    context.append(el("p", "lw-hint", "Choose what Jev sees when deciding. These switches are independent of the Director's context switches."));
+    const contextRows = el("div", "lw-context");
+    contextRows.append(switchField("Character", draft.jev.includeCharacter, (includeCharacter) => mutateJev({ includeCharacter })), switchField("User persona", draft.jev.includeUserPersona, (includeUserPersona) => mutateJev({ includeUserPersona })), switchField("Activated World Info", draft.jev.includeWorldInfoEntries, (includeWorldInfoEntries) => mutateJev({ includeWorldInfoEntries })));
+    context.append(contextRows);
+    section.append(context);
     const advanced = el("details", "lw-details");
     advanced.open = jevAdvancedOpen;
     advanced.addEventListener("toggle", () => {
@@ -1542,11 +1581,16 @@ function setup(ctx) {
       }), sliderFallback);
     } else
       sliderFallback();
+    const guidanceGate = definition.phase === "gate" && !["smart_trigger", "context_filter", "model_route"].includes(definition.id);
     sheet.append(track);
-    sheet.append(el("div", "lw-hint", "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
-    const fallbackHead = el("div", "lw-sheet-label");
-    fallbackHead.append(el("span", undefined, "When it cannot answer"));
-    sheet.append(fallbackHead, selectControl(policy.fallback, GATE_FALLBACKS2.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })), `${definition.label} fallback`, (next) => mutateGate(definition.id, { fallback: next })));
+    sheet.append(el("div", "lw-hint", guidanceGate ? "Answers below this are left out of the Director's guidance." : "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
+    if (guidanceGate) {
+      sheet.append(el("div", "lw-hint", "The Director still runs without this decision."));
+    } else {
+      const fallbackHead = el("div", "lw-sheet-label");
+      fallbackHead.append(el("span", undefined, "When it cannot answer"));
+      sheet.append(fallbackHead, selectControl(policy.fallback, GATE_FALLBACKS2.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })), `${definition.label} fallback`, (next) => mutateGate(definition.id, { fallback: next })));
+    }
     if (isCustom)
       sheet.append(gateReset(definition));
     return sheet;
@@ -1568,8 +1612,8 @@ function setup(ctx) {
     const diagnostics = run?.jev ?? null;
     return collapsible({
       title: "Last recorded Jev turn",
-      badge: diagnostics ? diagnostics.status === "ok" ? "answered" : diagnostics.status : undefined,
-      badgeTone: diagnostics ? diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error" : "neutral",
+      badge: diagnostics ? diagnostics.status === "ok" ? diagnostics.fallbackCount > 0 ? "partial" : "answered" : diagnostics.status : undefined,
+      badgeTone: diagnostics ? diagnostics.status === "ok" && diagnostics.fallbackCount === 0 ? "success" : diagnostics.status === "degraded" || diagnostics.fallbackCount > 0 ? "warning" : "error" : "neutral",
       expanded: diagnosticsOpen,
       onToggle: (open) => {
         diagnosticsOpen = open;
@@ -1661,9 +1705,13 @@ function setup(ctx) {
       meta.append(confidence);
     }
     if (record.usedFallback && !informational && !unused) {
-      const fallback = el("span", "lw-badge", GATE_FALLBACK_LABELS[record.fallback]);
+      const guidanceGate = record.phase === "gate" && !["smart_trigger", "context_filter", "model_route"].includes(record.gateId);
+      const fallbackLabel = guidanceGate || record.fallback === "run" && record.gateId !== "smart_trigger" ? "Decision ignored" : GATE_FALLBACK_LABELS[record.fallback];
+      const fallback = el("span", "lw-badge", fallbackLabel);
       fallback.dataset.tone = "warning";
       meta.append(fallback);
+    } else if (!informational && !unused && directorGuidanceFromGates([record])) {
+      meta.append(el("span", "lw-badge", "Sent to Director"));
     }
     row.append(head, meta);
     if (record.note && !unused)

@@ -759,6 +759,31 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
 
 export const GATE_BY_ID: ReadonlyMap<string, GateDefinition> = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
 
+/** Only accepted, pre-Director craft/world choices may steer the Director. */
+export function directorGuidanceFromGates(records: JevGateRecord[]): string | null {
+  const lines: string[] = [];
+  for (const record of records) {
+    const definition = GATE_BY_ID.get(record.gateId);
+    if (!definition || definition.phase !== "gate" || (definition.category === "director_control"
+      && ["smart_trigger", "context_filter", "model_route"].includes(definition.id))
+      || definition.codeOnly || record.usedFallback || record.value === null) continue;
+
+    const criteria = definition.criteria;
+    let meaning: string | undefined;
+    if (definition.primitive === "score" && Array.isArray(criteria) && typeof record.value === "number") {
+      meaning = criteria[Math.max(0, Math.min(criteria.length - 1, Math.round(record.value)))];
+    } else if (definition.primitive === "noul" && typeof record.value === "boolean" && criteria && !Array.isArray(criteria)) {
+      meaning = (criteria as { true?: string; false?: string })[String(record.value) as "true" | "false"];
+    } else if (definition.primitive === "choice" && typeof record.value === "string" && criteria && !Array.isArray(criteria)) {
+      meaning = (criteria as Record<string, string>)[record.value];
+    }
+    if (meaning) lines.push(`- ${definition.label}: ${meaning}.`);
+  }
+  return lines.length
+    ? `Jev's accepted decisions for this turn. Use these as direction when writing the private note; keep continuity and the player's agency intact.\n${lines.join("\n")}`
+    : null;
+}
+
 export function coreGateIds(): string[] {
   return GATE_CATALOG.filter((gate) => gate.enabledByDefault).map((gate) => gate.id);
 }
@@ -815,6 +840,8 @@ export interface TurnContext {
   hasCharacter: boolean;
   hasPersona: boolean;
   hasWorldInfo: boolean;
+  /** Jev may see lore that the Director's independent switch excludes. */
+  jevHasWorldInfo?: boolean;
   hasDirectorNotes: boolean;
   worldStateEnabled: boolean;
   generationType: string;
@@ -838,12 +865,12 @@ function gateApplies(definition: GateDefinition, context: TurnContext): boolean 
     case "callback":
       return context.hasHistory;
     case "foreshadowing":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "reveal_control":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "world_movement":
     case "consequence_propagation":
-      return context.hasHistory || context.hasWorldInfo;
+      return context.hasHistory || (context.jevHasWorldInfo ?? context.hasWorldInfo);
     case "scene_state_tracking":
     case "scene_state_diff":
       return context.worldStateEnabled;
