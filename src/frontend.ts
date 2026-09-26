@@ -350,7 +350,8 @@ export function setup(ctx: SpindleFrontendContext) {
   type LumiTab = "director" | "jev";
   let activeTab: LumiTab = "director";
   /** Header parts re-targeted on every view switch. */
-  let headerBrand: HTMLElement | null = null;
+  /** The header and its switch survive every re-render. */
+  let headerElement: HTMLElement | null = null;
   let headerTitle: HTMLElement | null = null;
   let headerToggleSlot: HTMLElement | null = null;
   let headerToggleHandle: MountedHandle | null = null;
@@ -1157,7 +1158,16 @@ export function setup(ctx: SpindleFrontendContext) {
    * that kept saying "Enable Director" while the Jev view was open would silently
    * control something off-screen.
    */
+  /**
+   * Builds the header once and re-attaches it on every render.
+   *
+   * Rebuilding it per render does not work: the master switch lives inside it and
+   * must survive a view switch, and a fresh brand element appended alongside the
+   * stored one duplicates the title.
+   */
   function buildHeader(): HTMLElement {
+    if (headerElement) return headerElement;
+
     const header = el("header", "lw-header");
     const brand = el("div", "lw-brand");
     const icon = el("div", "lw-icon"); icon.innerHTML = ICON; icon.setAttribute("aria-hidden", "true");
@@ -1167,14 +1177,10 @@ export function setup(ctx: SpindleFrontendContext) {
     status.dataset.lwHeaderStatus = "";
     title.append(headerTitle, status);
     brand.append(icon, title);
-    header.append(brand);
 
-    // The brand and the switch slot are created once and re-attached on every
-    // render. Recreating the slot would strand the live switch inside the
-    // previous render's detached node.
-    if (!headerBrand) headerBrand = brand;
-    if (!headerToggleSlot) headerToggleSlot = el("div", "lw-control");
-    header.append(headerBrand, headerToggleSlot);
+    headerToggleSlot = el("div", "lw-control");
+    header.append(brand, headerToggleSlot);
+    headerElement = header;
     refreshHeader();
     return header;
   }
@@ -1232,6 +1238,15 @@ export function setup(ctx: SpindleFrontendContext) {
     }
 
     updateHeaderStatus();
+  }
+
+  /** The tagline under the header describes whichever view is on screen. */
+  function refreshIntro(): void {
+    const intro = drawer.root.querySelector<HTMLElement>("[data-lw-intro]");
+    if (!intro) return;
+    intro.textContent = activeTab === "jev"
+      ? "Gate the Director with cheap structured decisions, and see what it decided."
+      : "Guide your next reply with a private Director note.";
   }
 
   /** Keeps the header status line honest for whichever view is active. */
@@ -1323,6 +1338,7 @@ export function setup(ctx: SpindleFrontendContext) {
     // Focused controls inside a hidden view would leave the caret stranded.
     activeElementInside(drawer.root)?.blur();
     refreshHeader();
+    refreshIntro();
   }
 
   function activeElementInside(root: HTMLElement): HTMLElement | null {
@@ -1336,7 +1352,9 @@ export function setup(ctx: SpindleFrontendContext) {
     const shell = el("div", "lw-shell"); root.append(shell); drawer.root.replaceChildren(root);
 
     shell.append(buildHeader());
-    shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
+    const intro = el("p", "lw-intro");
+    intro.dataset.lwIntro = "";
+    shell.append(intro);
 
     const notices = el("div"); notices.dataset.lwNotice = "";
     const warnings = el("div"); warnings.dataset.lwWarnings = "";

@@ -957,7 +957,7 @@ function setup(ctx) {
   let gatesOpen = false;
   const openGates = new Set;
   let activeTab = "director";
-  let headerBrand = null;
+  let headerElement = null;
   let headerTitle = null;
   let headerToggleSlot = null;
   let headerToggleHandle = null;
@@ -1714,6 +1714,8 @@ function setup(ctx) {
     target.hidden = !target.childElementCount;
   }
   function buildHeader() {
+    if (headerElement)
+      return headerElement;
     const header = el("header", "lw-header");
     const brand = el("div", "lw-brand");
     const icon = el("div", "lw-icon");
@@ -1725,12 +1727,9 @@ function setup(ctx) {
     status.dataset.lwHeaderStatus = "";
     title.append(headerTitle, status);
     brand.append(icon, title);
-    header.append(brand);
-    if (!headerBrand)
-      headerBrand = brand;
-    if (!headerToggleSlot)
-      headerToggleSlot = el("div", "lw-control");
-    header.append(headerBrand, headerToggleSlot);
+    headerToggleSlot = el("div", "lw-control");
+    header.append(brand, headerToggleSlot);
+    headerElement = header;
     refreshHeader();
     return header;
   }
@@ -1781,6 +1780,12 @@ function setup(ctx) {
       headerMountedTab = activeTab;
     }
     updateHeaderStatus();
+  }
+  function refreshIntro() {
+    const intro = drawer.root.querySelector("[data-lw-intro]");
+    if (!intro)
+      return;
+    intro.textContent = activeTab === "jev" ? "Gate the Director with cheap structured decisions, and see what it decided." : "Guide your next reply with a private Director note.";
   }
   function updateHeaderStatus() {
     const badge = drawer.root.querySelector("[data-lw-header-status]");
@@ -1851,6 +1856,7 @@ function setup(ctx) {
     }
     activeElementInside(drawer.root)?.blur();
     refreshHeader();
+    refreshIntro();
   }
   function activeElementInside(root) {
     const active = document.activeElement;
@@ -1865,7 +1871,9 @@ function setup(ctx) {
     root.append(shell);
     drawer.root.replaceChildren(root);
     shell.append(buildHeader());
-    shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
+    const intro = el("p", "lw-intro");
+    intro.dataset.lwIntro = "";
+    shell.append(intro);
     const notices = el("div");
     notices.dataset.lwNotice = "";
     const warnings = el("div");

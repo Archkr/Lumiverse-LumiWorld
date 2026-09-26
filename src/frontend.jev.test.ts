@@ -359,6 +359,50 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
+  test("renders exactly one brand, title, and status in the header", () => {
+    const harness = mount(makeState());
+    // The header is built once and re-attached, so nothing may be duplicated.
+    expect(harness.root.querySelectorAll(".lw-header")).toHaveLength(1);
+    expect(harness.root.querySelectorAll(".lw-brand")).toHaveLength(1);
+    expect(harness.root.querySelectorAll(".lw-title")).toHaveLength(1);
+    expect(harness.root.querySelectorAll(".lw-icon")).toHaveLength(1);
+    expect(harness.root.querySelectorAll("[data-lw-header-status]")).toHaveLength(1);
+    harness.destroy();
+  });
+
+  test("survives a re-render without duplicating the header", () => {
+    const state = makeState({ settings: settings({ enabled: true }) });
+    const harness = mount(state);
+    // Backend state pushes re-render the drawer, which is the normal case.
+    harness.push({ type: "state", state });
+    harness.push({ type: "state", state });
+    expect(harness.root.querySelectorAll(".lw-brand")).toHaveLength(1);
+    expect(harness.root.querySelectorAll(".lw-title")).toHaveLength(1);
+    expect(harness.root.querySelectorAll('.lw-header input[type="checkbox"]')).toHaveLength(1);
+    harness.destroy();
+  });
+
+  test("keeps one header switch across a view switch and a re-render", () => {
+    const state = makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) });
+    const harness = mount(state);
+    tabs(harness.root)[1]!.click();
+    harness.push({ type: "state", state });
+    expect(harness.root.querySelectorAll(".lw-header")).toHaveLength(1);
+    expect(harness.root.querySelectorAll('.lw-header input[type="checkbox"]')).toHaveLength(1);
+    expect(labelled(harness.root, "Enable Jev")).not.toBeNull();
+    harness.destroy();
+  });
+
+  test("re-points the tagline when the view changes", () => {
+    const harness = mount(makeState());
+    const intro = () => harness.root.querySelector<HTMLElement>("[data-lw-intro]")!;
+    expect(intro().textContent).toContain("private Director note");
+    tabs(harness.root)[1]!.click();
+    expect(intro().textContent).toContain("Gate the Director");
+    expect(intro().textContent).not.toContain("private Director note");
+    harness.destroy();
+  });
+
   test("names the header after the active view", () => {
     const harness = mount(makeState());
     const title = () => harness.root.querySelector(".lw-title")!.textContent;
