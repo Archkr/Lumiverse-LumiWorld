@@ -43,6 +43,7 @@ let rpcPublications = 0;
 let failNextSettingsSave = false;
 /** Every Jev question map the extension sent, one entry per request. */
 const jevRequests: Array<Record<string, { type: string }>> = [];
+const jevStates: unknown[] = [];
 let jevAnswerFor: (gateId: string) => unknown | undefined = () => undefined;
 let corsShouldThrow = false;
 let worldInfoFetches = 0;
@@ -149,8 +150,9 @@ function latestRun(): any {
   },
   cors: async (_url: string, options: { body: string }) => {
     if (corsShouldThrow) throw new Error("network unreachable");
-    const payload = JSON.parse(options.body) as { questions: Record<string, { type: string }> };
+    const payload = JSON.parse(options.body) as { state: unknown; questions: Record<string, { type: string }> };
     jevRequests.push(payload.questions);
+    jevStates.push(payload.state);
     return { status: 200, statusText: "OK", headers: {}, body: jevAnswerBody(payload.questions) };
   },
   generate: {
@@ -251,6 +253,7 @@ describe("v0.4 backend", () => {
 describe("v0.5 Jev turn flow", () => {
   beforeEach(() => {
     jevRequests.length = 0;
+    jevStates.length = 0;
     generatedModels.length = 0;
     sent.length = 0;
     generations = 0;
@@ -275,6 +278,18 @@ describe("v0.5 Jev turn flow", () => {
     expect(Object.keys(jevRequests[0]!)).toContain("smart_trigger");
     expect(Object.keys(jevRequests[1]!)).toContain("director_verification");
     expect(generations).toBe(1);
+  });
+
+  test("keeps preset-only prompt blocks out of Jev requests", async () => {
+    await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
+    const assembled = [
+      { role: "system", content: "PRIVATE_PRESET_CANARY" },
+      { role: "user", content: "I open the observatory door.", __isChatHistory: true },
+    ];
+    await interceptor!(assembled, { chatId: "chat-jev", generationType: "normal" });
+    expect(jevStates.length).toBeGreaterThan(0);
+    expect(JSON.stringify(jevStates)).toContain("I open the observatory door.");
+    expect(JSON.stringify(jevStates)).not.toContain("PRIVATE_PRESET_CANARY");
   });
 
   test("uses the configured strong Director model when Jev selects strong", async () => {
