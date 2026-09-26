@@ -239,6 +239,94 @@ describe("Jev drawer section", () => {
   });
 });
 
+describe("drawer views", () => {
+  function views(root: HTMLElement): Record<string, HTMLElement> {
+    const director = root.querySelector<HTMLElement>('[data-lw-view="director"]')!;
+    const jev = root.querySelector<HTMLElement>('[data-lw-view="jev"]')!;
+    return { director, jev };
+  }
+
+  function tabs(root: HTMLElement): HTMLButtonElement[] {
+    return [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  }
+
+  test("registers exactly two views inside the single drawer tab", () => {
+    const harness = mount(makeState());
+    const list = harness.root.querySelector('[role="tablist"]');
+    expect(list).not.toBeNull();
+    expect(tabs(harness.root).map((tab) => tab.textContent)).toEqual(["Director", "Jev"]);
+    expect(harness.root.querySelectorAll("[data-lw-view]")).toHaveLength(2);
+    harness.destroy();
+  });
+
+  test("opens on Director and switches to Jev on click", () => {
+    const harness = mount(makeState());
+    const { director, jev } = views(harness.root);
+    expect(director.hidden).toBe(false);
+    expect(jev.hidden).toBe(true);
+
+    tabs(harness.root)[1]!.click();
+    expect(views(harness.root).director.hidden).toBe(true);
+    expect(views(harness.root).jev.hidden).toBe(false);
+    harness.destroy();
+  });
+
+  test("keeps exactly one tab selected and focusable", () => {
+    const harness = mount(makeState());
+    const selected = () => tabs(harness.root).map((tab) => tab.getAttribute("aria-selected"));
+    expect(selected()).toEqual(["true", "false"]);
+    tabs(harness.root)[1]!.click();
+    expect(tabs(harness.root).map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+    expect(tabs(harness.root).map((tab) => tab.tabIndex)).toEqual([-1, 0]);
+    harness.destroy();
+  });
+
+  test("moves between views with the arrow keys", () => {
+    const harness = mount(makeState());
+    const first = tabs(harness.root)[0]!;
+    first.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(views(harness.root).jev.hidden).toBe(false);
+    tabs(harness.root)[1]!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(views(harness.root).director.hidden).toBe(false);
+    harness.destroy();
+  });
+
+  test("keeps a typed Jev key when switching views", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    const key = labelled(harness.root, "Jev API key") as HTMLInputElement;
+    key.value = "half-typed";
+    key.dispatchEvent(new dom.window.Event("input"));
+
+    tabs(harness.root)[0]!.click();
+    tabs(harness.root)[1]!.click();
+
+    const after = labelled(harness.root, "Jev API key") as HTMLInputElement;
+    expect(after.value).toBe("half-typed");
+    harness.destroy();
+  });
+
+  test("keeps Director settings out of the Jev view", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    const { director, jev } = views(harness.root);
+    expect(director.textContent).toContain("Run before");
+    expect(director.textContent).toContain("Advanced settings");
+    expect(jev.textContent).not.toContain("Run before");
+    expect(jev.textContent).not.toContain("Advanced settings");
+    expect(jev.textContent).toContain("Jev gates");
+    harness.destroy();
+  });
+
+  test("shows the Jev status pill in the view header", () => {
+    const harness = mount(makeState({
+      hasJevKey: true,
+      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
+    }));
+    const slot = harness.root.querySelector<HTMLElement>("[data-lw-jev-status]")!;
+    expect(slot.textContent).toContain("Ready");
+    harness.destroy();
+  });
+});
+
 describe("Jev gates editor", () => {
   test("renders every catalog gate grouped by category", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));

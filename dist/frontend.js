@@ -650,6 +650,18 @@ var CSS = `
 .lw-icon svg { width:25px; height:25px; }
 .lw-title { margin:0; font-size:22px; line-height:1.2; font-weight:650; letter-spacing:-.5px; }
 .lw-title-row { display:flex; align-items:center; gap:8px; }
+.lw-tabs { position:sticky; top:0; z-index:2; display:flex; gap:2px; margin:2px 0 16px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-surface-raised); backdrop-filter:blur(8px); }
+.lw-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-width:0; min-height:34px; padding:6px 10px; border:0; border-radius:7px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,color .15s; }
+.lw-tab:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-tab[aria-selected="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
+.lw-tab:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+.lw-tab .lw-dot { transition:background .15s; }
+.lw-tab[data-dirty="true"] .lw-dot { background:var(--lumiverse-warning); }
+.lw-view-head { display:grid; gap:6px; margin:0 0 16px; }
+.lw-view-title { margin:0; font-size:15px; font-weight:650; letter-spacing:-.2px; }
+.lw-view-intro { margin:0; color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
+.lw-panel-view { display:grid; gap:0; }
+.lw-panel-view[hidden] { display:none; }
 .lw-status { display:flex; align-items:center; gap:6px; margin-top:4px; color:var(--lumiverse-text-muted); font-size:12px; }
 .lw-status::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--lumiverse-text-muted); }
 .lw-status[data-tone="success"]::before { background:var(--lumiverse-success); }
@@ -943,6 +955,7 @@ function setup(ctx) {
   let jevOpen = false;
   let gatesOpen = false;
   const openGates = new Set;
+  let activeTab = "director";
   let diagnosticsOpen = false;
   let nextFieldId = 0;
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -1298,12 +1311,7 @@ function setup(ctx) {
     panel.dataset.active = String(draft.jev.enabled);
     const head = el("div", "lw-row");
     const headCopy = el("div", "lw-row-copy");
-    const headTitle = el("div", "lw-row-title");
-    headTitle.append(document.createTextNode("Use Jev gates"));
-    const statusSlot = el("span");
-    statusSlot.dataset.lwJevStatus = "";
-    headTitle.append(statusSlot);
-    headTitle.classList.add("lw-title-row");
+    const headTitle = el("div", "lw-row-title", "Use Jev gates");
     headCopy.append(headTitle, el("div", "lw-hint", "Ask a cheap decision model whether each turn needs the Director at all."));
     head.append(headCopy);
     const headSwitch = el("div", "lw-control");
@@ -1714,6 +1722,65 @@ function setup(ctx) {
     renderWarnings(target);
     target.hidden = !target.childElementCount;
   }
+  function viewTabs() {
+    const list = el("div", "lw-tabs");
+    list.setAttribute("role", "tablist");
+    list.setAttribute("aria-label", "LumiWorld views");
+    const entries = [
+      { id: "director", label: "Director", hint: "Connection, triggers, and context" },
+      { id: "jev", label: "Jev", hint: "Gate setup and last-turn decisions" }
+    ];
+    for (const entry of entries) {
+      const tab = el("button", "lw-tab");
+      tab.type = "button";
+      tab.id = `lw-tab-${entry.id}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(activeTab === entry.id));
+      tab.setAttribute("aria-controls", `lw-view-${entry.id}`);
+      tab.tabIndex = activeTab === entry.id ? 0 : -1;
+      tab.title = entry.hint;
+      tab.append(document.createTextNode(entry.label));
+      const dot = el("span", "lw-dot");
+      if (entry.id === "director") {
+        const ready = draft.enabled && !!state?.permissions.interceptor && draft.generationTypes.length > 0;
+        if (!ready)
+          dot.style.background = "var(--lumiverse-warning)";
+      } else {
+        const on = draft.jev.enabled;
+        dot.style.background = on ? "var(--lumiverse-primary)" : "var(--lumiverse-text-muted)";
+        dot.style.opacity = on ? "1" : ".5";
+      }
+      tab.append(dot);
+      tab.addEventListener("click", () => activateView(entry.id));
+      tab.addEventListener("keydown", (event) => {
+        const key = event.key;
+        if (key !== "ArrowRight" && key !== "ArrowLeft" && key !== "Home" && key !== "End")
+          return;
+        event.preventDefault();
+        const index = entries.findIndex((candidate) => candidate.id === activeTab);
+        const next = key === "Home" ? 0 : key === "End" ? entries.length - 1 : key === "ArrowRight" ? (index + 1) % entries.length : (index - 1 + entries.length) % entries.length;
+        activateView(entries[next].id);
+        drawer.root.querySelector(`#lw-tab-${entries[next].id}`)?.focus();
+      });
+      list.append(tab);
+    }
+    return list;
+  }
+  function activateView(tab) {
+    activeTab = tab;
+    for (const buttonNode of drawer.root.querySelectorAll('[role="tab"]')) {
+      buttonNode.setAttribute("aria-selected", String(buttonNode.id === `lw-tab-${tab}`));
+      buttonNode.tabIndex = buttonNode.id === `lw-tab-${tab}` ? 0 : -1;
+    }
+    for (const view of drawer.root.querySelectorAll("[data-lw-view]")) {
+      view.hidden = view.dataset.lwView !== tab;
+    }
+    activeElementInside(drawer.root)?.blur();
+  }
+  function activeElementInside(root) {
+    const active = document.activeElement;
+    return active && root.contains(active) ? active : null;
+  }
   function render() {
     destroyHandles();
     pending = [];
@@ -1740,17 +1807,44 @@ function setup(ctx) {
     shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
     const notices = el("div");
     notices.dataset.lwNotice = "";
-    shell.append(notices);
     const warnings = el("div");
     warnings.dataset.lwWarnings = "";
-    shell.append(warnings);
+    shell.append(notices, warnings);
     updateWarnings();
     if (!state) {
-      shell.append(el("div", "lw-loading", "Loading Director settings…"));
+      shell.append(el("div", "lw-loading", "Loading LumiWorld settings…"));
       updateDirectorStatus();
       renderNotice();
       return;
     }
+    shell.append(viewTabs());
+    const directorView = renderDirectorView();
+    const jevView = renderJevView();
+    shell.append(directorView, jevView);
+    const footer = el("footer", "lw-footer");
+    footer.append(el("span", undefined, `LumiWorld ${VERSION}`));
+    const footerStatus = el("div", "lw-footer-status");
+    const saveStatus = el("span", "lw-save");
+    saveStatus.dataset.lwSaveStatus = "";
+    saveStatus.setAttribute("role", "status");
+    const retry = button("Retry save", () => scheduleSave(0));
+    retry.dataset.lwRetry = "";
+    footerStatus.append(saveStatus, retry);
+    footer.append(footerStatus);
+    shell.append(footer);
+    flushMounts();
+    activateView(activeTab);
+    updateDirectorStatus();
+    updateSaveStatus();
+    updateTestButton();
+    updateJevTestButton();
+    renderNotice();
+  }
+  function renderDirectorView() {
+    const view = el("div", "lw-panel-view");
+    view.dataset.lwView = "director";
+    view.setAttribute("role", "tabpanel");
+    view.setAttribute("aria-labelledby", "lw-tab-director");
     const core = el("section", "lw-setup");
     core.setAttribute("aria-label", "Director connection");
     const fields = el("div", "lw-fields");
@@ -1765,7 +1859,7 @@ function setup(ctx) {
     test.setAttribute("aria-describedby", testHint.id);
     actions.append(test, testHint);
     core.append(actions);
-    shell.append(core);
+    view.append(core);
     const generation = el("section", "lw-section");
     const options = el("fieldset", "lw-options");
     options.append(el("legend", "lw-section-title", "Run before"));
@@ -1779,13 +1873,13 @@ function setup(ctx) {
       options.append(label);
     }
     generation.append(options);
-    shell.append(generation);
+    view.append(generation);
     const context = el("section", "lw-section");
     context.append(el("h2", "lw-section-title", "Include in context"));
     const contextRows = el("div", "lw-context");
     contextRows.append(switchField("Character", draft.includeCharacter, (includeCharacter) => mutate({ includeCharacter })), switchField("User persona", draft.includeUserPersona, (includeUserPersona) => mutate({ includeUserPersona })), switchField("Activated World Info", draft.includeWorldInfoEntries, (includeWorldInfoEntries) => mutate({ includeWorldInfoEntries })));
     context.append(contextRows);
-    shell.append(context);
+    view.append(context);
     const notes = el("details", "lw-details");
     notes.open = notesOpen;
     notes.addEventListener("toggle", () => {
@@ -1801,10 +1895,7 @@ function setup(ctx) {
     const notesBody = el("div", "lw-details-body");
     notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
     notes.append(notesBody);
-    shell.append(notes);
-    shell.append(jevSection());
-    shell.append(gatesSection());
-    shell.append(diagnosticsSection());
+    view.append(notes);
     const advanced = el("details", "lw-details");
     advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => {
@@ -1820,7 +1911,7 @@ function setup(ctx) {
     parameters.append(numberField("Temperature", "temperature", draft.temperature, 0, 2, 0.05), numberField("Max tokens", "maxTokens", draft.maxTokens, 64, Number.MAX_SAFE_INTEGER, 1), numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."), numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1), numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000), numberField("Run log limit", "runLogLimit", draft.runLogLimit, 0, 50, 1));
     advancedBody.append(parameters);
     advanced.append(advancedBody);
-    shell.append(advanced);
+    view.append(advanced);
     const templates = el("details", "lw-details");
     templates.open = templatesOpen;
     templates.addEventListener("toggle", () => {
@@ -1831,23 +1922,27 @@ function setup(ctx) {
     templateBody.append(textAreaField("System template", "systemTemplate", draft.systemTemplate), textAreaField("User template", "userTemplate", draft.userTemplate));
     templates.append(templateBody);
     advancedBody.append(templates);
-    const footer = el("footer", "lw-footer");
-    footer.append(el("span", undefined, `LumiWorld ${VERSION}`));
-    const footerStatus = el("div", "lw-footer-status");
-    const saveStatus = el("span", "lw-save");
-    saveStatus.dataset.lwSaveStatus = "";
-    saveStatus.setAttribute("role", "status");
-    const retry = button("Retry save", () => scheduleSave(0));
-    retry.dataset.lwRetry = "";
-    footerStatus.append(saveStatus, retry);
-    footer.append(footerStatus);
-    shell.append(footer);
-    flushMounts();
-    updateDirectorStatus();
-    updateSaveStatus();
-    updateTestButton();
-    updateJevTestButton();
-    renderNotice();
+    return view;
+  }
+  function renderJevView() {
+    const view = el("div", "lw-panel-view");
+    view.dataset.lwView = "jev";
+    view.setAttribute("role", "tabpanel");
+    view.setAttribute("aria-labelledby", "lw-tab-jev");
+    const head = el("div", "lw-view-head");
+    const copy = el("div", "lw-row-copy");
+    const line = el("div", "lw-title-row");
+    line.append(el("h2", "lw-view-title", "Jev"));
+    const statusSlot = el("span");
+    statusSlot.dataset.lwJevStatus = "";
+    line.append(statusSlot);
+    copy.append(line, el("p", "lw-view-intro", "Jev decides whether a turn needs the Director, then verifies the draft before it reaches your reply."));
+    head.append(copy);
+    view.append(head);
+    view.append(jevSection());
+    view.append(gatesSection());
+    view.append(diagnosticsSection());
+    return view;
   }
   cleanups.push(ctx.onBackendMessage((payload) => {
     const message = payload;
