@@ -712,7 +712,7 @@ describe("Jev diagnostics panel", () => {
 
   test("explains that no decisions exist yet", () => {
     const harness = mount(makeState());
-    expect(harness.root.textContent).toContain("Last turn");
+    expect(harness.root.textContent).toContain("Last recorded Jev turn");
     expect(harness.root.textContent).toContain("Turn on Enable Jev to start recording decisions.");
     harness.destroy();
   });
@@ -722,7 +722,6 @@ describe("Jev diagnostics panel", () => {
       runs: [{ id: "run-1", timestamp: 1, status: "success", channel: "director", jev: jevRun }],
     }));
     const root = harness.root;
-    expect(root.textContent).toContain("2 gates");
     expect(root.textContent).toContain("2 requests");
     expect(root.textContent).toContain("1 fallback");
     expect(root.textContent).toContain("1 escalated");
@@ -739,6 +738,32 @@ describe("Jev diagnostics panel", () => {
     harness.destroy();
   });
 
+  test("separates a skip decision from unused gate answers", () => {
+    const skipped = {
+      ...jevRun,
+      status: "skipped" as const,
+      requestCount: 1,
+      gates: [
+        { ...jevRun.gates[0]!, value: false, probability: 0.27, confidence: 0.73 },
+        { ...jevRun.gates[1]!, phase: "gate" as const, fallback: "run" as const },
+      ],
+    };
+    const harness = mount(makeState({
+      runs: [{ id: "skip-1", timestamp: 1, status: "skipped", channel: "director", jev: skipped }],
+    }));
+    const panel = harness.root.querySelector<HTMLElement>(".lw-diag")!;
+    expect(panel.querySelector(".lw-diag-outcome")?.textContent).toContain("No LumiWorld note was added");
+    expect(panel.querySelector(":scope > .lw-diag-row")?.textContent).toContain("Smart Director triggering");
+    const unused = panel.querySelector<HTMLDetailsElement>(".lw-diag-unused")!;
+    expect(unused.open).toBe(false);
+    expect(unused.textContent).toContain("Continuity guard");
+    expect(unused.textContent).toContain("not used");
+    expect(unused.textContent).not.toContain("Run the Director ungated");
+    expect(panel.textContent).not.toContain("1 fallback");
+    expect(panel.textContent).not.toContain("1 escalated");
+    harness.destroy();
+  });
+
   test("surfaces a degraded turn and its error", () => {
     const harness = mount(makeState({
       runs: [{
@@ -746,19 +771,20 @@ describe("Jev diagnostics panel", () => {
         jev: { ...jevRun, status: "degraded" as const, error: "network unreachable", resolvedModel: null },
       }],
     }));
-    expect(harness.root.textContent).toContain("Degraded");
+    expect(harness.root.textContent).toContain("degraded");
     expect(harness.root.textContent).toContain("network unreachable");
     harness.destroy();
   });
 
-  test("shows the newest run that has Jev diagnostics", () => {
+  test("labels older Jev diagnostics as the last recorded Jev turn", () => {
     const harness = mount(makeState({
       runs: [
         { id: "run-new", timestamp: 2, status: "success", channel: "director" },
         { id: "run-old", timestamp: 1, status: "success", channel: "director", jev: jevRun },
       ],
     }));
-    expect(harness.root.textContent).toContain("2 gates");
+    expect(harness.root.textContent).toContain("Last recorded Jev turn");
+    expect(harness.root.textContent).toContain("2 requests");
     harness.destroy();
   });
 });

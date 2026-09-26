@@ -272,18 +272,6 @@ function normalizeJevSettings(value) {
     gatePolicy: normalizeGatePolicy(obj.gatePolicy)
   };
 }
-function summarizeJevDiagnostics(diagnostics) {
-  if (!diagnostics || !diagnostics.used)
-    return null;
-  const parts = [
-    `${diagnostics.gateCount} gate${diagnostics.gateCount === 1 ? "" : "s"}`,
-    diagnostics.requestCount ? `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}` : null,
-    diagnostics.fallbackCount ? `${diagnostics.fallbackCount} fallback${diagnostics.fallbackCount === 1 ? "" : "s"}` : null,
-    diagnostics.escalatedCount ? `${diagnostics.escalatedCount} escalated` : null,
-    diagnostics.status === "degraded" ? "degraded" : null
-  ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : null;
-}
 function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -788,7 +776,13 @@ var CSS = `
 
 /* --- Diagnostics ---------------------------------------------------- */
 .lw-diag { display:grid; gap:12px; }
+.lw-diag-outcome { padding:10px 12px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); font-size:12px; line-height:1.5; }
+.lw-diag-time { color:var(--lumiverse-text-muted); font-size:11px; }
 .lw-diag-strip { display:flex; flex-wrap:wrap; gap:5px; }
+.lw-diag-unused { border-top:1px solid var(--lumiverse-border); padding-top:10px; }
+.lw-diag-unused > summary { color:var(--lumiverse-text-muted); cursor:pointer; font-size:12px; font-weight:600; }
+.lw-diag-unused > .lw-hint { margin:8px 0; }
+.lw-diag-unused .lw-diag-list { margin-top:8px; }
 .lw-diag-list { display:grid; gap:4px; max-height:360px; overflow:auto; }
 .lw-diag-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:4px 10px; padding:8px 10px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); }
 .lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
@@ -1565,15 +1559,15 @@ function setup(ctx) {
   function latestJevRun() {
     for (const run of state?.runs ?? []) {
       if (run.jev)
-        return { run: { jev: run.jev } };
+        return run;
     }
     return null;
   }
   function diagnosticsSection() {
-    const diagnostics = latestJevRun()?.run.jev ?? null;
-    const summary = summarizeJevDiagnostics(diagnostics);
+    const run = latestJevRun();
+    const diagnostics = run?.jev ?? null;
     return collapsible({
-      title: "Last turn",
+      title: "Last recorded Jev turn",
       badge: diagnostics ? diagnostics.status === "ok" ? "answered" : diagnostics.status : undefined,
       badgeTone: diagnostics ? diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error" : "neutral",
       expanded: diagnosticsOpen,
@@ -1585,26 +1579,32 @@ function setup(ctx) {
         body.append(el("p", "lw-hint", state?.settings.jev.enabled ? "Generate a reply to see what each gate decided for that turn." : "Turn on Enable Jev to start recording decisions."));
         return;
       }
-      body.append(diagnosticsPanel(diagnostics, summary));
+      body.append(diagnosticsPanel(diagnostics, run.timestamp));
     });
   }
-  function diagnosticsPanel(diagnostics, summary) {
+  function diagnosticsPanel(diagnostics, timestamp) {
     const wrap = el("div", "lw-diag");
+    const skipped = diagnostics.status === "skipped";
+    if (skipped) {
+      wrap.append(el("div", "lw-diag-outcome", "Jev chose not to run the Director. No LumiWorld note was added to the main prompt."));
+      const trigger = diagnostics.gates.find((record) => record.gateId === "smart_trigger");
+      if (trigger)
+        wrap.append(gateResultRow(trigger));
+    }
+    if (timestamp >= Date.UTC(2000, 0, 1)) {
+      wrap.append(el("div", "lw-diag-time", `Recorded ${new Date(timestamp).toLocaleString()}`));
+    }
     const strip = el("div", "lw-diag-strip");
-    const status = el("span", "lw-badge");
-    status.dataset.tone = diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error";
-    status.append(el("span", "lw-dot"), el("span", undefined, diagnostics.status === "ok" ? "Answered every gate" : diagnostics.status === "degraded" ? "Degraded" : "Skipped the Director"));
-    strip.append(status);
     if (diagnostics.resolvedModel)
       strip.append(el("span", "lw-badge", diagnostics.resolvedModel));
     strip.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
-    if (diagnostics.fallbackCount) {
+    if (!skipped && diagnostics.fallbackCount) {
       const fallback = el("span", "lw-badge");
       fallback.dataset.tone = "warning";
       fallback.append(el("span", "lw-dot"), el("span", undefined, `${diagnostics.fallbackCount} fallback`));
       strip.append(fallback);
     }
-    if (diagnostics.escalatedCount) {
+    if (!skipped && diagnostics.escalatedCount) {
       strip.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
     }
     const latency = [diagnostics.gatePhaseMs, diagnostics.verifyPhaseMs].filter((value) => value !== null).reduce((total, value) => total + value, 0);
@@ -1622,39 +1622,51 @@ function setup(ctx) {
     }
     const decided = diagnostics.gates.filter((record) => record.gateId !== "confidence_escalation" && record.gateId !== "budget_degradation");
     const computed = diagnostics.gates.filter((record) => record.gateId === "confidence_escalation" || record.gateId === "budget_degradation");
-    const list = el("div", "lw-diag-list");
-    for (const record of decided)
-      list.append(gateResultRow(record));
-    for (const record of computed)
-      list.append(gateResultRow(record, true));
-    wrap.append(list);
-    if (summary)
-      wrap.append(el("p", "lw-hint", summary));
+    if (skipped) {
+      const unused = decided.filter((record) => record.gateId !== "smart_trigger");
+      if (unused.length) {
+        const details = el("details", "lw-diag-unused");
+        details.append(el("summary", undefined, `${unused.length} other Jev answer${unused.length === 1 ? "" : "s"} · not used`));
+        details.append(el("p", "lw-hint", "Jev returned these in the same request. They did not change this reply."));
+        const list = el("div", "lw-diag-list");
+        for (const record of unused)
+          list.append(gateResultRow(record, false, true));
+        details.append(list);
+        wrap.append(details);
+      }
+    } else {
+      const list = el("div", "lw-diag-list");
+      for (const record of decided)
+        list.append(gateResultRow(record));
+      for (const record of computed)
+        list.append(gateResultRow(record, true));
+      wrap.append(list);
+    }
     return wrap;
   }
-  function gateResultRow(record, informational = false) {
-    const flagged = !informational && (record.usedFallback || record.escalated);
+  function gateResultRow(record, informational = false, unused = false) {
+    const flagged = !informational && !unused && (record.usedFallback || record.escalated);
     const row = el("div", "lw-diag-row");
     row.dataset.flag = String(flagged);
-    row.dataset.on = String(!informational);
+    row.dataset.on = String(!informational && !unused);
     const head = el("div", "lw-diag-head");
     head.append(el("span", "lw-diag-name", record.label), el("span", "lw-diag-value", describeGateValue(record)));
     const meta = el("div", "lw-diag-meta");
     if (record.confidence !== null) {
       const confidence = el("span", "lw-badge", `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`);
-      if (record.confidence < record.threshold) {
+      if (!unused && record.confidence < record.threshold) {
         confidence.dataset.tone = "warning";
         confidence.title = `Below the ${record.threshold.toFixed(2)} floor`;
       }
       meta.append(confidence);
     }
-    if (record.usedFallback && !informational) {
+    if (record.usedFallback && !informational && !unused) {
       const fallback = el("span", "lw-badge", GATE_FALLBACK_LABELS[record.fallback]);
       fallback.dataset.tone = "warning";
       meta.append(fallback);
     }
     row.append(head, meta);
-    if (record.note)
+    if (record.note && !unused)
       row.append(el("span", "lw-diag-note", record.note));
     return row;
   }
