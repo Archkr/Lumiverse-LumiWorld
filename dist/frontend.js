@@ -741,7 +741,7 @@ var CSS = `
 .lw-badge[data-tone="primary"] .lw-dot { background:var(--lumiverse-primary); }
 
 /* --- Jev panel ------------------------------------------------------ */
-.lw-panel { display:grid; gap:14px; margin:4px 0 6px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
+.lw-panel { display:grid; gap:14px; margin:0 0 16px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
 .lw-panel[data-active="true"] { border-color:var(--lumiverse-primary-muted); }
 .lw-panel-soon { color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
 .lw-stack { display:grid; gap:12px; }
@@ -953,9 +953,15 @@ function setup(ctx) {
   let templatesOpen = false;
   let notesOpen = false;
   let jevOpen = false;
+  let jevAdvancedOpen = false;
   let gatesOpen = false;
   const openGates = new Set;
   let activeTab = "director";
+  let headerBrand = null;
+  let headerTitle = null;
+  let headerToggleSlot = null;
+  let headerToggleHandle = null;
+  let headerMountedTab = null;
   let diagnosticsOpen = false;
   let nextFieldId = 0;
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -973,6 +979,12 @@ function setup(ctx) {
     ctx.sendToBackend({ ...activeChat(ctx), ...message });
   }
   function destroyHandles() {
+    if (headerToggleHandle) {
+      const index = handles.indexOf(headerToggleHandle);
+      if (index !== -1)
+        handles.splice(index, 1);
+      headerToggleHandle = null;
+    }
     while (handles.length)
       try {
         handles.pop()?.destroy();
@@ -1306,64 +1318,37 @@ function setup(ctx) {
   }
   function jevSection() {
     const section = el("section", "lw-section");
-    section.append(el("h2", "lw-section-title", "Jev simulation"));
-    const panel = el("div", "lw-panel");
-    panel.dataset.active = String(draft.jev.enabled);
-    const head = el("div", "lw-row");
-    const headCopy = el("div", "lw-row-copy");
-    const headTitle = el("div", "lw-row-title", "Use Jev gates");
-    headCopy.append(headTitle, el("div", "lw-hint", "Ask a cheap decision model whether each turn needs the Director at all."));
-    head.append(headCopy);
-    const headSwitch = el("div", "lw-control");
-    const headFallback = () => {
-      const input = el("input");
-      input.type = "checkbox";
-      input.checked = draft.jev.enabled;
-      input.setAttribute("aria-label", "Use Jev gates");
-      input.addEventListener("change", () => mutateJev({ enabled: input.checked }, true));
-      headSwitch.replaceChildren(input);
-    };
-    if (typeof ctx.components?.mountSwitch === "function") {
-      queueMount(() => ctx.components.mountSwitch(headSwitch, {
-        checked: draft.jev.enabled,
-        size: "md",
-        ariaLabel: "Use Jev gates",
-        onChange: (enabled) => mutateJev({ enabled }, true)
-      }), headFallback);
-    } else
-      headFallback();
-    head.append(headSwitch);
-    panel.append(head);
     if (!draft.jev.enabled) {
+      const panel = el("div", "lw-panel");
+      panel.dataset.active = "false";
       const card = el("div", "lw-control-card");
       card.append(el("div", "lw-panel-soon", "Jev is off. LumiWorld runs exactly as the Director-only baseline: one Director call per selected reply type, no network calls beyond your own connection."));
       panel.append(card);
       section.append(panel);
       return section;
     }
-    const connection = el("div", "lw-control-card");
-    const connectionHead = el("div", "lw-control-head");
-    const connectionTitle = el("div");
-    connectionTitle.append(el("div", "lw-control-title", "Decision provider"));
+    const core = el("section", "lw-setup");
+    core.setAttribute("aria-label", "Jev connection");
+    const providerHead = el("div", "lw-control-head");
+    const providerCopy = el("div");
+    providerCopy.append(el("div", "lw-control-title", "Provider"));
     const note = el("div", "lw-provider-note");
     const link = el("a", undefined, `${providerInfo().label} API keys`);
     link.href = providerInfo().keyUrl;
     link.target = "_blank";
     link.rel = "noreferrer noopener";
     note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
-    connectionTitle.append(note);
-    connectionHead.append(connectionTitle);
-    connection.append(connectionHead);
-    connection.append(segmented(draft.jev.provider, JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })), "Jev provider", (value) => mutateJev({ provider: value, model: "" }, true)));
+    providerCopy.append(note);
+    providerHead.append(providerCopy);
+    core.append(providerHead);
+    core.append(segmented(draft.jev.provider, JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })), "Jev provider", (value) => mutateJev({ provider: value, model: "" }, true)));
     const fields = el("div", "lw-fields");
-    fields.append(field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })), `Blank uses ${providerInfo().defaultModel}.`), field("State cap (chars)", numberInput(draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap", (value) => mutateJev({ maxStateChars: value })), "Jev allows 32k tokens for the state."));
-    connection.append(fields);
-    panel.append(connection);
-    const credential = el("div", "lw-control-card");
+    fields.append(field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })), `Blank uses ${providerInfo().defaultModel}.`));
+    core.append(fields);
     const credentialHead = el("div", "lw-control-head");
     credentialHead.append(el("div", "lw-control-title", "API key"));
     credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
-    credential.append(credentialHead);
+    core.append(credentialHead);
     const keyRow = el("div", "lw-key-row");
     const keyInput = el("input", "lw-input");
     keyInput.type = "password";
@@ -1382,27 +1367,33 @@ function setup(ctx) {
     });
     clear.disabled = !hasJevKey();
     keyRow.append(keyInput, clear);
-    credential.append(keyRow);
-    credential.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
+    core.append(keyRow);
+    core.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
     const actions = el("div", "lw-actions");
     const test = button("Test Jev", testJev, true);
     test.dataset.lwJevTest = "";
     const hint = el("div", "lw-hint lw-test-hint");
     hint.dataset.lwJevHint = "";
     actions.append(test, hint);
-    credential.append(actions);
-    panel.append(credential);
-    const shape = el("div", "lw-control-card");
-    const shapeHead = el("div", "lw-control-head");
-    shapeHead.append(el("div", "lw-control-title", "What gets sent"));
-    shapeHead.append(pill("Capped", "primary"));
-    shape.append(shapeHead);
-    const shapeFields = el("div", "lw-fields");
-    shapeFields.append(field("History messages", numberInput(draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages", (value) => mutateJev({ historyMessageLimit: value }))), field("Timeout (ms)", numberInput(draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout", (value) => mutateJev({ timeoutMs: value }))), field("Confidence floor", numberInput(draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor", (value) => mutateJev({ minConfidence: value })), "Applies to every gate. Decisions below it use their fallback."));
-    shape.append(shapeFields);
-    shape.append(el("div", "lw-hint", "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
-    panel.append(shape);
-    section.append(panel);
+    core.append(actions);
+    section.append(core);
+    const advanced = el("details", "lw-details");
+    advanced.open = jevAdvancedOpen;
+    advanced.addEventListener("toggle", () => {
+      jevAdvancedOpen = advanced.open;
+    });
+    const summary = el("summary");
+    const summaryCopy = el("span", "lw-summary-copy");
+    summaryCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Request shape & confidence floor"));
+    summary.append(summaryCopy);
+    advanced.append(summary);
+    const advancedBody = el("div", "lw-details-body");
+    const advancedFields = el("div", "lw-fields");
+    advancedFields.append(field("State cap (chars)", numberInput(draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap", (value) => mutateJev({ maxStateChars: value })), "Jev allows 32k tokens for the state."), field("History messages", numberInput(draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages", (value) => mutateJev({ historyMessageLimit: value }))), field("Timeout (ms)", numberInput(draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout", (value) => mutateJev({ timeoutMs: value }))), field("Confidence floor", numberInput(draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor", (value) => mutateJev({ minConfidence: value })), "Applies to every gate. Decisions below it use their fallback."));
+    advancedBody.append(advancedFields);
+    advancedBody.append(el("div", "lw-hint", "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
+    advanced.append(advancedBody);
+    section.append(advanced);
     return section;
   }
   function gatesSection() {
@@ -1722,6 +1713,89 @@ function setup(ctx) {
     renderWarnings(target);
     target.hidden = !target.childElementCount;
   }
+  function buildHeader() {
+    const header = el("header", "lw-header");
+    const brand = el("div", "lw-brand");
+    const icon = el("div", "lw-icon");
+    icon.innerHTML = ICON;
+    icon.setAttribute("aria-hidden", "true");
+    const title = el("div");
+    headerTitle = el("h1", "lw-title", "Director");
+    const status = el("span", "lw-status");
+    status.dataset.lwHeaderStatus = "";
+    title.append(headerTitle, status);
+    brand.append(icon, title);
+    header.append(brand);
+    if (!headerBrand)
+      headerBrand = brand;
+    if (!headerToggleSlot)
+      headerToggleSlot = el("div", "lw-control");
+    header.append(headerBrand, headerToggleSlot);
+    refreshHeader();
+    return header;
+  }
+  function refreshHeader() {
+    if (!headerTitle || !headerToggleSlot)
+      return;
+    const jev = activeTab === "jev";
+    headerTitle.textContent = jev ? "Jev" : "Director";
+    if (headerMountedTab !== activeTab) {
+      if (headerToggleHandle) {
+        const index = handles.indexOf(headerToggleHandle);
+        if (index !== -1)
+          handles.splice(index, 1);
+        try {
+          headerToggleHandle.destroy();
+        } catch {}
+        headerToggleHandle = null;
+      }
+      headerToggleSlot.replaceChildren();
+      const enabled = jev ? draft.jev.enabled : draft.enabled;
+      const onChange = jev ? (next) => mutateJev({ enabled: next }, true) : (next) => mutate({ enabled: next });
+      const slot = headerToggleSlot;
+      const fallback = () => {
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = enabled;
+        input.setAttribute("aria-label", jev ? "Enable Jev" : "Enable Director");
+        input.addEventListener("change", () => onChange(input.checked));
+        slot.replaceChildren(input);
+      };
+      let mounted = false;
+      if (typeof ctx.components?.mountSwitch === "function") {
+        try {
+          headerToggleHandle = ctx.components.mountSwitch(slot, {
+            checked: enabled,
+            size: "md",
+            ariaLabel: jev ? "Enable Jev" : "Enable Director",
+            onChange
+          });
+          mounted = true;
+        } catch {
+          headerToggleHandle = null;
+        }
+      }
+      if (!mounted)
+        fallback();
+      headerMountedTab = activeTab;
+      headerMountedTab = activeTab;
+    }
+    updateHeaderStatus();
+  }
+  function updateHeaderStatus() {
+    const badge = drawer.root.querySelector("[data-lw-header-status]");
+    if (!badge || !state)
+      return;
+    if (activeTab === "jev") {
+      const ready = draft.jev.enabled && !!state.permissions.corsProxy && (hasJevKey() || !!jevKeyDraft.trim());
+      badge.textContent = !draft.jev.enabled ? "Disabled" : !state.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+      badge.dataset.tone = !draft.jev.enabled ? "neutral" : ready ? "success" : "warning";
+      return;
+    }
+    const ready = draft.enabled && !!state.permissions.interceptor && canTest() && draft.generationTypes.length > 0;
+    badge.textContent = !draft.enabled ? "Disabled" : ready ? "Ready for replies" : "Setup needed";
+    badge.dataset.tone = ready ? "success" : draft.enabled ? "warning" : "neutral";
+  }
   function viewTabs() {
     const list = el("div", "lw-tabs");
     list.setAttribute("role", "tablist");
@@ -1776,6 +1850,7 @@ function setup(ctx) {
       view.hidden = view.dataset.lwView !== tab;
     }
     activeElementInside(drawer.root)?.blur();
+    refreshHeader();
   }
   function activeElementInside(root) {
     const active = document.activeElement;
@@ -1789,21 +1864,7 @@ function setup(ctx) {
     const shell = el("div", "lw-shell");
     root.append(shell);
     drawer.root.replaceChildren(root);
-    const header = el("header", "lw-header");
-    const brand = el("div", "lw-brand");
-    const icon = el("div", "lw-icon");
-    icon.innerHTML = ICON;
-    icon.setAttribute("aria-hidden", "true");
-    const title = el("div");
-    title.append(el("h1", "lw-title", "Director"));
-    const directorStatus = el("span", "lw-status");
-    directorStatus.dataset.lwDirectorStatus = "";
-    title.append(directorStatus);
-    brand.append(icon, title);
-    header.append(brand);
-    if (state)
-      header.append(switchField("Enable Director", draft.enabled, (enabled) => mutate({ enabled })));
-    shell.append(header);
+    shell.append(buildHeader());
     shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
     const notices = el("div");
     notices.dataset.lwNotice = "";

@@ -151,7 +151,7 @@ beforeEach(() => {
 describe("Jev drawer section", () => {
   test("stays collapsed while Jev is disabled", () => {
     const harness = mount(makeState());
-    expect(harness.root.textContent).toContain("Jev simulation");
+    expect(harness.root.textContent).toContain("Jev decides whether a turn needs the Director");
     expect(harness.root.textContent).toContain("Director-only baseline");
     // No provider or key controls until the feature is switched on.
     expect(labelled(harness.root, "Jev provider")).toBeNull();
@@ -309,10 +309,62 @@ describe("drawer views", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
     const { director, jev } = views(harness.root);
     expect(director.textContent).toContain("Run before");
-    expect(director.textContent).toContain("Advanced settings");
     expect(jev.textContent).not.toContain("Run before");
-    expect(jev.textContent).not.toContain("Advanced settings");
+
+    // Both views label a block "Advanced settings", so separate them by the
+    // controls each one owns: Director's sampler vs Jev's request shape.
+    const within = (view: HTMLElement, label: string) => view.querySelector(`[aria-label="${label}"]`);
+    expect(within(director, "Temperature")).not.toBeNull();
+    expect(within(jev, "Temperature")).toBeNull();
+    expect(within(jev, "Jev state cap")).not.toBeNull();
+    expect(within(director, "Jev state cap")).toBeNull();
     expect(jev.textContent).toContain("Jev gates");
+    harness.destroy();
+  });
+
+  test("re-targets the master toggle when the view changes", () => {
+    const harness = mount(makeState({
+      settings: settings({ enabled: true, jev: { ...DEFAULT_SETTINGS.jev, enabled: false } }),
+    }));
+    // The header owns one master switch, and it follows the active view.
+    expect(labelled(harness.root, "Enable Director")).not.toBeNull();
+    expect(labelled(harness.root, "Enable Jev")).toBeNull();
+
+    tabs(harness.root)[1]!.click();
+    expect(labelled(harness.root, "Enable Jev")).not.toBeNull();
+    expect(labelled(harness.root, "Enable Director")).toBeNull();
+    harness.destroy();
+  });
+
+  test("registers the header switch exactly once per view", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    const headerSwitches = harness.root.querySelectorAll('.lw-header input[type="checkbox"]');
+    expect(headerSwitches).toHaveLength(1);
+    // The Jev panel must not duplicate the master toggle.
+    expect(harness.root.querySelectorAll('[aria-label="Use Jev gates"]')).toHaveLength(0);
+    harness.destroy();
+  });
+
+  test("shows the active view's state in the header status line", () => {
+    const harness = mount(makeState({
+      hasJevKey: true,
+      settings: settings({ enabled: true, jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
+    }));
+    const status = () => harness.root.querySelector<HTMLElement>("[data-lw-header-status]")!;
+    expect(status().textContent).toBe("Setup needed");
+    tabs(harness.root)[1]!.click();
+    expect(status().textContent).toBe("Ready");
+    tabs(harness.root)[0]!.click();
+    expect(status().textContent).toBe("Setup needed");
+    harness.destroy();
+  });
+
+  test("names the header after the active view", () => {
+    const harness = mount(makeState());
+    const title = () => harness.root.querySelector(".lw-title")!.textContent;
+    expect(title()).toBe("Director");
+    tabs(harness.root)[1]!.click();
+    expect(title()).toBe("Jev");
     harness.destroy();
   });
 

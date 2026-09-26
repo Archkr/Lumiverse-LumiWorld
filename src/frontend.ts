@@ -115,7 +115,7 @@ const CSS = `
 .lw-badge[data-tone="primary"] .lw-dot { background:var(--lumiverse-primary); }
 
 /* --- Jev panel ------------------------------------------------------ */
-.lw-panel { display:grid; gap:14px; margin:4px 0 6px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
+.lw-panel { display:grid; gap:14px; margin:0 0 16px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
 .lw-panel[data-active="true"] { border-color:var(--lumiverse-primary-muted); }
 .lw-panel-soon { color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
 .lw-stack { display:grid; gap:12px; }
@@ -343,11 +343,19 @@ export function setup(ctx: SpindleFrontendContext) {
   let templatesOpen = false;
   let notesOpen = false;
   let jevOpen = false;
+  let jevAdvancedOpen = false;
   let gatesOpen = false;
   /** Gate ids whose detail sheet is expanded. Survives re-renders. */
   const openGates = new Set<string>();
   type LumiTab = "director" | "jev";
   let activeTab: LumiTab = "director";
+  /** Header parts re-targeted on every view switch. */
+  let headerBrand: HTMLElement | null = null;
+  let headerTitle: HTMLElement | null = null;
+  let headerToggleSlot: HTMLElement | null = null;
+  let headerToggleHandle: MountedHandle | null = null;
+  /** Which view's setting the header switch currently drives. */
+  let headerMountedTab: LumiTab | null = null;
   let diagnosticsOpen = false;
   let nextFieldId = 0;
 
@@ -363,6 +371,13 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function destroyHandles(): void {
+    // The header toggle is rebuilt on every view switch, so it is tracked apart
+    // from the per-render handles to avoid destroying a live control twice.
+    if (headerToggleHandle) {
+      const index = handles.indexOf(headerToggleHandle);
+      if (index !== -1) handles.splice(index, 1);
+      headerToggleHandle = null;
+    }
     while (handles.length) try { handles.pop()?.destroy(); } catch { /* Host may already have detached a control. */ }
   }
 
@@ -660,39 +675,17 @@ export function setup(ctx: SpindleFrontendContext) {
     }
   }
 
+  /**
+   * The Jev surface, laid out like the Director one: a primary connection card
+   * with the picker, the model, and the action that tests it, then an Advanced
+   * settings block for the shape of the request.
+   */
   function jevSection(): HTMLElement {
     const section = el("section", "lw-section");
-    section.append(el("h2", "lw-section-title", "Jev simulation"));
-
-    const panel = el("div", "lw-panel");
-    panel.dataset.active = String(draft.jev.enabled);
-
-    // Header: the switch plus a live status pill, so the panel state is legible
-    // without expanding anything.
-    const head = el("div", "lw-row");
-    const headCopy = el("div", "lw-row-copy");
-    const headTitle = el("div", "lw-row-title", "Use Jev gates");
-    headCopy.append(headTitle, el("div", "lw-hint", "Ask a cheap decision model whether each turn needs the Director at all."));
-    head.append(headCopy);
-    const headSwitch = el("div", "lw-control");
-    const headFallback = () => {
-      const input = el("input");
-      input.type = "checkbox";
-      input.checked = draft.jev.enabled;
-      input.setAttribute("aria-label", "Use Jev gates");
-      input.addEventListener("change", () => mutateJev({ enabled: input.checked }, true));
-      headSwitch.replaceChildren(input);
-    };
-    if (typeof ctx.components?.mountSwitch === "function") {
-      queueMount(() => ctx.components!.mountSwitch!(headSwitch, {
-        checked: draft.jev.enabled, size: "md", ariaLabel: "Use Jev gates",
-        onChange: (enabled: boolean) => mutateJev({ enabled }, true),
-      }), headFallback);
-    } else headFallback();
-    head.append(headSwitch);
-    panel.append(head);
 
     if (!draft.jev.enabled) {
+      const panel = el("div", "lw-panel");
+      panel.dataset.active = "false";
       const card = el("div", "lw-control-card");
       card.append(el("div", "lw-panel-soon",
         "Jev is off. LumiWorld runs exactly as the Director-only baseline: one Director call per selected reply type, no network calls beyond your own connection."));
@@ -701,22 +694,23 @@ export function setup(ctx: SpindleFrontendContext) {
       return section;
     }
 
-    // --- Connection ---
-    const connection = el("div", "lw-control-card");
-    const connectionHead = el("div", "lw-control-head");
-    const connectionTitle = el("div");
-    connectionTitle.append(el("div", "lw-control-title", "Decision provider"));
+    // --- Connection: the analogue of the Director's connection card -----------
+    const core = el("section", "lw-setup");
+    core.setAttribute("aria-label", "Jev connection");
+
+    const providerHead = el("div", "lw-control-head");
+    const providerCopy = el("div");
+    providerCopy.append(el("div", "lw-control-title", "Provider"));
     const note = el("div", "lw-provider-note");
     const link = el("a", undefined, `${providerInfo().label} API keys`) as HTMLAnchorElement;
     link.href = providerInfo().keyUrl;
     link.target = "_blank";
     link.rel = "noreferrer noopener";
     note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
-    connectionTitle.append(note);
-    connectionHead.append(connectionTitle);
-    connection.append(connectionHead);
-
-    connection.append(segmented(
+    providerCopy.append(note);
+    providerHead.append(providerCopy);
+    core.append(providerHead);
+    core.append(segmented(
       draft.jev.provider,
       JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
       "Jev provider",
@@ -724,23 +718,18 @@ export function setup(ctx: SpindleFrontendContext) {
     ));
 
     const fields = el("div", "lw-fields");
-    fields.append(
-      field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })),
-        `Blank uses ${providerInfo().defaultModel}.`),
-      field("State cap (chars)", numberInput(
-        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
-        (value) => mutateJev({ maxStateChars: value }),
-      ), "Jev allows 32k tokens for the state."),
-    );
-    connection.append(fields);
-    panel.append(connection);
+    fields.append(field("Model", textInput(
+      draft.jev.model, providerInfo().defaultModel, "Jev model",
+      (value) => mutateJev({ model: value }),
+    ), `Blank uses ${providerInfo().defaultModel}.`));
+    core.append(fields);
 
-    // --- Credential ---
-    const credential = el("div", "lw-control-card");
+    // Credential sits inside the connection card, the way the Director's model
+    // field sits inside its own, rather than in a separate box.
     const credentialHead = el("div", "lw-control-head");
     credentialHead.append(el("div", "lw-control-title", "API key"));
     credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
-    credential.append(credentialHead);
+    core.append(credentialHead);
 
     const keyRow = el("div", "lw-key-row");
     const keyInput = el("input", "lw-input");
@@ -757,8 +746,8 @@ export function setup(ctx: SpindleFrontendContext) {
     });
     clear.disabled = !hasJevKey();
     keyRow.append(keyInput, clear);
-    credential.append(keyRow);
-    credential.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
+    core.append(keyRow);
+    core.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
 
     const actions = el("div", "lw-actions");
     const test = button("Test Jev", testJev, true);
@@ -766,17 +755,29 @@ export function setup(ctx: SpindleFrontendContext) {
     const hint = el("div", "lw-hint lw-test-hint");
     hint.dataset.lwJevHint = "";
     actions.append(test, hint);
-    credential.append(actions);
-    panel.append(credential);
+    core.append(actions);
+    section.append(core);
 
-    // --- Shape of the request ---
-    const shape = el("div", "lw-control-card");
-    const shapeHead = el("div", "lw-control-head");
-    shapeHead.append(el("div", "lw-control-title", "What gets sent"));
-    shapeHead.append(pill("Capped", "primary"));
-    shape.append(shapeHead);
-    const shapeFields = el("div", "lw-fields");
-    shapeFields.append(
+    // --- Advanced settings: the shape of the batched request ------------------
+    const advanced = el("details", "lw-details");
+    advanced.open = jevAdvancedOpen;
+    advanced.addEventListener("toggle", () => { jevAdvancedOpen = advanced.open; });
+    const summary = el("summary");
+    const summaryCopy = el("span", "lw-summary-copy");
+    summaryCopy.append(
+      el("span", undefined, "Advanced settings"),
+      el("span", "lw-hint", "Request shape & confidence floor"),
+    );
+    summary.append(summaryCopy);
+    advanced.append(summary);
+
+    const advancedBody = el("div", "lw-details-body");
+    const advancedFields = el("div", "lw-fields");
+    advancedFields.append(
+      field("State cap (chars)", numberInput(
+        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
+        (value) => mutateJev({ maxStateChars: value }),
+      ), "Jev allows 32k tokens for the state."),
       field("History messages", numberInput(
         draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages",
         (value) => mutateJev({ historyMessageLimit: value }),
@@ -790,12 +791,12 @@ export function setup(ctx: SpindleFrontendContext) {
         (value) => mutateJev({ minConfidence: value }),
       ), "Applies to every gate. Decisions below it use their fallback."),
     );
-    shape.append(shapeFields);
-    shape.append(el("div", "lw-hint",
+    advancedBody.append(advancedFields);
+    advancedBody.append(el("div", "lw-hint",
       "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
-    panel.append(shape);
+    advanced.append(advancedBody);
+    section.append(advanced);
 
-    section.append(panel);
     return section;
   }
 
@@ -1151,6 +1152,106 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   /**
+   * The master toggle belongs to the drawer header, and it follows the active
+   * view: Director's switch on the Director view, Jev's on the Jev view. A header
+   * that kept saying "Enable Director" while the Jev view was open would silently
+   * control something off-screen.
+   */
+  function buildHeader(): HTMLElement {
+    const header = el("header", "lw-header");
+    const brand = el("div", "lw-brand");
+    const icon = el("div", "lw-icon"); icon.innerHTML = ICON; icon.setAttribute("aria-hidden", "true");
+    const title = el("div");
+    headerTitle = el("h1", "lw-title", "Director");
+    const status = el("span", "lw-status");
+    status.dataset.lwHeaderStatus = "";
+    title.append(headerTitle, status);
+    brand.append(icon, title);
+    header.append(brand);
+
+    // The brand and the switch slot are created once and re-attached on every
+    // render. Recreating the slot would strand the live switch inside the
+    // previous render's detached node.
+    if (!headerBrand) headerBrand = brand;
+    if (!headerToggleSlot) headerToggleSlot = el("div", "lw-control");
+    header.append(headerBrand, headerToggleSlot);
+    refreshHeader();
+    return header;
+  }
+
+  /** Re-points the header title, status, and master toggle at the active view. */
+  function refreshHeader(): void {
+    if (!headerTitle || !headerToggleSlot) return;
+    const jev = activeTab === "jev";
+
+    headerTitle.textContent = jev ? "Jev" : "Director";
+
+    // Rebuilding the switch is only necessary when the header changes which
+    // setting it targets; a re-render keeps the live control in place.
+    if (headerMountedTab !== activeTab) {
+      if (headerToggleHandle) {
+        const index = handles.indexOf(headerToggleHandle);
+        if (index !== -1) handles.splice(index, 1);
+        try { headerToggleHandle.destroy(); } catch { /* Host may already have detached it. */ }
+        headerToggleHandle = null;
+      }
+      headerToggleSlot.replaceChildren();
+
+      const enabled = jev ? draft.jev.enabled : draft.enabled;
+      const onChange = jev
+        ? (next: boolean) => mutateJev({ enabled: next }, true)
+        : (next: boolean) => mutate({ enabled: next });
+      const slot = headerToggleSlot;
+      const fallback = () => {
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = enabled;
+        input.setAttribute("aria-label", jev ? "Enable Jev" : "Enable Director");
+        input.addEventListener("change", () => onChange(input.checked));
+        slot.replaceChildren(input);
+      };
+      // Mounted directly rather than through the render's pending queue: the
+      // header is rebuilt on a view switch, which is not a render.
+      let mounted = false;
+      if (typeof ctx.components?.mountSwitch === "function") {
+        try {
+          headerToggleHandle = ctx.components.mountSwitch(slot, {
+            checked: enabled, size: "md",
+            ariaLabel: jev ? "Enable Jev" : "Enable Director",
+            onChange,
+          });
+          mounted = true;
+        } catch {
+          headerToggleHandle = null;
+        }
+      }
+      if (!mounted) fallback();
+      // The switch outlives individual renders, so it is deliberately kept out of
+      // the per-render handle list and destroyed only when it is replaced.
+      headerMountedTab = activeTab;      headerMountedTab = activeTab;
+    }
+
+    updateHeaderStatus();
+  }
+
+  /** Keeps the header status line honest for whichever view is active. */
+  function updateHeaderStatus(): void {
+    const badge = drawer.root.querySelector<HTMLElement>("[data-lw-header-status]");
+    if (!badge || !state) return;
+    if (activeTab === "jev") {
+      const ready = draft.jev.enabled && !!state.permissions.corsProxy && (hasJevKey() || !!jevKeyDraft.trim());
+      badge.textContent = !draft.jev.enabled ? "Disabled"
+        : !state.permissions.corsProxy ? "Needs permission"
+        : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+      badge.dataset.tone = !draft.jev.enabled ? "neutral" : ready ? "success" : "warning";
+      return;
+    }
+    const ready = draft.enabled && !!state.permissions.interceptor && canTest() && draft.generationTypes.length > 0;
+    badge.textContent = !draft.enabled ? "Disabled" : ready ? "Ready for replies" : "Setup needed";
+    badge.dataset.tone = ready ? "success" : draft.enabled ? "warning" : "neutral";
+  }
+
+  /**
    * A segmented view switcher for the single drawer tab.
    *
    * The host allows one tab per extension here, so the Director and Jev surfaces
@@ -1221,6 +1322,7 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     // Focused controls inside a hidden view would leave the caret stranded.
     activeElementInside(drawer.root)?.blur();
+    refreshHeader();
   }
 
   function activeElementInside(root: HTMLElement): HTMLElement | null {
@@ -1233,13 +1335,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const root = el("div", "lw-root");
     const shell = el("div", "lw-shell"); root.append(shell); drawer.root.replaceChildren(root);
 
-    const header = el("header", "lw-header");
-    const brand = el("div", "lw-brand"); const icon = el("div", "lw-icon"); icon.innerHTML = ICON; icon.setAttribute("aria-hidden", "true");
-    const title = el("div"); title.append(el("h1", "lw-title", "Director"));
-    const directorStatus = el("span", "lw-status"); directorStatus.dataset.lwDirectorStatus = "";
-    title.append(directorStatus); brand.append(icon, title); header.append(brand);
-    if (state) header.append(switchField("Enable Director", draft.enabled, (enabled) => mutate({ enabled })));
-    shell.append(header);
+    shell.append(buildHeader());
     shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
 
     const notices = el("div"); notices.dataset.lwNotice = "";
