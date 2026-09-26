@@ -375,9 +375,10 @@ describe("state cap enforcement", () => {
 });
 
 describe("timeout honesty", () => {
-  test("does not report success for a response that outlives the timeout", async () => {
+  test("returns when the deadline fires, not when the proxy finally answers", async () => {
     // The host CORS proxy uses its own 30s budget and ignores the abort signal, so
-    // a slow request can resolve after the configured timeout has already fired.
+    // awaiting it directly would block for up to 30s regardless of the timeout.
+    const started = Date.now();
     const outcome = await callJev({
       config: { ...settings(), apiKey: "k" },
       state: "s",
@@ -390,8 +391,34 @@ describe("timeout honesty", () => {
         return { status: 200, statusText: "OK", headers: {}, body: JSON.stringify({ answers: { ping: { type: "noul", noul: 0.9 } } }) };
       },
     });
+    const waited = Date.now() - started;
     expect(outcome.ok).toBe(false);
     expect(outcome.timedOut).toBe(true);
+    expect(outcome.response).toBeNull();
+    // The caller must not wait for the slow proxy. Generous bound: the point is
+    // that it is nowhere near the 1.3s response.
+    expect(waited).toBeLessThan(1200);
+  });
+
+  test("a slow success after the deadline cannot arrive late", async () => {
+    let resolvedLate = false;
+    const outcome = await callJev({
+      config: { ...settings(), apiKey: "k" },
+      state: "s",
+      questions: { ping: { type: "noul", instructions: "?" } },
+      timeoutMs: 1000,
+      budgetMs: 5000,
+      retryOnRateLimit: false,
+      cors: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1600));
+        resolvedLate = true;
+        return { status: 200, statusText: "OK", headers: {}, body: JSON.stringify({ answers: { ping: { type: "noul", noul: 0.9 } } }) };
+      },
+    });
+    expect(outcome.timedOut).toBe(true);
+    // Let the abandoned request settle; it must not throw or change the outcome.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(resolvedLate).toBe(true);
     expect(outcome.response).toBeNull();
   });
 });

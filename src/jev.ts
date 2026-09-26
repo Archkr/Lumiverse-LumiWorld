@@ -329,6 +329,31 @@ export interface CallJevResult {
   request: JevRequest | null;
 }
 
+/**
+ * Races a promise against a deadline.
+ *
+ * The host's CORS proxy carries its own 30s budget and offers no cancel path, so
+ * awaiting it directly would make the caller wait for the proxy rather than for
+ * the configured timeout. This returns on the deadline and lets the abandoned
+ * request settle into a discard handler.
+ */
+function withDeadline<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(onTimeout()), Math.max(1, timeoutMs));
+    work.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+    // The abandoned request may still settle; swallow it so an optimistic late
+    // success or rejection cannot surface as an unhandled rejection.
+    work.catch(() => {});
+  });
+}
+
 function remainingBudgetMs(startedAt: number, budgetMs: number | undefined): number {
   if (budgetMs === undefined) return Number.POSITIVE_INFINITY;
   return budgetMs - (Date.now() - startedAt);
@@ -360,19 +385,18 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
     }, effective);
 
     try {
-      const attemptedAt = Date.now();
-      const raw = await options.cors(request.url, {
-        method: "POST",
-        headers: request.headers,
-        body: request.body,
-        signal: local.signal,
-      });
-      // The host's CORS proxy carries its own 30s budget and ignores the signal we
-      // pass, so a slow request can resolve well after our timeout. Enforce the
-      // deadline by elapsed time instead of trusting the abort to have worked.
-      if (timedOut || Date.now() - attemptedAt >= effective) {
-        throw new JevTimeoutError(effective);
-      }
+      // Bound the wait ourselves: the proxy ignores the signal we pass, so racing
+      // the deadline is the only way to return on time rather than after it does.
+      const raw = await withDeadline(
+        options.cors(request.url, {
+          method: "POST",
+          headers: request.headers,
+          body: request.body,
+          signal: local.signal,
+        }),
+        effective,
+        () => new JevTimeoutError(effective),
+      );
       const result = readCorsResult(raw);
       if (result.status === 429 || result.status >= 500) {
         return {

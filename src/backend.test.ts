@@ -384,6 +384,41 @@ describe("v0.5 Jev turn flow", () => {
     expect(state.tension).toBe(3);
   });
 
+  test("a late event cannot double-apply a turn", async () => {
+    // The interceptor context carries no generation id, so a staged commit cannot
+    // be tied to the generation that produced it. What is enforceable is that a
+    // turn is never applied twice: an event arriving after the stage it was
+    // waiting for has already been flushed commits nothing.
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+
+    await runJevTurn("chat-race");
+    emitEvent("GENERATION_ENDED", { generationId: "gen-a", chatId: "chat-race", messageId: "m-a", content: "a" });
+    const afterFirst = (stored.get("chats/chat-race/world.json") as any).turn;
+
+    // A late duplicate arriving with no stage pending must not advance the world.
+    emitEvent("GENERATION_ENDED", { generationId: "gen-b", chatId: "chat-race", messageId: "m-b", content: "b" });
+    expect((stored.get("chats/chat-race/world.json") as any).turn).toBe(afterFirst);
+    expect(afterFirst).toBe(1);
+  });
+
+  test("a duplicated end event for one generation commits once", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await runJevTurn("chat-dup");
+    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" });
+    const first = (stored.get("chats/chat-dup/world.json") as any).turn;
+    // A second report for the same generation must not advance the world again.
+    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" });
+    expect((stored.get("chats/chat-dup/world.json") as any).turn).toBe(first);
+  });
+
   test("a dry run never stages scene state", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,

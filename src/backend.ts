@@ -42,8 +42,17 @@ let interceptorRegistered = false;
 /**
  * Scene-state commits awaiting a successful generation, keyed by chat.
  *
- * A turn stages its commit during interception and only writes it when the host
- * reports the generation ended without error.
+ * The interceptor context carries no generation id — `SpindleContext` is
+ * `{chatId, connectionId, personaId, generationType, dryRun, userId}` — so a stage
+ * cannot be tied to the generation that produced it, and the key is the chat.
+ *
+ * Consuming the stage on the first end event is what makes application
+ * once-only: a duplicate or late event finds nothing pending and commits nothing.
+ * The accepted limitation is that only one stage can be outstanding per chat, so
+ * if a second generation stages before the first reports ending, the earlier
+ * staged state is replaced. The alternative — queueing stages — has no reliable
+ * key to match them against their events, and would risk applying a reply's state
+ * to the wrong turn.
  */
 const pendingCommits = new Map<string, { userId: string; state: WorldState }>();
 
@@ -1390,9 +1399,13 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
   if (!chatId) return;
   const pending = pendingCommits.get(chatId);
   if (!pending) return;
+  // Released either way: this event belongs to one generation, and the staging it
+  // was waiting for is now settled.
   pendingCommits.delete(chatId);
+
   const failed = !!(payload && typeof payload === "object" && (payload as { error?: unknown }).error);
   if (failed) return;
+
   void saveWorldState(storageApi(), chatId, pending.state, pending.userId)
     .catch((error: unknown) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
 });

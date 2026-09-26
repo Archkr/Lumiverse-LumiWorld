@@ -1768,6 +1768,19 @@ function parseJevBody(body) {
     throw new JevProtocolError("Jev returned a response body that was not valid JSON.");
   }
 }
+function withDeadline(work, timeoutMs, onTimeout) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(onTimeout()), Math.max(1, timeoutMs));
+    work.then((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    work.catch(() => {});
+  });
+}
 function remainingBudgetMs(startedAt, budgetMs) {
   if (budgetMs === undefined)
     return Number.POSITIVE_INFINITY;
@@ -1791,16 +1804,12 @@ async function callJev(options) {
       local.abort();
     }, effective);
     try {
-      const attemptedAt = Date.now();
-      const raw = await options.cors(request.url, {
+      const raw = await withDeadline(options.cors(request.url, {
         method: "POST",
         headers: request.headers,
         body: request.body,
         signal: local.signal
-      });
-      if (timedOut || Date.now() - attemptedAt >= effective) {
-        throw new JevTimeoutError(effective);
-      }
+      }), effective, () => new JevTimeoutError(effective));
       const result = readCorsResult(raw);
       if (result.status === 429 || result.status >= 500) {
         return {

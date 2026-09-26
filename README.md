@@ -259,6 +259,13 @@ ended without error, so:
 - **A swipe is just another turn.** Each one stages and commits independently, so
   the state follows the reply you keep.
 
+A staged update is consumed by the first end event that reports success, so a
+duplicate or late event commits nothing. Only one update can be outstanding per
+chat at a time: LumiWorld receives no generation id with the turn, so if a second
+generation stages before the first reports ending, the earlier staged update is
+replaced rather than queued. That is deliberate — matching queued stages to their
+events by guesswork would risk applying a reply's state to the wrong turn.
+
 With **World state** on, the state lives in `chats/<chatId>/world.json` under
 LumiWorld's extension storage.
 
