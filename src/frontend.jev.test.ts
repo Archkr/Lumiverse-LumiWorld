@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { DEFAULT_SETTINGS, JEV_PROVIDERS, type LumiWorldSettings } from "./shared";
+import { DEFAULT_SETTINGS, JEV_PROVIDERS, normalizeSettings, type LumiWorldSettings } from "./shared";
 import { GATE_CATALOG } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
@@ -146,6 +146,78 @@ function expandGate(root: HTMLElement, gateId: string): void {
 beforeEach(() => {
   if (!(globalThis as any).document) throw new Error("jsdom did not install a document");
   scheduled = [];
+});
+
+describe("Director prompt presets", () => {
+  const presetSelect = (root: HTMLElement) => labelled(root, "Prompt preset") as HTMLSelectElement;
+  const template = (root: HTMLElement, index: number) => root.querySelectorAll<HTMLTextAreaElement>(".lw-template")[index]!;
+  const action = (root: HTMLElement, text: string) => [...root.querySelectorAll<HTMLButtonElement>("button")]
+    .find((item) => item.textContent === text)!;
+
+  test("saves two editable variants and switches between each and the built-in default", () => {
+    const harness = mount(makeState());
+    expect(presetSelect(harness.root).value).toBe("builtin");
+    expect(template(harness.root, 0).readOnly).toBe(true);
+    action(harness.root, "New preset from current").click();
+    const firstId = presetSelect(harness.root).value;
+    expect(firstId).not.toBe("builtin");
+    const nameA = labelled(harness.root, "Preset name") as HTMLInputElement;
+    nameA.value = "Variant A";
+    nameA.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    template(harness.root, 0).value = "System A {{prompt}}";
+    template(harness.root, 0).dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    template(harness.root, 1).value = "User A {{prompt}}";
+    template(harness.root, 1).dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+
+    action(harness.root, "New preset from current").click();
+    const secondId = presetSelect(harness.root).value;
+    expect(secondId).not.toBe(firstId);
+    expect(template(harness.root, 0).value).toBe("System A {{prompt}}");
+    const nameB = labelled(harness.root, "Preset name") as HTMLInputElement;
+    nameB.value = "Variant B";
+    nameB.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    template(harness.root, 0).value = "System B {{prompt}}";
+    template(harness.root, 0).dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    template(harness.root, 1).value = "User B {{prompt}}";
+    template(harness.root, 1).dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+
+    presetSelect(harness.root).value = firstId;
+    presetSelect(harness.root).dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect([template(harness.root, 0).value, template(harness.root, 1).value])
+      .toEqual(["System A {{prompt}}", "User A {{prompt}}"]);
+    action(harness.root, "Use built-in defaults").click();
+    expect(presetSelect(harness.root).value).toBe("builtin");
+    expect(template(harness.root, 0).value).toBe(DEFAULT_SETTINGS.systemTemplate);
+    presetSelect(harness.root).value = secondId;
+    presetSelect(harness.root).dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect([template(harness.root, 0).value, template(harness.root, 1).value])
+      .toEqual(["System B {{prompt}}", "User B {{prompt}}"]);
+
+    harness.advanceSave();
+    const save = harness.sent.filter((entry) => entry.type === "save_settings").pop();
+    expect(save?.type).toBe("save_settings");
+    if (save?.type === "save_settings") {
+      const saved = normalizeSettings(save.settings);
+      expect(saved.promptPresets.map((preset) => preset.name)).toEqual(["Variant A", "Variant B"]);
+      expect(saved.activePromptPresetId).toBe(secondId);
+      harness.destroy();
+      const reloaded = mount(makeState({ settings: saved }));
+      expect(presetSelect(reloaded.root).value).toBe(secondId);
+      expect(template(reloaded.root, 0).value).toBe("System B {{prompt}}");
+      reloaded.destroy();
+    } else harness.destroy();
+  });
+
+  test("requires a second click to delete a custom preset and keeps the built-in one", () => {
+    const harness = mount(makeState());
+    action(harness.root, "New preset from current").click();
+    action(harness.root, "Delete preset").click();
+    expect(presetSelect(harness.root).options.length).toBe(2);
+    action(harness.root, "Confirm delete preset").click();
+    expect(presetSelect(harness.root).options.length).toBe(1);
+    expect(presetSelect(harness.root).value).toBe("builtin");
+    harness.destroy();
+  });
 });
 
 describe("Jev drawer section", () => {

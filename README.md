@@ -368,7 +368,13 @@ The prompt cap is measured in characters, not tokens. Large histories and custom
 
 ## Prompt templates
 
-Open **Advanced settings → Prompt templates** to customize the system and user instructions sent to the Director.
+Open **Advanced settings → Prompt templates** to choose a saved pair of system
+and user instructions for the Director. **Built-in default** is always available
+and cannot be edited. Choose **New preset from current** to copy the selected
+pair, name it, and edit its system and user templates. Switch presets from the
+picker to compare versions; the selected pair is used on the next Director call.
+Custom prompts saved before presets existed appear as **Previous custom prompt**.
+Deleting a preset takes two clicks and returns to the built-in default.
 
 The built-in templates ask for one forward-looking directive: concrete world changes, pressure on NPCs, what to show next, and what to leave unresolved. They discourage recaps and visible dialogue. The preferred response is:
 

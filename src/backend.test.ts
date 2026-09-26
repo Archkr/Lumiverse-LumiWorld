@@ -424,6 +424,24 @@ describe("v0.5 Jev turn flow", () => {
     expect(latestRun().jev).toBeNull();
   });
 
+  test("uses the selected saved prompt preset for each Director request", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ enabled: false }),
+      activePromptPresetId: "a",
+      promptPresets: [
+        { id: "a", name: "A", systemTemplate: "System A", userTemplate: "User A {{prompt}}" },
+        { id: "b", name: "B", systemTemplate: "System B", userTemplate: "User B {{prompt}}" },
+      ],
+    });
+    await runJevTurn();
+    expect(generatedMessages[0]?.[0]?.content).toContain("System A");
+    expect(generatedMessages[0]?.at(-1)?.content).toContain("User A");
+    await messageHandler!({ type: "save_settings", revision: 30,
+      settings: { activePromptPresetId: "b" } }, "user-jev");
+    await runJevTurn();
+    expect(generatedMessages[1]?.[0]?.content).toContain("System B");
+    expect(generatedMessages[1]?.at(-1)?.content).toContain("User B");
+  });
+
   test("repairs once when verification finds a violation, then re-verifies", async () => {
     answerCleanTurn();
     let verifications = 0;

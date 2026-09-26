@@ -1,8 +1,8 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import {
-  DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
+  BUILTIN_PROMPT_PRESET_ID, DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
   type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord,
-  type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type ConnectionOption, type RunLogEntry,
+  type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type RunLogEntry,
 } from "./shared";
 import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
@@ -58,9 +58,12 @@ const CSS = `
 .lw-input, .lw-textarea, .lw-select { width:100%; min-height:38px; padding:9px 11px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:inherit; }
 .lw-input::placeholder, .lw-textarea::placeholder { color:var(--lumiverse-text-muted); opacity:1; }
 .lw-input:disabled { cursor:not-allowed; }
+.lw-template[readonly] { opacity:.75; cursor:default; }
 .lw-textarea { min-height:90px; resize:vertical; }
 .lw-template { min-height:200px; font:12px/1.6 var(--lumiverse-font-mono,monospace); }
 .lw-actions { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+.lw-preset-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }
+.lw-preset-actions .lw-button { flex:1 1 140px; }
 .lw-test-hint { text-align:center; font-size:11px; }
 .lw-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:38px; padding:8px 12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); color:var(--lumiverse-text); background:var(--lumiverse-fill-subtle); font:inherit; font-weight:600; cursor:pointer; }
 .lw-button:hover:not(:disabled) { background:var(--lumiverse-fill-hover); }
@@ -348,6 +351,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let jevKeyDraft = "";
   let advancedOpen = false;
   let templatesOpen = false;
+  let pendingPresetDeleteId: string | null = null;
   let notesOpen = false;
   let jevOpen = false;
   let jevAdvancedOpen = false;
@@ -581,9 +585,49 @@ export function setup(ctx: SpindleFrontendContext) {
     const input = el("textarea", `lw-textarea${key === "additionalNotes" ? "" : " lw-template"}`);
     input.value = value;
     if (key === "additionalNotes") input.placeholder = "What should the Director keep in mind?";
+    else input.readOnly = draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID;
     input.spellcheck = key === "additionalNotes";
-    input.addEventListener("input", () => mutate({ [key]: input.value }));
+    input.addEventListener("input", () => key === "additionalNotes"
+      ? mutate({ additionalNotes: input.value })
+      : editPromptPreset(key, input.value));
     return field(label, input, hint);
+  }
+
+  function editPromptPreset(key: "systemTemplate" | "userTemplate", value: string): void {
+    if (draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID) return;
+    mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === draft.activePromptPresetId
+      ? { ...preset, [key]: value } : preset) });
+  }
+
+  function createPromptPreset(): void {
+    if (draft.promptPresets.length >= 20) return;
+    const names = new Set(draft.promptPresets.map((preset) => preset.name));
+    let number = 1;
+    while (names.has(`Preset ${number}`)) number++;
+    const preset: PromptPreset = {
+      id: `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name: `Preset ${number}`,
+      systemTemplate: draft.systemTemplate,
+      userTemplate: draft.userTemplate,
+    };
+    pendingPresetDeleteId = null;
+    mutate({ promptPresets: [...draft.promptPresets, preset], activePromptPresetId: preset.id }, true);
+  }
+
+  function choosePromptPreset(id: string): void {
+    pendingPresetDeleteId = null;
+    mutate({ activePromptPresetId: id }, true);
+  }
+
+  function deletePromptPreset(id: string): void {
+    if (pendingPresetDeleteId !== id) {
+      pendingPresetDeleteId = id;
+      render();
+      return;
+    }
+    pendingPresetDeleteId = null;
+    mutate({ promptPresets: draft.promptPresets.filter((preset) => preset.id !== id),
+      activePromptPresetId: BUILTIN_PROMPT_PRESET_ID }, true);
   }
 
   function selectedConnection(): ConnectionOption | null {
@@ -1557,6 +1601,37 @@ export function setup(ctx: SpindleFrontendContext) {
     templates.addEventListener("toggle", () => { templatesOpen = templates.open; });
     templates.append(el("summary", undefined, "Prompt templates"));
     const templateBody = el("div", "lw-details-body");
+    const activePreset = draft.promptPresets.find((preset) => preset.id === draft.activePromptPresetId);
+    templateBody.append(field("Active preset", selectControl(
+      draft.activePromptPresetId,
+      [{ value: BUILTIN_PROMPT_PRESET_ID, label: "Built-in default" },
+        ...draft.promptPresets.map((preset) => ({ value: preset.id, label: preset.name }))],
+      "Prompt preset",
+      choosePromptPreset,
+    )));
+    const presetActions = el("div", "lw-preset-actions");
+    const create = button("New preset from current", createPromptPreset);
+    create.disabled = draft.promptPresets.length >= 20;
+    presetActions.append(create);
+    if (activePreset) {
+      presetActions.append(button("Use built-in defaults", () => choosePromptPreset(BUILTIN_PROMPT_PRESET_ID)));
+      presetActions.append(button(pendingPresetDeleteId === activePreset.id ? "Confirm delete preset" : "Delete preset",
+        () => deletePromptPreset(activePreset.id)));
+    }
+    templateBody.append(presetActions);
+    if (activePreset) {
+      const name = textInput(activePreset.name, "Name this preset", "Preset name", () => {});
+      name.maxLength = 80;
+      name.addEventListener("change", () => {
+        const next = name.value.trim();
+        if (!next) { name.value = activePreset.name; return; }
+        mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === activePreset.id
+          ? { ...preset, name: next } : preset) }, true);
+      });
+      templateBody.append(field("Preset name", name));
+    } else {
+      templateBody.append(el("p", "lw-hint", "The built-in templates are always available. Create a preset to edit a copy."));
+    }
     templateBody.append(textAreaField("System template", "systemTemplate", draft.systemTemplate),
       textAreaField("User template", "userTemplate", draft.userTemplate));
     templates.append(templateBody); advancedBody.append(templates);

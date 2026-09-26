@@ -213,6 +213,7 @@ var DEFAULT_USER_TEMPLATE = [
   'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
+var BUILTIN_PROMPT_PRESET_ID = "builtin";
 var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
@@ -231,6 +232,8 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
+  activePromptPresetId: BUILTIN_PROMPT_PRESET_ID,
+  promptPresets: [],
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
   jev: { ...DEFAULT_JEV_SETTINGS }
 };
@@ -433,8 +436,39 @@ function normalizeSettings(value) {
   const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
-  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const legacyUserTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const promptPresets = [];
+  const seenPresetIds = new Set;
+  if (Array.isArray(obj.promptPresets)) {
+    for (const value of obj.promptPresets) {
+      if (promptPresets.length >= 20)
+        break;
+      const preset = asRecord(value);
+      const id = cleanString(preset.id);
+      const name = cleanString(preset.name);
+      const system = cleanString(preset.systemTemplate) || DEFAULT_SYSTEM_TEMPLATE;
+      const user = cleanString(preset.userTemplate) || DEFAULT_USER_TEMPLATE;
+      if (!id || id === BUILTIN_PROMPT_PRESET_ID || id.length > 80 || seenPresetIds.has(id) || !name || name.length > 80)
+        continue;
+      promptPresets.push({ id, name, systemTemplate: system, userTemplate: user });
+      seenPresetIds.add(id);
+    }
+  }
+  const requestedPresetId = cleanString(obj.activePromptPresetId);
+  let activePromptPresetId = seenPresetIds.has(requestedPresetId) ? requestedPresetId : BUILTIN_PROMPT_PRESET_ID;
+  if (!requestedPresetId && !Array.isArray(obj.promptPresets) && (legacySystemTemplate !== DEFAULT_SYSTEM_TEMPLATE || legacyUserTemplate !== DEFAULT_USER_TEMPLATE)) {
+    promptPresets.push({
+      id: "imported",
+      name: "Previous custom prompt",
+      systemTemplate: legacySystemTemplate,
+      userTemplate: legacyUserTemplate
+    });
+    activePromptPresetId = "imported";
+  }
+  const selectedPreset = promptPresets.find((preset) => preset.id === activePromptPresetId);
+  const systemTemplate = selectedPreset?.systemTemplate ?? DEFAULT_SYSTEM_TEMPLATE;
+  const userTemplate = selectedPreset?.userTemplate ?? DEFAULT_USER_TEMPLATE;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -453,6 +487,8 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
+    activePromptPresetId,
+    promptPresets,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
     jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object" ? { includeWorldInfoEntries, includeUserPersona, includeCharacter } : DEFAULT_SETTINGS)
   };

@@ -172,6 +172,7 @@ var DEFAULT_USER_TEMPLATE = [
   'Start with a verb. No recap. No review. No explanation. No "has just" framing.'
 ].join(`
 `);
+var BUILTIN_PROMPT_PRESET_ID = "builtin";
 var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
@@ -190,6 +191,8 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
+  activePromptPresetId: BUILTIN_PROMPT_PRESET_ID,
+  promptPresets: [],
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
   jev: { ...DEFAULT_JEV_SETTINGS }
 };
@@ -285,8 +288,39 @@ function normalizeSettings(value) {
   const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
-  const userTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const legacyUserTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
+  const promptPresets = [];
+  const seenPresetIds = new Set;
+  if (Array.isArray(obj.promptPresets)) {
+    for (const value of obj.promptPresets) {
+      if (promptPresets.length >= 20)
+        break;
+      const preset = asRecord(value);
+      const id = cleanString(preset.id);
+      const name = cleanString(preset.name);
+      const system = cleanString(preset.systemTemplate) || DEFAULT_SYSTEM_TEMPLATE;
+      const user = cleanString(preset.userTemplate) || DEFAULT_USER_TEMPLATE;
+      if (!id || id === BUILTIN_PROMPT_PRESET_ID || id.length > 80 || seenPresetIds.has(id) || !name || name.length > 80)
+        continue;
+      promptPresets.push({ id, name, systemTemplate: system, userTemplate: user });
+      seenPresetIds.add(id);
+    }
+  }
+  const requestedPresetId = cleanString(obj.activePromptPresetId);
+  let activePromptPresetId = seenPresetIds.has(requestedPresetId) ? requestedPresetId : BUILTIN_PROMPT_PRESET_ID;
+  if (!requestedPresetId && !Array.isArray(obj.promptPresets) && (legacySystemTemplate !== DEFAULT_SYSTEM_TEMPLATE || legacyUserTemplate !== DEFAULT_USER_TEMPLATE)) {
+    promptPresets.push({
+      id: "imported",
+      name: "Previous custom prompt",
+      systemTemplate: legacySystemTemplate,
+      userTemplate: legacyUserTemplate
+    });
+    activePromptPresetId = "imported";
+  }
+  const selectedPreset = promptPresets.find((preset) => preset.id === activePromptPresetId);
+  const systemTemplate = selectedPreset?.systemTemplate ?? DEFAULT_SYSTEM_TEMPLATE;
+  const userTemplate = selectedPreset?.userTemplate ?? DEFAULT_USER_TEMPLATE;
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
@@ -305,6 +339,8 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
+    activePromptPresetId,
+    promptPresets,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
     jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object" ? { includeWorldInfoEntries, includeUserPersona, includeCharacter } : DEFAULT_SETTINGS)
   };
@@ -704,9 +740,12 @@ var CSS = `
 .lw-input, .lw-textarea, .lw-select { width:100%; min-height:38px; padding:9px 11px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:inherit; }
 .lw-input::placeholder, .lw-textarea::placeholder { color:var(--lumiverse-text-muted); opacity:1; }
 .lw-input:disabled { cursor:not-allowed; }
+.lw-template[readonly] { opacity:.75; cursor:default; }
 .lw-textarea { min-height:90px; resize:vertical; }
 .lw-template { min-height:200px; font:12px/1.6 var(--lumiverse-font-mono,monospace); }
 .lw-actions { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+.lw-preset-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }
+.lw-preset-actions .lw-button { flex:1 1 140px; }
 .lw-test-hint { text-align:center; font-size:11px; }
 .lw-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:38px; padding:8px 12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); color:var(--lumiverse-text); background:var(--lumiverse-fill-subtle); font:inherit; font-weight:600; cursor:pointer; }
 .lw-button:hover:not(:disabled) { background:var(--lumiverse-fill-hover); }
@@ -978,6 +1017,7 @@ function setup(ctx) {
   let jevKeyDraft = "";
   let advancedOpen = false;
   let templatesOpen = false;
+  let pendingPresetDeleteId = null;
   let notesOpen = false;
   let jevOpen = false;
   let jevAdvancedOpen = false;
@@ -1253,9 +1293,48 @@ function setup(ctx) {
     input.value = value;
     if (key === "additionalNotes")
       input.placeholder = "What should the Director keep in mind?";
+    else
+      input.readOnly = draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID;
     input.spellcheck = key === "additionalNotes";
-    input.addEventListener("input", () => mutate({ [key]: input.value }));
+    input.addEventListener("input", () => key === "additionalNotes" ? mutate({ additionalNotes: input.value }) : editPromptPreset(key, input.value));
     return field(label, input, hint);
+  }
+  function editPromptPreset(key, value) {
+    if (draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID)
+      return;
+    mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === draft.activePromptPresetId ? { ...preset, [key]: value } : preset) });
+  }
+  function createPromptPreset() {
+    if (draft.promptPresets.length >= 20)
+      return;
+    const names = new Set(draft.promptPresets.map((preset) => preset.name));
+    let number = 1;
+    while (names.has(`Preset ${number}`))
+      number++;
+    const preset = {
+      id: `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name: `Preset ${number}`,
+      systemTemplate: draft.systemTemplate,
+      userTemplate: draft.userTemplate
+    };
+    pendingPresetDeleteId = null;
+    mutate({ promptPresets: [...draft.promptPresets, preset], activePromptPresetId: preset.id }, true);
+  }
+  function choosePromptPreset(id) {
+    pendingPresetDeleteId = null;
+    mutate({ activePromptPresetId: id }, true);
+  }
+  function deletePromptPreset(id) {
+    if (pendingPresetDeleteId !== id) {
+      pendingPresetDeleteId = id;
+      render();
+      return;
+    }
+    pendingPresetDeleteId = null;
+    mutate({
+      promptPresets: draft.promptPresets.filter((preset) => preset.id !== id),
+      activePromptPresetId: BUILTIN_PROMPT_PRESET_ID
+    }, true);
   }
   function selectedConnection() {
     return state?.connections.find((item) => item.id === draft.connectionId) ?? null;
@@ -2098,6 +2177,35 @@ function setup(ctx) {
     });
     templates.append(el("summary", undefined, "Prompt templates"));
     const templateBody = el("div", "lw-details-body");
+    const activePreset = draft.promptPresets.find((preset) => preset.id === draft.activePromptPresetId);
+    templateBody.append(field("Active preset", selectControl(draft.activePromptPresetId, [
+      { value: BUILTIN_PROMPT_PRESET_ID, label: "Built-in default" },
+      ...draft.promptPresets.map((preset) => ({ value: preset.id, label: preset.name }))
+    ], "Prompt preset", choosePromptPreset)));
+    const presetActions = el("div", "lw-preset-actions");
+    const create = button("New preset from current", createPromptPreset);
+    create.disabled = draft.promptPresets.length >= 20;
+    presetActions.append(create);
+    if (activePreset) {
+      presetActions.append(button("Use built-in defaults", () => choosePromptPreset(BUILTIN_PROMPT_PRESET_ID)));
+      presetActions.append(button(pendingPresetDeleteId === activePreset.id ? "Confirm delete preset" : "Delete preset", () => deletePromptPreset(activePreset.id)));
+    }
+    templateBody.append(presetActions);
+    if (activePreset) {
+      const name = textInput(activePreset.name, "Name this preset", "Preset name", () => {});
+      name.maxLength = 80;
+      name.addEventListener("change", () => {
+        const next = name.value.trim();
+        if (!next) {
+          name.value = activePreset.name;
+          return;
+        }
+        mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === activePreset.id ? { ...preset, name: next } : preset) }, true);
+      });
+      templateBody.append(field("Preset name", name));
+    } else {
+      templateBody.append(el("p", "lw-hint", "The built-in templates are always available. Create a preset to edit a copy."));
+    }
     templateBody.append(textAreaField("System template", "systemTemplate", draft.systemTemplate), textAreaField("User template", "userTemplate", draft.userTemplate));
     templates.append(templateBody);
     advancedBody.append(templates);

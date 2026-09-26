@@ -170,6 +170,36 @@ describe("settings normalization", () => {
     expect(cleared.strongModelOverride).toBe("");
   });
 
+  test("preserves a previous custom prompt as a named preset", () => {
+    const migrated = normalizeSettings({
+      systemTemplate: "Legacy system {{prompt}}",
+      userTemplate: "Legacy user {{prompt}}",
+    });
+    expect(migrated.activePromptPresetId).toBe("imported");
+    expect(migrated.promptPresets).toEqual([{
+      id: "imported", name: "Previous custom prompt",
+      systemTemplate: "Legacy system {{prompt}}", userTemplate: "Legacy user {{prompt}}",
+    }]);
+    expect(migrated.systemTemplate).toBe("Legacy system {{prompt}}");
+  });
+
+  test("switches prompt pairs while keeping the built-in pair immutable", () => {
+    const presets = [
+      { id: "a", name: "A", systemTemplate: "System A", userTemplate: "User A {{prompt}}" },
+      { id: "b", name: "B", systemTemplate: "System B", userTemplate: "User B {{prompt}}" },
+    ];
+    const a = normalizeSettings({ promptPresets: presets, activePromptPresetId: "a" });
+    const b = normalizeSettings({ ...a, activePromptPresetId: "b" });
+    const builtin = normalizeSettings({ ...b, activePromptPresetId: "builtin",
+      systemTemplate: "Attempted overwrite", userTemplate: "Attempted overwrite" });
+    expect([a.systemTemplate, a.userTemplate]).toEqual(["System A", "User A {{prompt}}"]);
+    expect([b.systemTemplate, b.userTemplate]).toEqual(["System B", "User B {{prompt}}"]);
+    expect([builtin.systemTemplate, builtin.userTemplate]).toEqual([
+      DEFAULT_SETTINGS.systemTemplate, DEFAULT_SETTINGS.userTemplate,
+    ]);
+    expect(builtin.promptPresets).toEqual(presets);
+  });
+
   test("migrates previous built-in controller templates", () => {
     const settings = normalizeSettings({
       systemTemplate: PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
