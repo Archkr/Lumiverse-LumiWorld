@@ -1,29 +1,91 @@
-import { describe, expect, test } from "bun:test";
-import { DEFAULT_SETTINGS } from "./shared";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { DEFAULT_SETTINGS, type JevSettings, type LumiWorldSettings } from "./shared";
 import type { BackendToFrontend, FrontendToBackend } from "./types";
 
 type Interceptor = (messages: any[], context: unknown) => Promise<any>;
 type MessageHandler = (message: FrontendToBackend, userId: string) => Promise<void>;
 
+const baseSettings: LumiWorldSettings = {
+  ...DEFAULT_SETTINGS,
+  enabled: true,
+  connectionId: "director-connection",
+  includeCharacter: false,
+  includeUserPersona: false,
+};
+
+/** Jev switched on with a stored key; individual tests narrow this further. */
+function jevSettings(patch: Partial<JevSettings> = {}): JevSettings {
+  return { ...DEFAULT_SETTINGS.jev, enabled: true, provider: "typesafe", model: "", gatePolicy: {}, ...patch };
+}
+
 const stored = new Map<string, unknown>([
   ["global/settings.json", {
-    ...DEFAULT_SETTINGS,
-    enabled: true,
-    connectionId: "director-connection",
-    includeCharacter: false,
-    includeUserPersona: false,
+    ...baseSettings,
     worldAgent: { enabled: true, injectState: true, connectionId: "old-world" },
   }],
   ["global/runs.json", [
     { id: "old-world-run", timestamp: 1, status: "success", channel: "world_agent", worldAgentDay: 4, legacyDetail: "keep" },
   ]],
 ]);
+/** Mirrors the encrypted per-user enclave. */
+const enclave = new Map<string, string>();
 const sent: BackendToFrontend[] = [];
 let interceptor: Interceptor | null = null;
 let messageHandler: MessageHandler | null = null;
 let generations = 0;
 let rpcPublications = 0;
 let failNextSettingsSave = false;
+/** Every Jev question map the extension sent, one entry per request. */
+const jevRequests: Array<Record<string, { type: string }>> = [];
+let jevAnswerFor: (gateId: string) => unknown | undefined = () => undefined;
+let corsShouldThrow = false;
+let worldInfoFetches = 0;
+let worldInfoEntryFetches = 0;
+
+function jevAnswerBody(questions: Record<string, { type: string }>): string {
+  const answers: Record<string, unknown> = {};
+  for (const gateId of Object.keys(questions)) {
+    const answer = jevAnswerFor(gateId);
+    if (answer !== undefined) answers[gateId] = answer;
+  }
+  return JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 120, output_tokens: 12 } });
+}
+
+/** Answers just enough for a clean, fully verified Jev turn. */
+function answerCleanTurn(): void {
+  jevAnswerFor = (gateId) => {
+    switch (gateId) {
+      case "smart_trigger": return { type: "noul", noul: 0.95 };
+      case "context_filter": return { type: "choice", choice: "all", probabilities: { all: 0.9, history_only: 0.1 }, confidence: 0.9 };
+      case "model_route": return { type: "choice", choice: "cheap", probabilities: { cheap: 0.9, strong: 0.1 }, confidence: 0.9 };
+      case "director_verification": return { type: "choice", choice: "clean", probabilities: { clean: 0.95, violation: 0.05 }, confidence: 0.95 };
+      case "player_agency": return { type: "noul", noul: 0.02 };
+      case "duplicate_suppression": return { type: "choice", choice: "new", probabilities: { new: 0.9, repeats: 0.05, near_duplicate: 0.05 }, confidence: 0.9 };
+      case "continuity_guard": return { type: "choice", choice: "consistent", probabilities: { consistent: 0.9, violation: 0.05, uncertain: 0.05 }, confidence: 0.9 };
+      case "intensity_boundary": return { type: "choice", choice: "within_range", probabilities: { within_range: 0.9, borderline: 0.05, out_of_range: 0.05 }, confidence: 0.9 };
+      case "repair_strategy": return { type: "choice", choice: "accept", probabilities: { accept: 0.9, full_retry: 0.1 }, confidence: 0.9 };
+      case "scene_state_tracking": return { type: "noul", noul: 0.9 };
+      case "scene_state_diff": return { type: "score", score: 3, legend: {}, probabilities: { "3": 0.9 }, confidence: 0.9 };
+      default: return undefined;
+    }
+  };
+}
+
+const jevMessages = [{ role: "user", content: "I open the observatory door.", __isChatHistory: true }];
+
+/** Runs one Director turn, after making sure the acting user is known. */
+async function runJevTurn(chatId = "chat-jev"): Promise<any> {
+  await messageHandler!({ type: "refresh_state", chatId }, "user-jev");
+  return interceptor!(jevMessages, { chatId, generationType: "normal" });
+}
+
+function directorRuns(result: any): boolean {
+  return Array.isArray(result?.breakdown) && result.breakdown[0]?.name === "LumiWorld Director";
+}
+
+function latestRun(): any {
+  return (stored.get("global/runs.json") as any[])[0];
+}
 
 (globalThis as any).spindle = {
   userStorage: {
@@ -37,6 +99,13 @@ let failNextSettingsSave = false;
       stored.set(path, structuredClone(value));
     },
   },
+  enclave: {
+    get: async (key: string) => enclave.get(key) ?? null,
+    put: async (key: string, value: string) => { enclave.set(key, value); },
+    delete: async (key: string) => enclave.delete(key),
+    has: async (key: string) => enclave.has(key),
+    list: async () => [...enclave.keys()],
+  },
   connections: {
     list: async () => [{ id: "director-connection", name: "Director", provider: "mock", model: "mock-model", has_api_key: true }],
     get: async (id: string) => id === "director-connection"
@@ -45,7 +114,25 @@ let failNextSettingsSave = false;
   permissions: { has: () => true, onChanged: () => {}, onDenied: () => {} },
   personas: { getActive: async () => null },
   chats: { get: async () => null },
-  world_books: {},
+  world_books: {
+    getActivated: async () => {
+      worldInfoFetches += 1;
+      return [{ id: "entry-1", comment: "The sealed hatch" }];
+    },
+    entries: {
+      get: async (id: string) => {
+        worldInfoEntryFetches += 1;
+        return id === "entry-1"
+          ? { id, content: "A hatch is sealed with salt and iron.", comment: "The sealed hatch" } : null;
+      },
+    },
+  },
+  cors: async (_url: string, options: { body: string }) => {
+    if (corsShouldThrow) throw new Error("network unreachable");
+    const payload = JSON.parse(options.body) as { questions: Record<string, { type: string }> };
+    jevRequests.push(payload.questions);
+    return { status: 200, statusText: "OK", headers: {}, body: jevAnswerBody(payload.questions) };
+  },
   generate: { raw: async () => { generations++; return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] }; } },
   rpcPool: { sync: () => { rpcPublications++; } },
   log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -127,5 +214,267 @@ describe("v0.4 backend", () => {
     expect((stored.get("global/settings.json") as any).temperature).toBe(0.7);
     await messageHandler!({ type: "save_settings", revision: 2, settings: { temperature: 0.8 } }, "user-1");
     expect((stored.get("global/settings.json") as any).temperature).toBe(0.8);
+  });
+});
+
+describe("v0.5 Jev turn flow", () => {
+  beforeEach(() => {
+    jevRequests.length = 0;
+    sent.length = 0;
+    generations = 0;
+    corsShouldThrow = false;
+    worldInfoFetches = 0;
+    worldInfoEntryFetches = 0;
+    jevAnswerFor = () => undefined;
+    enclave.clear();
+    enclave.set("jev-api-key:typesafe", "test-key");
+    stored.forEach((_value, key) => { if (key !== "global/runs.json") stored.delete(key); });
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings() });
+    stored.set("global/runs.json", []);
+  });
+
+  test("batches each phase into exactly one request", async () => {
+    answerCleanTurn();
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    // At most two phases: one gate request and one verification request.
+    expect(jevRequests).toHaveLength(2);
+    // Gates travel together in one map instead of one request each.
+    expect(Object.keys(jevRequests[0]!)).toContain("smart_trigger");
+    expect(Object.keys(jevRequests[1]!)).toContain("director_verification");
+    expect(generations).toBe(1);
+  });
+
+  test("skips the Director and sends no verification request when Jev says no", async () => {
+    jevAnswerFor = (gateId) => (gateId === "smart_trigger" ? { type: "noul", noul: 0.04 } : undefined);
+    const result = await runJevTurn();
+    expect(result).toBe(jevMessages);
+    expect(generations).toBe(0);
+    expect(jevRequests).toHaveLength(1);
+    const run = latestRun();
+    expect(run.status).toBe("skipped");
+    expect(run.error).toMatch(/does not need Director intervention/i);
+    expect(run.jev.used).toBe(true);
+    expect(run.jev.status).toBe("skipped");
+  });
+
+  test("fails open and runs the Director when the proxy throws", async () => {
+    corsShouldThrow = true;
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(generations).toBe(1);
+    const run = latestRun();
+    expect(run.status).toBe("success");
+    expect(run.jev.status).toBe("degraded");
+    expect(run.jev.error).toMatch(/network unreachable/);
+    const degradation = run.jev.gates.find((gate: any) => gate.gateId === "budget_degradation");
+    expect(degradation.usedFallback).toBe(true);
+    expect(degradation.fallback).toBe("run");
+  });
+
+  test("runs the Director ungated when no Jev key is stored", async () => {
+    enclave.clear();
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(jevRequests).toHaveLength(0);
+    expect(generations).toBe(1);
+    const run = latestRun();
+    expect(run.jev.status).toBe("degraded");
+    expect(run.jev.error).toMatch(/no jev api key/i);
+  });
+
+  test("does not consult Jev at all when Jev is disabled", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ enabled: false }) });
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(jevRequests).toHaveLength(0);
+    expect(generations).toBe(1);
+    expect(latestRun().jev).toBeNull();
+  });
+
+  test("repairs once when verification finds a violation, then re-verifies", async () => {
+    answerCleanTurn();
+    let verifications = 0;
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => {
+      if (gateId !== "director_verification") return clean(gateId);
+      verifications += 1;
+      return verifications === 1
+        ? { type: "choice", choice: "violation", probabilities: { violation: 0.99, clean: 0.01 }, confidence: 0.99 }
+        : { type: "choice", choice: "clean", probabilities: { clean: 0.95, violation: 0.05 }, confidence: 0.95 };
+    };
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    // One Director call plus exactly one bounded repair regeneration.
+    expect(generations).toBe(2);
+    // gate, verify, re-verify.
+    expect(jevRequests).toHaveLength(3);
+    expect(latestRun().status).toBe("success");
+  });
+
+  test("never loops: a persistent violation stops after one repair", async () => {
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => (gateId === "director_verification"
+      ? { type: "choice", choice: "violation", probabilities: { violation: 0.99, clean: 0.01 }, confidence: 0.99 }
+      : clean(gateId));
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(generations).toBe(2);
+    expect(jevRequests).toHaveLength(3);
+    expect(result.messages[0].content).toContain("[LumiWorld Director]");
+  });
+
+  test("records gate evidence including confidence and thresholds", async () => {
+    answerCleanTurn();
+    await runJevTurn();
+    const run = latestRun();
+    const trigger = run.jev.gates.find((gate: any) => gate.gateId === "smart_trigger");
+    expect(trigger.value).toBe(true);
+    expect(trigger.confidenceDerived).toBe(true);
+    expect(trigger.confidence).toBeCloseTo(0.95, 5);
+    expect(run.jev.requestCount).toBe(2);
+    expect(run.jev.inputTokens).toBe(240);
+    expect(run.jev.resolvedModel).toBe("jev-1.13.0");
+    expect(run.jev.gates.some((gate: any) => gate.gateId === "confidence_escalation")).toBe(true);
+  });
+
+  test("persists derived scene state per chat", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await runJevTurn("chat-state");
+    const path = "chats/chat-state/world.json";
+    expect(stored.has(path)).toBe(true);
+    const state = stored.get(path) as any;
+    expect(state.turn).toBe(1);
+    expect(state.tension).toBe(3);
+  });
+
+  test("skips the World Info fetch when the filter gate discards lore", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      includeWorldInfoEntries: true,
+      jev: jevSettings(),
+    });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => (gateId === "context_filter"
+      ? { type: "choice", choice: "history_only", probabilities: { history_only: 0.9 }, confidence: 0.9 }
+      : clean(gateId));
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    // The gate said lore is irrelevant, so the expensive lookup never happens.
+    expect(worldInfoFetches).toBe(0);
+    expect(worldInfoEntryFetches).toBe(0);
+  });
+
+  test("still fetches World Info when the filter gate keeps it", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      includeWorldInfoEntries: true,
+      jev: jevSettings(),
+    });
+    answerCleanTurn();
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(worldInfoFetches).toBe(1);
+  });
+
+  test("narrows context to the history only when the filter gate says so", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      includeCharacter: true,
+      includeUserPersona: true,
+      jev: jevSettings(),
+    });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => (gateId === "context_filter"
+      ? { type: "choice", choice: "history_only", probabilities: { history_only: 0.9 }, confidence: 0.9 }
+      : clean(gateId));
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(true);
+    expect(latestRun().status).toBe("success");
+  });
+
+  test("keeps the provider's documented fallbacks when the gate phase is inapplicable", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ worldStateEnabled: false }),
+    });
+    answerCleanTurn();
+    await runJevTurn();
+    const run = latestRun();
+    // The scene-state gates need persisted state, so they are omitted from the
+    // batch rather than asked with nothing to answer against.
+    expect(run.jev.gates.some((gate: any) => gate.gateId === "scene_state_diff")).toBe(false);
+    expect(run.status).toBe("success");
+  });
+});
+
+describe("v0.5 Jev drawer protocol", () => {
+  beforeEach(() => {
+    jevRequests.length = 0;
+    sent.length = 0;
+    corsShouldThrow = false;
+    worldInfoFetches = 0;
+    worldInfoEntryFetches = 0;
+    jevAnswerFor = () => undefined;
+    enclave.clear();
+    stored.forEach((_value, key) => { if (key !== "global/runs.json") stored.delete(key); });
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings() });
+    stored.set("global/runs.json", []);
+  });
+
+  test("tests the connection and stores the key on success", async () => {
+    jevAnswerFor = () => ({ type: "noul", noul: 0.97 });
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() }, apiKey: "fresh-key" }, "user-jev");
+    const result = sent.find((message) => message.type === "jev_test_result");
+    expect(result?.type).toBe("jev_test_result");
+    if (result?.type === "jev_test_result" && result.ok) {
+      expect(result.model).toBe("jev-1.13.0");
+      expect(result.answer).toBe("yes");
+      expect(result.provider).toBe("TypeSafe");
+    } else {
+      throw new Error("expected a successful Jev test");
+    }
+    expect(enclave.get("jev-api-key:typesafe")).toBe("fresh-key");
+  });
+
+  test("does not store a key the provider rejected", async () => {
+    corsShouldThrow = true;
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() }, apiKey: "bad-key" }, "user-jev");
+    const result = sent.find((message) => message.type === "jev_test_result");
+    expect(result?.type === "jev_test_result" && result.ok).toBe(false);
+    expect(enclave.has("jev-api-key:typesafe")).toBe(false);
+  });
+
+  test("reports a missing key without calling Jev", async () => {
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() } }, "user-jev");
+    const result = sent.find((message) => message.type === "jev_test_result");
+    expect(result?.type === "jev_test_result" && result.ok).toBe(false);
+    if (result?.type === "jev_test_result" && !result.ok) expect(result.error).toMatch(/no jev api key/i);
+    expect(jevRequests).toHaveLength(0);
+  });
+
+  test("clears a stored key", async () => {
+    enclave.set("jev-api-key:typesafe", "existing");
+    await messageHandler!({ type: "clear_jev_key", provider: "typesafe" }, "user-jev");
+    expect(enclave.has("jev-api-key:typesafe")).toBe(false);
+  });
+
+  test("reports gateway state without exposing the key", async () => {
+    enclave.set("jev-api-key:typesafe", "existing");
+    await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
+    const state = sent.find((message) => message.type === "state");
+    expect(state?.type).toBe("state");
+    if (state?.type !== "state") throw new Error("expected a state message");
+    expect(state.state.hasJevKey).toBe(true);
+    expect(state.state.jevProviderInfo.id).toBe("typesafe");
+    expect(state.state.jevEndpoint).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(JSON.stringify(state.state)).not.toContain("existing");
   });
 });

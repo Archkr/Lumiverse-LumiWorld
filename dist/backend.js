@@ -8,6 +8,62 @@ var VISIBLE_GENERATION_TYPES = [
   "swipe",
   "impersonate"
 ];
+var JEV_PROVIDERS = {
+  typesafe: {
+    id: "typesafe",
+    label: "TypeSafe",
+    baseUrl: "https://api.typesafe.ai",
+    path: "/v1/systemone",
+    defaultModel: "jev-latest",
+    keyUrl: "https://console.typesafe.ai/keys"
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    path: "/alpha/decisions",
+    defaultModel: "typesafe/jev-1.13",
+    keyUrl: "https://openrouter.ai/settings/keys"
+  }
+};
+var JEV_SECRET_KEY_PREFIX = "jev-api-key";
+function jevSecretKey(provider) {
+  return `${JEV_SECRET_KEY_PREFIX}:${provider}`;
+}
+var JEV_MAX_STATE_TOKENS = 32000;
+var DEFAULT_JEV_STATE_CHARS = 30000;
+var MIN_JEV_STATE_CHARS = 2000;
+var MAX_JEV_STATE_CHARS = 32000;
+var DEFAULT_JEV_TIMEOUT_MS = 8000;
+var MIN_JEV_TIMEOUT_MS = 1000;
+var MAX_JEV_TIMEOUT_MS = 60000;
+var MAX_JEV_HISTORY_MESSAGES = 24;
+var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
+var DEFAULT_JEV_SETTINGS = {
+  enabled: false,
+  provider: "typesafe",
+  model: "",
+  baseUrlOverride: "",
+  timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
+  maxStateChars: DEFAULT_JEV_STATE_CHARS,
+  historyMessageLimit: 10,
+  minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
+  retryOnRateLimit: true,
+  worldStateEnabled: true,
+  gatePolicy: {}
+};
+function resolveJevProvider(settings) {
+  const provider = settings.provider === "openrouter" ? "openrouter" : "typesafe";
+  return JEV_PROVIDERS[provider];
+}
+function resolveJevModel(settings) {
+  const model = typeof settings.model === "string" ? settings.model.trim() : "";
+  return model || resolveJevProvider(settings).defaultModel;
+}
+function resolveJevBaseUrl(settings) {
+  const override = typeof settings.baseUrlOverride === "string" ? settings.baseUrlOverride.trim().replace(/\/+$/, "") : "";
+  return override || resolveJevProvider(settings).baseUrl;
+}
 var MAX_DIRECTIVE_CHARS = 2200;
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_DIRECTOR_TIMEOUT_MS = 300000;
@@ -153,6 +209,8 @@ var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
   modelOverride: "",
+  strongConnectionId: null,
+  strongModelOverride: "",
   temperature: 0.35,
   maxTokens: 420,
   timeoutMs: 45000,
@@ -165,7 +223,8 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
-  runLogLimit: DEFAULT_RUN_LOG_LIMIT
+  runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  jev: { ...DEFAULT_JEV_SETTINGS }
 };
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -192,6 +251,170 @@ function normalizeGenerationTypes(value) {
   const normalized = incoming.filter((item) => typeof item === "string" && allowed.has(item));
   return Array.isArray(value) ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
+var GATE_FALLBACKS = [
+  "run",
+  "skip",
+  "accept",
+  "retry",
+  "patch",
+  "soften",
+  "drop",
+  "hold",
+  "none",
+  "ignore"
+];
+function normalizeProbability(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n))
+    return;
+  return Math.min(1, Math.max(0, n));
+}
+function normalizeGatePolicy(value) {
+  const obj = asRecord(value);
+  const normalized = {};
+  for (const [gateId, raw] of Object.entries(obj)) {
+    const id = gateId.trim();
+    if (!id)
+      continue;
+    const entry = asRecord(raw);
+    const policy = {};
+    if (typeof entry.enabled === "boolean")
+      policy.enabled = entry.enabled;
+    const threshold = normalizeProbability(entry.threshold);
+    if (threshold !== undefined)
+      policy.threshold = threshold;
+    const fallback = cleanString(entry.fallback);
+    if (GATE_FALLBACKS.includes(fallback))
+      policy.fallback = fallback;
+    if (Object.keys(policy).length > 0)
+      normalized[id] = policy;
+  }
+  return normalized;
+}
+function normalizeJevSettings(value) {
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
+    provider,
+    model: cleanString(obj.model),
+    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
+    maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
+    minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
+    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
+    worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
+    gatePolicy: normalizeGatePolicy(obj.gatePolicy)
+  };
+}
+var JEV_STATUSES = ["ok", "degraded", "skipped"];
+var JEV_PRIMITIVES = ["noul", "choice", "score"];
+var JEV_PHASES = ["gate", "verify"];
+function normalizeGateValue(value) {
+  if (typeof value === "string")
+    return value.trim() || null;
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean")
+    return value;
+  return null;
+}
+function normalizeProbabilityMap(value) {
+  const obj = asRecord(value);
+  const entries = Object.entries(obj).map(([key, raw]) => {
+    const probability = normalizeProbability(raw);
+    return probability === undefined ? null : [key, probability];
+  }).filter((entry) => entry !== null);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+function normalizeJevGateRecord(value) {
+  const obj = asRecord(value);
+  const gateId = cleanString(obj.gateId);
+  const primitive = cleanString(obj.primitive);
+  const phase = cleanString(obj.phase);
+  if (!gateId || !JEV_PRIMITIVES.includes(primitive) || !JEV_PHASES.includes(phase))
+    return null;
+  const fallback = cleanString(obj.fallback);
+  const rawConfidence = normalizeProbability(obj.confidence);
+  return {
+    gateId,
+    label: cleanString(obj.label) || gateId,
+    primitive,
+    phase,
+    value: normalizeGateValue(obj.value),
+    probability: normalizeProbability(obj.probability) ?? null,
+    confidence: rawConfidence ?? null,
+    confidenceDerived: obj.confidenceDerived === true,
+    threshold: numberInRange(obj.threshold, 0, 0, 1),
+    escalated: obj.escalated === true,
+    usedFallback: obj.usedFallback === true,
+    fallback: GATE_FALLBACKS.includes(fallback) ? fallback : "none",
+    probabilities: normalizeProbabilityMap(obj.probabilities),
+    note: cleanNullableString(obj.note) ?? undefined
+  };
+}
+function normalizeJevTurnDiagnostics(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider);
+  const status = cleanString(obj.status);
+  const nullableInt = (raw) => {
+    if (raw == null)
+      return null;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < 0)
+      return null;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.round(n));
+  };
+  const gates = (Array.isArray(obj.gates) ? obj.gates : []).map(normalizeJevGateRecord).filter((gate) => gate !== null);
+  return {
+    used: obj.used === true,
+    enabled: obj.enabled === true,
+    provider: provider === "typesafe" || provider === "openrouter" ? provider : null,
+    model: cleanNullableString(obj.model),
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    status: JEV_STATUSES.includes(status) ? status : "skipped",
+    error: cleanNullableString(obj.error),
+    requestCount: integerInRange(obj.requestCount, gates.length > 0 ? 1 : 0, 0, 16),
+    inputTokens: nullableInt(obj.inputTokens),
+    outputTokens: nullableInt(obj.outputTokens),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    gatePhaseMs: nullableInt(obj.gatePhaseMs),
+    verifyPhaseMs: nullableInt(obj.verifyPhaseMs),
+    gateCount: integerInRange(obj.gateCount, gates.length, 0, Number.MAX_SAFE_INTEGER),
+    fallbackCount: integerInRange(obj.fallbackCount, gates.filter((gate) => gate.usedFallback).length, 0, Number.MAX_SAFE_INTEGER),
+    escalatedCount: integerInRange(obj.escalatedCount, gates.filter((gate) => gate.escalated).length, 0, Number.MAX_SAFE_INTEGER),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    gates
+  };
+}
+function makeJevDiagnostics(patch = {}) {
+  return {
+    used: false,
+    enabled: false,
+    provider: null,
+    model: null,
+    resolvedModel: null,
+    status: "skipped",
+    error: null,
+    requestCount: 0,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    gatePhaseMs: null,
+    verifyPhaseMs: null,
+    gateCount: 0,
+    fallbackCount: 0,
+    escalatedCount: 0,
+    stateChars: 0,
+    stateCompacted: false,
+    gates: [],
+    ...patch
+  };
+}
 function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -202,6 +425,8 @@ function normalizeSettings(value) {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
     modelOverride: cleanString(obj.modelOverride),
+    strongConnectionId: cleanNullableString(obj.strongConnectionId),
+    strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
@@ -214,7 +439,8 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
-    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50)
+    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    jev: normalizeJevSettings(obj.jev)
   };
 }
 function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
@@ -244,7 +470,8 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
       worldInfoActivatedCount: obj.worldInfoActivatedCount == null ? null : integerInRange(obj.worldInfoActivatedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
-      worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError)
+      worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
+      jev: normalizeJevTurnDiagnostics(obj.jev)
     };
   }).filter((item) => !!item).sort((left, right) => right.timestamp - left.timestamp);
   return normalized.slice(0, Math.max(0, limit));
@@ -783,10 +1010,1280 @@ function makeDirectivePreview(directive, maxChars = 360) {
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1).trimEnd()}...`;
 }
 
+// src/gates.ts
+var REPORTED_CONFIDENCE = 1;
+function noul(id, label, category, phase, instructions, rationale, criteria, fallback) {
+  return {
+    id,
+    label,
+    primitive: "noul",
+    primitiveLabel: "Yes / No",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.6,
+    fallback,
+    safeValue: true,
+    blockValue: false
+  };
+}
+function choice(id, label, category, phase, instructions, rationale, criteria, fallback, safeValue, blockValue) {
+  return {
+    id,
+    label,
+    primitive: "choice",
+    primitiveLabel: "Choice",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback,
+    safeValue,
+    blockValue
+  };
+}
+function score(id, label, category, phase, instructions, rationale, criteria, fallback, safeValue, blockValue) {
+  return {
+    id,
+    label,
+    primitive: "score",
+    primitiveLabel: "Score",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback,
+    safeValue,
+    blockValue
+  };
+}
+var CORE_GATES = new Set([
+  "smart_trigger",
+  "context_filter",
+  "model_route",
+  "director_verification",
+  "player_agency",
+  "duplicate_suppression",
+  "continuity_guard",
+  "intensity_boundary",
+  "confidence_escalation",
+  "budget_degradation",
+  "scene_state_tracking"
+]);
+function withCore(gates) {
+  return gates.map((gate) => CORE_GATES.has(gate.id) ? { ...gate, enabledByDefault: true } : gate);
+}
+var GATE_CATALOG = withCore([
+  noul("smart_trigger", "Smart Director triggering", "director_control", "gate", "Given `chat_history`, `scene_state`, `director_notes`, and the latest player message, is there anything in this turn that a private world director should intervene in before the visible reply is written? Judge only whether intervention would add something the main model would otherwise miss.", "Decides whether the Director runs at all, so a quiet or purely conversational turn costs one cheap Jev call instead of a full Director generation.", {
+    true: "The turn creates or changes world pressure, NPC intent, an offscreen consequence, a reveal, or a development the main model would plausibly miss",
+    false: "The turn is a direct continuation of the immediately preceding exchange and needs no new world development"
+  }, "run"),
+  choice("context_filter", "Context filtering", "director_control", "gate", "Which parts of the assembled context are actually relevant to directing this turn? Choose the smallest set that still covers what the Director needs.", "Drops irrelevant lore and context before the Director sees it, which cuts prompt tokens and reduces distraction.", {
+    all: "Every available context source is relevant",
+    history_and_character: "Recent chat history and the active character matter; detailed lore does not",
+    world_info_only: "The activated lore matters more than the recent small talk",
+    history_only: "Only the recent exchange matters; drop character sheets and lore"
+  }, "run", "all", "history_only"),
+  choice("model_route", "Model routing", "director_control", "gate", "How difficult is this turn to direct? Judge the complexity of the world development needed, not the length of the chat.", "Selects a cheap or strong Director model per turn instead of paying for the strongest model on every reply.", {
+    cheap: "A small, local development is enough; no deep reasoning required",
+    strong: "A consequential, multi-thread, or continuity-sensitive development is needed"
+  }, "run", "cheap", "strong"),
+  choice("pacing_control", "Pacing control", "director_control", "gate", "How should the scene's pacing be handled in the next development?", "Translates stagnation, tension, and urgency into a pacing instruction for the Director.", {
+    hold: "Let the current beat breathe; do not accelerate",
+    tighten: "Increase pressure and shorten the scene's patience",
+    slow: "Give the scene a slower, quieter treatment",
+    turn: "Introduce a reversal that changes the direction of the scene"
+  }, "run", "hold", "slow"),
+  choice("npc_autonomy", "NPC autonomy", "director_control", "gate", "Which category of action should a non-player character take next, if any?", "Picks who acts and the kind of action, after which the Director writes the specific, natural action.", {
+    none: "No NPC needs to act in this turn",
+    confront: "An NPC directly challenges, blocks, or pushes back",
+    withdraw: "An NPC pulls away, goes quiet, or leaves the exchange",
+    reveal_intent: "An NPC shows their true motive or loyalty",
+    assist: "An NPC helps, concedes, or offers something",
+    conspire: "An NPC acts behind the scenes or coordinates with another"
+  }, "run", "none", "withdraw"),
+  noul("world_movement", "World movement", "director_control", "gate", "Should offscreen factions, organisations, or background events advance during this turn?", "Keeps the world moving without the visible cast, and prevents the world from freezing around the player.", {
+    true: "Something offscreen would plausibly progress now and its consequence could reach the scene",
+    false: "Nothing offscreen would meaningfully change in the span of this turn"
+  }, "run"),
+  noul("reveal_control", "Reveal control", "director_control", "gate", "Is now a good moment for a previously withheld secret or reveal to begin landing? Judge readiness, not whether the secret exists.", "Stops the Director from either hoarding a reveal forever or spending it too early.", {
+    true: "Enough has been established that landing part of this reveal now would read as earned",
+    false: "The reveal has not been set up enough, or the scene has no room for it now"
+  }, "run"),
+  choice("conflict_escalation", "Conflict escalation", "director_control", "gate", "What should happen to the current conflict?", "Chooses the conflict beat so the Director constructs an event in the right register.", {
+    hold: "Leave the conflict at its current level",
+    escalate: "Raise the stakes, cost, or hostility",
+    interrupt: "Cut the conflict short with an outside event",
+    resolve: "Bring this conflict to a genuine conclusion",
+    redirect: "Move the conflict somewhere else or onto a different target"
+  }, "run", "hold", "resolve"),
+  choice("story_thread", "Story-thread management", "director_control", "gate", "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for the open threads if present.", "Picks the thread to advance so the Director does not drift onto uninteresting tangents.", {
+    none: "No open thread needs movement right now",
+    primary: "The main unresolved thread",
+    secondary: "A background or supporting thread",
+    newest: "The thread introduced most recently",
+    neglected: "The thread that has been untouched longest"
+  }, "run", "none", "primary"),
+  choice("arc_position", "Arc position", "director_control", "gate", "Where does this scene currently sit in its dramatic arc?", "Anchors the Director's development to the scene's dramatic position instead of an arbitrary beat.", {
+    setup: "Establishing characters, place, and stakes",
+    rising: "Pressure and complications building",
+    turn: "A reversal or reframing has just occurred",
+    climax: "The decisive confrontation or peak",
+    release: "Aftermath and decompression"
+  }, "run", "setup", "release"),
+  choice("development_shape", "Development shape", "director_control", "gate", "What form should the next development take?", "Decides the shape of the beat so the Director realises that form rather than defaulting to a description of the environment.", {
+    npc_action: "A character does something with visible consequence",
+    dialogue: "A line of dialogue reframes the situation",
+    environmental: "The environment or setting itself changes",
+    revelation: "Information is disclosed",
+    time_skip: "Time passes and the situation has moved on",
+    offscreen_cut: "The scene cuts to something happening elsewhere"
+  }, "run", "environmental", "offscreen_cut"),
+  choice("focus_selection", "Focus selection", "director_control", "gate", "Which element should this development centre on?", "Focuses the beat so it lands rather than diffusing across the whole cast.", {
+    player: "The player's character and their immediate situation",
+    active_npc: "The character currently most engaged with the player",
+    absent_npc: "A character who is not in the scene right now",
+    location: "The place itself and what it is doing",
+    faction: "An organisation or group acting in the background"
+  }, "run", "player", "faction"),
+  choice("time_clock", "Time and clock control", "world", "gate", "Should in-world time advance during this turn, and roughly how far?", "Controls the story clock so the Director does not narrate irrelevant passage of time.", {
+    none: "Time does not meaningfully advance",
+    minutes: "A few minutes pass",
+    hours: "Some hours pass",
+    day: "A day or more passes"
+  }, "run", "none", "day"),
+  choice("environment_conditions", "Environment and conditions", "world", "gate", "Should the environment change during this turn \u2014 weather, light, temperature, or the condition of the location?", "Lets the world react physically without the Director decorating every reply with weather.", {
+    unchanged: "Leave conditions as they are",
+    weather: "Weather shifts",
+    light: "Light or time-of-day shifts",
+    location_state: "The location itself is altered or damaged",
+    worsening: "Conditions deteriorate in a way that presses on the scene"
+  }, "run", "unchanged", "worsening"),
+  choice("npc_entry_exit", "NPC entry and exit", "world", "gate", "Should any non-player character enter or leave the scene during this turn?", "Stages arrivals and departures deliberately instead of leaving the cast static.", {
+    none: "The current cast stays as it is",
+    enter_known: "A character already established elsewhere arrives",
+    enter_new: "A new character appears",
+    exit: "A present character leaves"
+  }, "run", "none", "exit"),
+  choice("consequence_propagation", "Consequence propagation", "world", "gate", "Should the most recent committed development ripple outward into factions, threads, or relationships offscreen?", "Propagates consequences so the world remembers what happened even when the scene moves on.", {
+    contained: "The development stays local to the scene",
+    faction: "An organisation reacts",
+    relationship: "A relationship changes because of it",
+    thread: "Another thread is affected by it",
+    broad: "Several of the above react at once"
+  }, "run", "contained", "broad"),
+  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `chat_history` and `scene_state`. Does it contain a contradiction, a repetition of something already committed, or a premature resolution of an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
+    clean: "The directive is free of contradictions, repetition, and premature resolution",
+    violation: "The directive contains at least one of those problems",
+    uncertain: "Something looks off, but it is not clear enough to call a violation"
+  }, "accept", "clean", "violation"),
+  noul("player_agency", "Player agency guard", "guardrails", "verify", "Does `draft_directive` decide what the player's character thinks, feels, says, or does? Judge only the player's character, not NPCs and not the world.", "Catches the most damaging Director failure: a private note that hijacks the player's character.", {
+    true: "The directive dictates the player's character's decision, dialogue, thoughts, or movement",
+    false: "The directive leaves the player's character's choices open"
+  }, "patch"),
+  choice("user_intent_arbitration", "User-intent arbitration", "guardrails", "verify", "The player's explicit out-of-character instruction, if any, is in `director_notes`. Does `draft_directive` follow that instruction, follow the world's momentum, or blend them?", "Reconciles an explicit player instruction with the world's own momentum instead of silently overriding the player.", {
+    follows_instruction: "The directive honours the explicit instruction",
+    follows_world: "The directive follows world momentum and sets the instruction aside",
+    blends: "The directive satisfies both, weighting the instruction",
+    not_applicable: "There is no explicit out-of-character instruction to reconcile"
+  }, "accept", "not_applicable", "follows_world"),
+  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compared with the recent exchange in `chat_history`, does `draft_directive` develop something genuinely new or repeat a development that has already been committed?", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
+    new: "The development has not happened yet in the recent exchange",
+    repeats: "The directive repeats a development that already happened",
+    near_duplicate: "The directive is a thin variation on something that already happened"
+  }, "retry", "new", "repeats"),
+  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict established facts in `chat_history`, `scene_state`, or `world_info`?", "Prevents the Director from breaking facts the story has already committed to.", {
+    consistent: "Nothing in the directive contradicts established facts",
+    violation: "The directive contradicts an established fact",
+    uncertain: "The directive may contradict an established fact, but it is not clear"
+  }, "soften", "consistent", "violation"),
+  choice("intensity_boundary", "Intensity and boundary gating", "guardrails", "verify", "Weigh `draft_directive` against `director_notes` and the scene's established intensity. Does it stay inside the range the player has signalled?", "Keeps the Director inside the intensity band the player actually asked for, rather than escalating past it.", {
+    within_range: "The directive stays inside the established range",
+    borderline: "The directive sits at the edge of the range",
+    out_of_range: "The directive exceeds the established range or crosses a stated boundary"
+  }, "soften", "within_range", "out_of_range"),
+  noul("claim_extraction", "Claim extraction", "state_accuracy", "verify", "Does `draft_directive` assert a concrete fact, action, or state change that should be recorded as committed?", "Flags directives that introduce committable facts, so only validated claims reach the world state.", {
+    true: "The directive asserts at least one concrete fact, action, or state change",
+    false: "The directive is purely atmospheric and commits nothing"
+  }, "none"),
+  noul("contradiction_localization", "Contradiction localization", "state_accuracy", "verify", "If `draft_directive` conflicts with committed facts, is the conflict confined to a single element rather than the whole directive?", "Tells the repair path whether a targeted patch is viable or the whole directive must be regenerated.", {
+    true: "The conflict is confined to one element that could be replaced on its own",
+    false: "The conflict affects the directive as a whole, or there is no conflict"
+  }, "patch"),
+  choice("repair_strategy", "Repair strategy", "state_accuracy", "verify", "Given the checks recorded in `scene_state` and the draft in `draft_directive`, which repair fits best if a repair is needed?", "Chooses the cheapest repair that resolves the problem instead of always regenerating.", {
+    accept: "No repair needed",
+    full_retry: "Regenerate the directive from scratch",
+    patch: "Replace only the offending element",
+    soften: "Keep the directive but reduce its force",
+    drop_claim: "Drop the offending claim and keep the rest"
+  }, "accept", "accept", "soften"),
+  noul("scene_state_tracking", "Scene state tracking", "state_accuracy", "verify", "Does the draft directive change the scene's location, danger level, tension, active characters, or unresolved hooks in a way worth persisting for the next turn?", "Decides whether the derived scene state needs updating, so later turns inherit an accurate world model.", {
+    true: "The directive changes at least one tracked scene state field",
+    false: "The scene state is unchanged by this directive"
+  }, "none"),
+  score("scene_state_diff", "Scene state diff", "state_accuracy", "verify", "How much did this directive move the scene's tension?", "Supplies the per-turn tension delta that the persisted scene state advances by.", [
+    "Tension fell sharply; the scene decompressed",
+    "Tension eased slightly",
+    "Tension is unchanged",
+    "Tension rose slightly",
+    "Tension rose sharply; the scene is now wound much tighter"
+  ], "none", 2, 2),
+  score("relationship_deltas", "Relationship deltas", "state_accuracy", "verify", "In this directive, how did the most affected character's stance toward the player change?", "Records the per-character shift in stance so later dialogue and action reflect the new relationship.", [
+    "Markedly more hostile or distrustful",
+    "Slightly cooler or more guarded",
+    "Unchanged",
+    "Slightly warmer or more trusting",
+    "Markedly more trusting, indebted, or attached"
+  ], "none", 2, 2),
+  choice("thread_lifecycle", "Thread lifecycle", "state_accuracy", "verify", "What is the state of the story thread this directive develops?", "Closes or parks threads deliberately so the open-thread list stays meaningful.", {
+    continue: "Still open and worth developing further",
+    resolve: "Brought to a genuine conclusion by this directive",
+    dormant: "Parked for now, still open but not active",
+    abandoned: "Dropped; this thread is no longer part of the story"
+  }, "none", "continue", "abandoned"),
+  score("emotional_release", "Emotional release", "narrative", "gate", "Given `chat_history` and `scene_state`, how much does the accumulated tension in this scene need a release right now?", "Stops the Director from holding tension forever, which is the usual way a slow scene becomes tiring.", [
+    "Hold the tension; a release now would deflate the scene",
+    "Ease the tension very slightly",
+    "Neutral; no release is needed either way",
+    "A short release would help the scene breathe",
+    "The scene urgently needs a release, comic beat, or quiet moment"
+  ], "run", 2, 2),
+  noul("foreshadowing", "Foreshadowing", "narrative", "gate", "Should this turn plant a small seed for a future development without paying it off now?", "Encourages deliberate setup so later revelations feel earned rather than abrupt.", {
+    true: "A detail could be planted now that would pay off later without drawing attention",
+    false: "A planted detail would read as conspicuous, or there is nothing worth setting up"
+  }, "run"),
+  noul("callback", "Callback", "narrative", "gate", "Does `chat_history` contain an earlier established detail that would land well if it were echoed in this turn?", "Reuses what the story has already built instead of introducing new material by default.", {
+    true: "There is an earlier detail whose return would feel meaningful now",
+    false: "No earlier detail would land naturally in this turn"
+  }, "run"),
+  score("hook_prioritization", "Hook prioritization", "narrative", "gate", "Judging by stakes and readiness, how strong is the case for advancing the most promising unresolved hook this turn?", "Ranks open hooks so the Director advances the one that most deserves movement.", [
+    "Advance no hook this turn",
+    "Weak case; the hooks can wait",
+    "Moderate case for advancing the top hook",
+    "Strong case; this hook is ready and matters",
+    "Advance the top hook now; further delay would deflate it"
+  ], "run", 2, 2),
+  noul("context_compaction", "Context compaction", "narrative", "gate", "Is `chat_history` long or repetitive enough that older context should be summarised to protect the context window?", "Decides when the Director should spend tokens summarising rather than re-reading old context.", {
+    true: "Older context has become long or repetitive enough to be worth summarising",
+    false: "The current context is compact enough to keep as it is"
+  }, "run"),
+  {
+    id: "confidence_escalation",
+    label: "Confidence escalation",
+    primitive: "noul",
+    primitiveLabel: "Computed",
+    phase: "verify",
+    category: "guardrails",
+    instructions: "",
+    rationale: "Flags every gate answer whose confidence falls below the configured floor so only the uncertain decisions are escalated and logged for the diagnostics view.",
+    enabledByDefault: false,
+    threshold: 0.55,
+    fallback: "none",
+    safeValue: true,
+    blockValue: false,
+    codeOnly: true,
+    appliesWhen: "Evaluated in code from the confidence Jev reports for the other gates."
+  },
+  {
+    id: "budget_degradation",
+    label: "Graceful degradation",
+    primitive: "noul",
+    primitiveLabel: "Computed",
+    phase: "gate",
+    category: "guardrails",
+    instructions: "",
+    rationale: "Detects unavailability, timeout, token-budget exhaustion, and rate limiting, then selects the declared fallback so LumiWorld still runs Director-only.",
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback: "run",
+    safeValue: true,
+    blockValue: false,
+    codeOnly: true,
+    appliesWhen: "Evaluated in code from the Jev client result and the remaining interceptor budget."
+  }
+]);
+var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+function resolveGatePolicy(definition, settings) {
+  const override = settings.gatePolicy[definition.id];
+  const enabled = override?.enabled ?? definition.enabledByDefault;
+  const threshold = override?.threshold ?? (definition.id === "confidence_escalation" ? settings.minConfidence : definition.threshold);
+  const fallback = override?.fallback ?? definition.fallback;
+  return { definition, enabled, threshold, fallback };
+}
+function resolveAllGatePolicies(settings) {
+  return new Map(GATE_CATALOG.map((definition) => [definition.id, resolveGatePolicy(definition, settings)]));
+}
+function dynamicCriteria(id, context, base) {
+  if (id !== "context_filter")
+    return base.criteria;
+  const options = {
+    all: "Every available context source is relevant"
+  };
+  if (context.hasHistory) {
+    options.history_only = "Only the recent exchange matters; drop character sheets and lore";
+    options.history_and_character = "Recent chat history and the active character matter; detailed lore does not";
+  }
+  if (context.hasWorldInfo)
+    options.world_info_only = "The activated lore matters more than the recent small talk";
+  if (!context.hasCharacter && !context.hasPersona) {
+    delete options.history_and_character;
+  }
+  if (!context.hasWorldInfo)
+    delete options.world_info_only;
+  return options;
+}
+function gateApplies(definition, context) {
+  switch (definition.id) {
+    case "smart_trigger":
+      return true;
+    case "context_filter":
+      return context.hasHistory || context.hasCharacter || context.hasPersona || context.hasWorldInfo;
+    case "pacing_control":
+    case "story_thread":
+    case "arc_position":
+    case "focus_selection":
+    case "emotional_release":
+    case "hook_prioritization":
+    case "context_compaction":
+    case "callback":
+      return context.hasHistory;
+    case "foreshadowing":
+      return context.hasHistory || context.hasWorldInfo;
+    case "reveal_control":
+      return context.hasHistory || context.hasWorldInfo;
+    case "world_movement":
+    case "consequence_propagation":
+      return context.hasHistory || context.hasWorldInfo;
+    case "scene_state_tracking":
+    case "scene_state_diff":
+      return context.worldStateEnabled;
+    case "relationship_deltas":
+    case "thread_lifecycle":
+      return context.worldStateEnabled || context.hasHistory;
+    default:
+      return true;
+  }
+}
+function planGates(phase, settings, context, overrides = {}) {
+  const policies = resolveAllGatePolicies(settings);
+  const selected = [];
+  const skipped = [];
+  for (const definition of GATE_CATALOG) {
+    if (definition.phase !== phase)
+      continue;
+    if (definition.codeOnly)
+      continue;
+    const policy = policies.get(definition.id);
+    const forced = overrides[definition.id];
+    const enabled = forced !== undefined ? true : policy.enabled;
+    if (!enabled) {
+      skipped.push(definition.id);
+      continue;
+    }
+    if (!gateApplies(definition, context)) {
+      skipped.push(definition.id);
+      continue;
+    }
+    selected.push({
+      policy,
+      question: {
+        type: definition.primitive,
+        instructions: definition.instructions,
+        ...definition.criteria ? { criteria: dynamicCriteria(definition.id, context, definition) } : {}
+      }
+    });
+  }
+  return { gates: selected, skipped };
+}
+function questionsFromPlan(plan) {
+  const questions = {};
+  for (const entry of plan.gates)
+    questions[entry.policy.definition.id] = entry.question;
+  return questions;
+}
+function matches(value, expected) {
+  if (typeof value === "number" && typeof expected === "number")
+    return Math.abs(value - expected) < 0.000000001;
+  return value === expected;
+}
+function resolveGateAnswer(policy, rawAnswer, resolveContext) {
+  const { definition } = policy;
+  const base = {
+    gateId: definition.id,
+    label: definition.label,
+    primitive: definition.primitive,
+    phase: definition.phase,
+    value: null,
+    probability: null,
+    confidence: null,
+    confidenceDerived: false,
+    threshold: policy.threshold,
+    escalated: false,
+    usedFallback: false,
+    fallback: policy.fallback
+  };
+  if (!rawAnswer) {
+    return {
+      ...base,
+      usedFallback: true,
+      note: "Jev returned no answer for this gate, so its fallback applied."
+    };
+  }
+  let value;
+  let confidence;
+  let probability;
+  let confidenceDerived = false;
+  let probabilities;
+  if (rawAnswer.type === "noul") {
+    value = rawAnswer.noul >= 0.5;
+    probability = rawAnswer.noul;
+    confidence = rawAnswer.noul >= 0.5 ? rawAnswer.noul : 1 - rawAnswer.noul;
+    confidenceDerived = true;
+  } else if (rawAnswer.type === "choice") {
+    value = rawAnswer.choice;
+    probabilities = rawAnswer.probabilities;
+    probability = rawAnswer.probabilities[rawAnswer.choice] ?? null;
+    confidence = rawAnswer.confidence ?? REPORTED_CONFIDENCE;
+  } else {
+    value = rawAnswer.score;
+    probabilities = rawAnswer.probabilities;
+    probability = rawAnswer.probabilities[String(Math.round(rawAnswer.score))] ?? null;
+    confidence = rawAnswer.confidence ?? REPORTED_CONFIDENCE;
+  }
+  const escalated = confidence !== null && confidence < Math.max(policy.threshold, resolveContext.minConfidence);
+  const escalatedNote = escalated ? `Confidence ${confidence !== null ? confidence.toFixed(2) : "unknown"} is below the ${Math.max(policy.threshold, resolveContext.minConfidence).toFixed(2)} floor, so the fallback applied.` : undefined;
+  return {
+    ...base,
+    value,
+    probability,
+    confidence,
+    confidenceDerived,
+    escalated,
+    usedFallback: escalated,
+    probabilities,
+    note: escalatedNote ?? (confidenceDerived ? "Noul answers carry no confidence; this value is derived from the probability." : undefined)
+  };
+}
+function resolveGateAnswers(plan, answers, minConfidence) {
+  return plan.gates.map((entry) => resolveGateAnswer(entry.policy, answers[entry.policy.definition.id], { minConfidence }));
+}
+function gateRecordById(records, gateId) {
+  return records.find((record) => record.gateId === gateId);
+}
+function shouldRunDirector(records) {
+  const trigger = gateRecordById(records, "smart_trigger");
+  if (!trigger)
+    return { run: true, reason: null };
+  if (trigger.usedFallback || trigger.value === null)
+    return { run: true, reason: null };
+  if (matches(trigger.value, true))
+    return { run: true, reason: null };
+  return { run: false, reason: "Jev judged that this turn does not need Director intervention." };
+}
+function contextFilterDecision(records) {
+  const record = gateRecordById(records, "context_filter");
+  if (!record || record.usedFallback || typeof record.value !== "string")
+    return null;
+  switch (record.value) {
+    case "all":
+      return { keepHistory: true, keepCharacter: true, keepPersona: true, keepWorldInfo: true };
+    case "history_and_character":
+      return { keepHistory: true, keepCharacter: true, keepPersona: false, keepWorldInfo: false };
+    case "world_info_only":
+      return { keepHistory: false, keepCharacter: false, keepPersona: false, keepWorldInfo: true };
+    case "history_only":
+      return { keepHistory: true, keepCharacter: false, keepPersona: false, keepWorldInfo: false };
+    default:
+      return null;
+  }
+}
+function wantsStrongDirectorModel(records) {
+  const record = gateRecordById(records, "model_route");
+  if (!record || record.usedFallback)
+    return false;
+  return record.value === "strong";
+}
+function decideRepair(records) {
+  const strategy = gateRecordById(records, "repair_strategy");
+  const chosen = typeof strategy?.value === "string" && !strategy.usedFallback ? strategy.value : null;
+  const violation = (gateId, blockingValue) => {
+    const record = gateRecordById(records, gateId);
+    if (!record || record.usedFallback || record.value === null)
+      return;
+    return matches(record.value, blockingValue) ? record : undefined;
+  };
+  if (violation("player_agency", true)) {
+    return { action: chosen && chosen !== "accept" ? chosen : "patch", reason: "The draft directive decided something for the player's character." };
+  }
+  const duplicate = violation("duplicate_suppression", "repeats") ?? violation("duplicate_suppression", "near_duplicate");
+  if (duplicate) {
+    return { action: chosen && chosen !== "accept" ? chosen : "full_retry", reason: "The draft directive repeats a development that already happened." };
+  }
+  if (violation("continuity_guard", "violation")) {
+    return { action: chosen && chosen !== "accept" ? chosen : "soften", reason: "The draft directive contradicts an established fact." };
+  }
+  if (violation("intensity_boundary", "out_of_range")) {
+    return { action: chosen && chosen !== "accept" ? chosen : "soften", reason: "The draft directive exceeds the established intensity range." };
+  }
+  if (violation("director_verification", "violation")) {
+    return { action: chosen && chosen !== "accept" ? chosen : "full_retry", reason: "Jev's overall verification flagged the draft directive." };
+  }
+  return null;
+}
+function countJevFlags(records) {
+  return {
+    fallback: records.filter((record) => record.usedFallback).length,
+    escalated: records.filter((record) => record.escalated).length
+  };
+}
+function withDegradationGate(records, diagnostics) {
+  const definition = GATE_BY_ID.get("budget_degradation");
+  const degraded = diagnostics.status !== "ok";
+  const record = {
+    gateId: definition.id,
+    label: definition.label,
+    primitive: definition.primitive,
+    phase: definition.phase,
+    value: degraded,
+    probability: null,
+    confidence: null,
+    confidenceDerived: false,
+    threshold: definition.threshold,
+    escalated: degraded,
+    usedFallback: degraded,
+    fallback: definition.fallback,
+    note: degraded ? `Jev was unavailable, so LumiWorld ran the Director ungated. ${diagnostics.error ?? diagnostics.reason ?? ""}`.trim() : "Jev answered every gate for this turn."
+  };
+  return [...records, record];
+}
+function withConfidenceGate(records, floor) {
+  const escalated = records.filter((record) => record.escalated);
+  const record = {
+    gateId: "confidence_escalation",
+    label: "Confidence escalation",
+    primitive: "noul",
+    phase: "verify",
+    value: escalated.length > 0,
+    probability: null,
+    confidence: null,
+    confidenceDerived: false,
+    threshold: floor,
+    escalated: escalated.length > 0,
+    usedFallback: false,
+    fallback: "none",
+    note: escalated.length ? `Escalated: ${escalated.map((entry) => entry.gateId).join(", ")}.` : "No gate answer fell below the confidence floor."
+  };
+  return [...records, record];
+}
+
+// src/jev.ts
+class JevError extends Error {
+  status;
+  retryAfterMs;
+  constructor(message, status = null, retryAfterMs = null) {
+    super(message);
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+    this.name = "JevError";
+  }
+}
+
+class JevTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super(`Jev did not answer within ${Math.round(timeoutMs / 1000)}s.`);
+    this.name = "JevTimeoutError";
+  }
+}
+
+class JevProtocolError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "JevProtocolError";
+  }
+}
+function readCorsResult(raw) {
+  if (raw == null)
+    throw new JevProtocolError("Jev request returned no response.");
+  if (typeof raw === "string")
+    return { status: 200, statusText: "OK", headers: {}, body: raw };
+  if (typeof raw !== "object")
+    throw new JevProtocolError("Jev request returned an unrecognized response.");
+  const obj = raw;
+  const body = typeof obj.body === "string" ? obj.body : typeof obj.text === "string" ? obj.text : "";
+  const status = typeof obj.status === "number" && Number.isFinite(obj.status) ? obj.status : 200;
+  const statusText = typeof obj.statusText === "string" ? obj.statusText : "";
+  const headers = obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers) ? obj.headers : {};
+  return { status, statusText, headers, body };
+}
+function parseRetryAfterMs(headers) {
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== "retry-after")
+      continue;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0)
+      return Math.min(30000, seconds * 1000);
+    const date = Date.parse(value);
+    if (Number.isFinite(date))
+      return Math.min(30000, Math.max(0, date - Date.now()));
+  }
+  return null;
+}
+function describeHttpFailure(result) {
+  const detail = result.body.replace(/\s+/g, " ").trim().slice(0, 240);
+  const label = `HTTP ${result.status}${result.statusText ? ` ${result.statusText}` : ""}`;
+  return detail ? `Jev request failed (${label}): ${detail}` : `Jev request failed (${label}).`;
+}
+function jevEndpoint(settings) {
+  const provider = resolveJevProvider(settings);
+  return `${resolveJevBaseUrl(settings)}${provider.path}`;
+}
+function buildJevRequest(settings, state, questions) {
+  const model = resolveJevModel(settings);
+  return {
+    url: jevEndpoint(settings),
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({ model, state, questions }),
+    model
+  };
+}
+function asRecord2(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function readProbability(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n))
+    return null;
+  return Math.min(1, Math.max(0, n));
+}
+function readProbabilityMap(value) {
+  const obj = asRecord2(value);
+  const out = {};
+  for (const [key, raw] of Object.entries(obj)) {
+    const probability = readProbability(raw);
+    if (probability !== null)
+      out[key] = probability;
+  }
+  return out;
+}
+function readStringMap(value) {
+  const obj = asRecord2(value);
+  const out = {};
+  for (const [key, raw] of Object.entries(obj)) {
+    if (typeof raw === "string" && raw.trim())
+      out[key] = raw;
+  }
+  return out;
+}
+function normalizeAnswer(value) {
+  const obj = asRecord2(value);
+  const type = typeof obj.type === "string" ? obj.type : "";
+  if (type === "noul") {
+    const noul = readProbability(obj.noul);
+    return noul === null ? null : { type: "noul", noul };
+  }
+  if (type === "choice") {
+    const choice = typeof obj.choice === "string" ? obj.choice : "";
+    if (!choice.trim())
+      return null;
+    return {
+      type: "choice",
+      choice: choice.trim(),
+      probabilities: readProbabilityMap(obj.probabilities),
+      confidence: readProbability(obj.confidence)
+    };
+  }
+  if (type === "score") {
+    const score = typeof obj.score === "number" ? obj.score : Number(obj.score);
+    if (!Number.isFinite(score))
+      return null;
+    return {
+      type: "score",
+      score,
+      legend: readStringMap(obj.legend),
+      probabilities: readProbabilityMap(obj.probabilities),
+      confidence: readProbability(obj.confidence)
+    };
+  }
+  return null;
+}
+function normalizeJevResponse(raw) {
+  const envelope = asRecord2(raw);
+  if (Object.keys(envelope).length === 0) {
+    throw new JevProtocolError("Jev returned a response that was not a JSON object.");
+  }
+  if (envelope.error) {
+    const message = typeof envelope.error === "string" ? envelope.error : JSON.stringify(envelope.error);
+    throw new JevProtocolError(`Jev reported an error: ${message.slice(0, 240)}`);
+  }
+  const answersRecord = asRecord2(envelope.answers);
+  if (Object.keys(answersRecord).length === 0) {
+    throw new JevProtocolError("Jev returned no answers.");
+  }
+  const answers = {};
+  for (const [id, value] of Object.entries(answersRecord)) {
+    const answer = normalizeAnswer(value);
+    if (answer)
+      answers[id] = answer;
+  }
+  const usage = asRecord2(envelope.usage);
+  const nullableNumber = (value) => {
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    model: typeof envelope.model === "string" && envelope.model.trim() ? envelope.model.trim() : null,
+    usage: {
+      inputTokens: nullableNumber(usage.input_tokens ?? usage.inputTokens),
+      outputTokens: nullableNumber(usage.output_tokens ?? usage.outputTokens),
+      costUsd: nullableNumber(usage.cost ?? usage.cost_usd ?? usage.costUsd)
+    },
+    answers
+  };
+}
+function parseJevBody(body) {
+  const text = body.trim();
+  if (!text)
+    throw new JevProtocolError("Jev returned an empty response body.");
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new JevProtocolError("Jev returned a response body that was not valid JSON.");
+  }
+}
+function remainingBudgetMs(startedAt, budgetMs) {
+  if (budgetMs === undefined)
+    return Number.POSITIVE_INFINITY;
+  return budgetMs - (Date.now() - startedAt);
+}
+async function callJev(options) {
+  const startedAt = Date.now();
+  const timeoutMs = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
+  const request = buildJevRequest(options.config, options.state, options.questions);
+  let requests = 0;
+  const attempt = async () => {
+    requests += 1;
+    const local = new AbortController;
+    let timedOut = false;
+    const onAbort = () => local.abort();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const budget = remainingBudgetMs(startedAt, options.budgetMs);
+    const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
+    const timer = setTimeout(() => {
+      timedOut = true;
+      local.abort();
+    }, effective);
+    try {
+      const raw = await options.cors(request.url, {
+        method: "POST",
+        headers: request.headers,
+        body: request.body,
+        signal: local.signal
+      });
+      const result = readCorsResult(raw);
+      if (result.status === 429 || result.status >= 500) {
+        return {
+          retryAfterMs: parseRetryAfterMs(result.headers),
+          error: new JevError(describeHttpFailure(result), result.status, parseRetryAfterMs(result.headers))
+        };
+      }
+      if (result.status < 200 || result.status >= 300) {
+        throw new JevError(describeHttpFailure(result), result.status);
+      }
+      return { response: normalizeJevResponse(parseJevBody(result.body)) };
+    } catch (error) {
+      if (error instanceof JevError)
+        throw error;
+      if (timedOut || error instanceof Error && error.name === "AbortError") {
+        throw new JevTimeoutError(effective);
+      }
+      throw new JevError(error instanceof Error ? error.message : String(error));
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+    }
+  };
+  const retryable = options.retryOnRateLimit ?? options.config.retryOnRateLimit ?? true;
+  try {
+    let outcome;
+    try {
+      outcome = await attempt();
+    } catch (error) {
+      return {
+        ok: false,
+        response: null,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: error instanceof JevTimeoutError,
+        requests,
+        durationMs: Date.now() - startedAt,
+        request
+      };
+    }
+    if ("error" in outcome) {
+      const waitMs = outcome.retryAfterMs ?? 750;
+      const budgetLeft = remainingBudgetMs(startedAt, options.budgetMs);
+      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < timeoutMs * 2;
+      if (!canRetry) {
+        return {
+          ok: false,
+          response: null,
+          error: outcome.error.message,
+          timedOut: false,
+          requests,
+          durationMs: Date.now() - startedAt,
+          request
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      try {
+        const retry = await attempt();
+        if ("error" in retry) {
+          return {
+            ok: false,
+            response: null,
+            error: retry.error.message,
+            timedOut: false,
+            requests,
+            durationMs: Date.now() - startedAt,
+            request
+          };
+        }
+        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+      } catch (error) {
+        return {
+          ok: false,
+          response: null,
+          error: error instanceof Error ? error.message : String(error),
+          timedOut: error instanceof JevTimeoutError,
+          requests,
+          durationMs: Date.now() - startedAt,
+          request
+        };
+      }
+    }
+    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+  } catch (error) {
+    return {
+      ok: false,
+      response: null,
+      error: error instanceof Error ? error.message : String(error),
+      timedOut: error instanceof JevTimeoutError,
+      requests,
+      durationMs: Date.now() - startedAt,
+      request
+    };
+  }
+}
+function truncate(value, budget) {
+  const text = value.trim();
+  if (budget <= 0)
+    return "";
+  if (text.length <= budget)
+    return text;
+  return `${text.slice(0, Math.max(0, budget - 24)).trimEnd()}
+[... truncated ...]`;
+}
+function renderHistory(history, limit, budget) {
+  if (limit <= 0 || budget <= 0)
+    return [];
+  const selected = history.slice(-Math.min(limit, MAX_JEV_HISTORY_MESSAGES));
+  const lines = selected.map((message) => {
+    const content = serializeMessageContent(message.content).replace(/\s+/g, " ").trim();
+    const name = message.name ? ` (${message.name})` : "";
+    return `${message.role}${name}: ${content || "[empty]"}`;
+  });
+  const kept = [];
+  let used = 0;
+  for (let index = lines.length - 1;index >= 0; index -= 1) {
+    const line = lines[index];
+    if (used + line.length > budget && kept.length > 0)
+      break;
+    kept.unshift(line);
+    used += line.length + 1;
+  }
+  return kept;
+}
+function buildJevState(context, worldStateContext) {
+  const cap = Math.max(500, context.settings.maxStateChars || DEFAULT_JEV_STATE_CHARS);
+  const historyLimit = Math.max(0, Math.min(context.settings.historyMessageLimit, MAX_JEV_HISTORY_MESSAGES));
+  const fixed = {
+    generation_type: context.generationType || "normal"
+  };
+  const structured = {};
+  const addStructured = (key, value, budget) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text)
+      return;
+    structured[key] = truncate(text, budget);
+  };
+  addStructured("character", context.characterSummary, 4000);
+  addStructured("user_persona", context.personaSummary, 2000);
+  addStructured("world_info", context.worldInfoSummary, 6000);
+  addStructured("director_notes", context.directorNotes, 1200);
+  addStructured("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined, 3000);
+  addStructured("draft_directive", context.draftDirective, 2500);
+  let state = { ...fixed, ...structured };
+  let history = renderHistory(context.history, historyLimit, Math.max(1000, Math.floor(cap * 0.5)));
+  if (history.length)
+    state.chat_history = history;
+  let chars = JSON.stringify(state).length;
+  let compacted = false;
+  while (chars > cap && (history.length > 1 || structured.world_info || structured.character)) {
+    compacted = true;
+    if (history.length > 1) {
+      history = history.slice(Math.ceil(history.length / 4));
+      state.chat_history = history;
+    } else if (structured.world_info) {
+      delete structured.world_info;
+    } else if (structured.character) {
+      delete structured.character;
+    } else {
+      break;
+    }
+    state = { ...fixed, ...structured };
+    if (history.length)
+      state.chat_history = history;
+    chars = JSON.stringify(state).length;
+  }
+  if (chars > cap) {
+    compacted = true;
+    if (history.length) {
+      state.chat_history = renderHistory(context.history, 2, Math.max(500, Math.floor(cap * 0.3)));
+    }
+    chars = JSON.stringify(state).length;
+  }
+  return { state, chars, compacted };
+}
+function estimateJevTokens(state, questions) {
+  const payload = JSON.stringify({ state, questions });
+  return Math.ceil(payload.length / 4);
+}
+function exceedsJevTokenBudget(state, questions) {
+  return estimateJevTokens(state, questions) > JEV_MAX_STATE_TOKENS;
+}
+function buildJevSmokeRequest(settings) {
+  const questions = {
+    connectivity: {
+      type: "noul",
+      instructions: "Does this statement describe a storm?",
+      criteria: {
+        true: "The statement mentions a storm, tempest, thunder, or violent weather",
+        false: "The statement mentions anything else"
+      }
+    }
+  };
+  return { request: buildJevRequest(settings, "A storm rolls in over the harbour.", questions), questions };
+}
+
+// src/world-state.ts
+var WORLD_STATE_VERSION = 1;
+var MAX_HOOKS = 12;
+var MAX_THREADS = 12;
+var MAX_CHARACTERS = 16;
+var MAX_RELATIONSHIPS = 16;
+var MAX_LABEL_CHARS = 160;
+function defaultWorldState() {
+  return {
+    version: WORLD_STATE_VERSION,
+    turn: 0,
+    location: null,
+    danger: 0,
+    tension: 0,
+    characters: [],
+    hooks: [],
+    threads: [],
+    relationships: [],
+    clockMinutes: 0,
+    updatedAt: 0
+  };
+}
+function asRecord3(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function clampLevel(value, fallback) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n))
+    return fallback;
+  return Math.min(5, Math.max(0, n));
+}
+function cleanLabel(value) {
+  if (typeof value !== "string")
+    return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
+}
+function normalizeStringList(value, limit) {
+  if (!Array.isArray(value))
+    return [];
+  const seen = new Set;
+  const out = [];
+  for (const item of value) {
+    const label = cleanLabel(item);
+    if (!label || seen.has(label.toLowerCase()))
+      continue;
+    seen.add(label.toLowerCase());
+    out.push(label);
+    if (out.length >= limit)
+      break;
+  }
+  return out;
+}
+function normalizeHooks(value) {
+  if (!Array.isArray(value))
+    return [];
+  const out = [];
+  for (const item of value) {
+    const obj = asRecord3(item);
+    const label = cleanLabel(obj.label);
+    if (!label)
+      continue;
+    out.push({
+      id: cleanLabel(obj.id) || `hook-${out.length + 1}`,
+      label,
+      lastAdvanced: Number.isFinite(Number(obj.lastAdvanced)) ? Number(obj.lastAdvanced) : 0,
+      stale: obj.stale === true
+    });
+    if (out.length >= MAX_HOOKS)
+      break;
+  }
+  return out;
+}
+function normalizeThreads(value) {
+  if (!Array.isArray(value))
+    return [];
+  const statuses = new Set(["open", "resolved", "dormant", "abandoned"]);
+  const out = [];
+  for (const item of value) {
+    const obj = asRecord3(item);
+    const label = cleanLabel(obj.label);
+    if (!label)
+      continue;
+    const status = cleanLabel(obj.status);
+    out.push({
+      id: cleanLabel(obj.id) || `thread-${out.length + 1}`,
+      label,
+      status: statuses.has(status) ? status : "open",
+      lastAdvanced: Number.isFinite(Number(obj.lastAdvanced)) ? Number(obj.lastAdvanced) : 0
+    });
+    if (out.length >= MAX_THREADS)
+      break;
+  }
+  return out;
+}
+function normalizeRelationships(value) {
+  if (!Array.isArray(value))
+    return [];
+  const out = [];
+  for (const item of value) {
+    const obj = asRecord3(item);
+    const character = cleanLabel(obj.character);
+    if (!character)
+      continue;
+    const stance = Number(obj.stance);
+    out.push({
+      character,
+      stance: Number.isFinite(stance) ? Math.min(10, Math.max(-10, stance)) : 0,
+      updatedTurn: Number.isFinite(Number(obj.updatedTurn)) ? Number(obj.updatedTurn) : 0
+    });
+    if (out.length >= MAX_RELATIONSHIPS)
+      break;
+  }
+  return out;
+}
+function normalizeWorldState(value) {
+  const obj = asRecord3(value);
+  if (Object.keys(obj).length === 0)
+    return defaultWorldState();
+  const location = cleanLabel(obj.location);
+  return {
+    version: WORLD_STATE_VERSION,
+    turn: Number.isFinite(Number(obj.turn)) ? Math.max(0, Math.floor(Number(obj.turn))) : 0,
+    location: location || null,
+    danger: clampLevel(obj.danger, 0),
+    tension: clampLevel(obj.tension, 0),
+    characters: normalizeStringList(obj.characters, MAX_CHARACTERS),
+    hooks: normalizeHooks(obj.hooks),
+    threads: normalizeThreads(obj.threads),
+    relationships: normalizeRelationships(obj.relationships),
+    clockMinutes: Number.isFinite(Number(obj.clockMinutes)) ? Math.max(0, Math.floor(Number(obj.clockMinutes))) : 0,
+    updatedAt: Number.isFinite(Number(obj.updatedAt)) ? Number(obj.updatedAt) : 0
+  };
+}
+function upsertByLabel(list, entry, limit) {
+  const index = list.findIndex((item) => item.label.toLowerCase() === entry.label.toLowerCase());
+  if (index === -1)
+    return [...list, entry].slice(-limit);
+  const next = [...list];
+  next[index] = entry;
+  return next;
+}
+function applyWorldStatePatch(state, patch, turn) {
+  const next = { ...state, turn, updatedAt: Date.now() };
+  if (patch.location !== undefined)
+    next.location = cleanLabel(patch.location) || null;
+  if (patch.danger !== undefined)
+    next.danger = clampLevel(patch.danger, next.danger);
+  if (patch.tension !== undefined)
+    next.tension = clampLevel(patch.tension, next.tension);
+  if (patch.characters !== undefined)
+    next.characters = normalizeStringList(patch.characters, MAX_CHARACTERS);
+  if (patch.clockAdvanceMinutes)
+    next.clockMinutes = Math.max(0, next.clockMinutes + Math.floor(patch.clockAdvanceMinutes));
+  if (patch.hook) {
+    const label = cleanLabel(patch.hook.label);
+    if (label) {
+      next.hooks = upsertByLabel(next.hooks, {
+        id: `hook-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}`,
+        label,
+        lastAdvanced: turn,
+        stale: patch.hook.stale === true
+      }, MAX_HOOKS);
+    }
+  }
+  if (patch.thread) {
+    const label = cleanLabel(patch.thread.label);
+    if (label) {
+      next.threads = upsertByLabel(next.threads, {
+        id: `thread-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}`,
+        label,
+        status: patch.thread.status,
+        lastAdvanced: turn
+      }, MAX_THREADS);
+    }
+  }
+  if (patch.relationship) {
+    const character = cleanLabel(patch.relationship.character);
+    if (character) {
+      const index = next.relationships.findIndex((item) => item.character.toLowerCase() === character.toLowerCase());
+      const existing = index === -1 ? { character, stance: 0, updatedTurn: turn } : next.relationships[index];
+      const updated = {
+        character,
+        stance: Math.min(10, Math.max(-10, existing.stance + patch.relationship.stance)),
+        updatedTurn: turn
+      };
+      const list = [...next.relationships];
+      if (index === -1)
+        list.push(updated);
+      else
+        list[index] = updated;
+      next.relationships = list.slice(-MAX_RELATIONSHIPS);
+    }
+  }
+  return next;
+}
+function readChoice(records, gateId) {
+  const record = records.find((entry) => entry.gateId === gateId);
+  if (!record || record.usedFallback || typeof record.value !== "string")
+    return null;
+  return record.value;
+}
+function readNumber(records, gateId) {
+  const record = records.find((entry) => entry.gateId === gateId);
+  if (!record || record.usedFallback || typeof record.value !== "number")
+    return null;
+  return record.value;
+}
+var CLOCK_MINUTES = { none: 0, minutes: 5, hours: 120, day: 1440 };
+var THREAD_STATUS = {
+  continue: "open",
+  resolve: "resolved",
+  dormant: "dormant",
+  abandoned: "abandoned"
+};
+function commitWorldState(state, records, directive) {
+  const turn = state.turn + 1;
+  const patch = {};
+  const sceneChanged = records.find((record) => record.gateId === "scene_state_tracking");
+  const tensionDelta = readNumber(records, "scene_state_diff");
+  const relationshipDelta = readNumber(records, "relationship_deltas");
+  const shouldUpdate = sceneChanged ? sceneChanged.value === true && !sceneChanged.usedFallback : tensionDelta !== null || relationshipDelta !== null;
+  if (shouldUpdate) {
+    if (tensionDelta !== null)
+      patch.tension = tensionDelta;
+    if (relationshipDelta !== null)
+      patch.relationship = { character: "scene", stance: Math.round(relationshipDelta - 2) };
+    const clock = readChoice(records, "time_clock");
+    if (clock)
+      patch.clockAdvanceMinutes = CLOCK_MINUTES[clock] ?? 0;
+    const entry = readChoice(records, "npc_entry_exit");
+    if (entry === "enter_new")
+      patch.hook = { label: "A new character has entered the scene", stale: false };
+    const lifecycle = readChoice(records, "thread_lifecycle");
+    const status = lifecycle ? THREAD_STATUS[lifecycle] : undefined;
+    if (status && directive) {
+      patch.thread = { label: directive.slice(0, 80), status };
+    }
+  }
+  if (Object.keys(patch).length === 0) {
+    return { ...state, turn, updatedAt: Date.now() };
+  }
+  return applyWorldStatePatch(state, patch, turn);
+}
+function projectWorldState(state) {
+  const lines = [];
+  if (state.location)
+    lines.push(`Location: ${state.location}`);
+  lines.push(`Danger: ${state.danger}/5, Tension: ${state.tension}/5`);
+  if (state.characters.length)
+    lines.push(`Present: ${state.characters.join(", ")}`);
+  const openThreads = state.threads.filter((thread) => thread.status === "open" || thread.status === "dormant");
+  if (openThreads.length) {
+    lines.push(`Open threads: ${openThreads.map((thread) => `${thread.label} (${thread.status})`).join("; ")}`);
+  }
+  const activeHooks = state.hooks.filter((hook) => !hook.stale);
+  if (activeHooks.length)
+    lines.push(`Open hooks: ${activeHooks.map((hook) => hook.label).join("; ")}`);
+  if (state.clockMinutes > 0)
+    lines.push(`In-world clock: +${state.clockMinutes} minutes since the scene began`);
+  if (state.relationships.length) {
+    const notable = state.relationships.filter((relationship) => relationship.character !== "scene" && relationship.stance !== 0);
+    if (notable.length) {
+      lines.push(`Relationship shifts: ${notable.map((relationship) => `${relationship.character} ${relationship.stance > 0 ? "+" : ""}${relationship.stance}`).join(", ")}`);
+    }
+  }
+  return lines.join(`
+`);
+}
+function worldStatePath(chatId) {
+  const safe = chatId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "unscoped";
+  return `chats/${safe}/world.json`;
+}
+async function loadWorldState(storage, chatId, userId, enabled = DEFAULT_JEV_SETTINGS.worldStateEnabled) {
+  if (!enabled || !chatId || !storage?.getJson)
+    return defaultWorldState();
+  try {
+    const stored = await storage.getJson(worldStatePath(chatId), { fallback: {}, userId: userId ?? undefined });
+    return normalizeWorldState(stored);
+  } catch {
+    return defaultWorldState();
+  }
+}
+async function saveWorldState(storage, chatId, state, userId) {
+  if (!chatId || !storage?.setJson)
+    return;
+  try {
+    await storage.setJson(worldStatePath(chatId), state, { indent: 2, userId: userId ?? undefined });
+  } catch {}
+}
+
 // src/backend.ts
 var SETTINGS_PATH = "global/settings.json";
 var RUNS_PATH = "global/runs.json";
 var INTERCEPTOR_PRIORITY = 150;
+var INTERCEPTOR_BUDGET_MS = 300000;
+var MAX_JEV_PHASE_MS = 15000;
+var DIRECTOR_RESERVE_MS = 20000;
 var lastFrontendUserId = null;
 var chatUserIds = new Map;
 var directorBusy = new KeyedOperationLock;
@@ -824,6 +2321,13 @@ function personasApi() {
 function worldBooksApi() {
   return spindle.world_books;
 }
+function enclaveApi() {
+  return spindle.enclave;
+}
+function corsApi() {
+  const cors = spindle?.cors;
+  return typeof cors === "function" ? (url, options) => cors.call(spindle, url, options) : null;
+}
 function permissionsApi() {
   return spindle.permissions;
 }
@@ -833,7 +2337,8 @@ var PERMISSION_IDS = {
   chats: "chats",
   characters: "characters",
   personas: "personas",
-  worldBooks: "world_books"
+  worldBooks: "world_books",
+  corsProxy: "cors_proxy"
 };
 function send(message, userId = lastFrontendUserId ?? undefined) {
   spindle.sendToFrontend(message, userId);
@@ -855,7 +2360,8 @@ function currentPermissions() {
     chats: permissionHas("chats"),
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
-    worldBooks: permissionHas("worldBooks")
+    worldBooks: permissionHas("worldBooks"),
+    corsProxy: permissionHas("corsProxy")
   };
 }
 function rememberChatUser(chatId, userId) {
@@ -1085,30 +2591,301 @@ async function resolveCharacter(context, chatId, userId) {
     return null;
   }
 }
-async function resolveControllerContextMessages(settings, context, chatId, userId) {
-  const [persona, character] = await Promise.all([
+async function readJevKey(provider, userId) {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.get !== "function")
+    return null;
+  try {
+    const value = await enclave.get(jevSecretKey(provider), userId ?? undefined);
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+async function storeJevKey(provider, key, userId) {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.put !== "function")
+    return;
+  const value = key.trim();
+  if (!value)
+    return;
+  await enclave.put(jevSecretKey(provider), value, userId ?? undefined);
+}
+async function clearJevKey(provider, userId) {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.delete !== "function")
+    return;
+  try {
+    await enclave.delete(jevSecretKey(provider), userId ?? undefined);
+  } catch {}
+}
+function jevPhaseBudgetMs(settings) {
+  const elapsed = 0;
+  const available = INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS - elapsed;
+  return Math.max(1000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS, available));
+}
+async function prepareJev(settings, userId) {
+  const jev = settings.jev;
+  if (!jev.enabled)
+    return { enabled: false, config: null, cors: null, error: null };
+  if (!permissionHas("corsProxy")) {
+    return { enabled: false, config: null, cors: null, error: "The cors_proxy permission is not granted, so Jev cannot be reached." };
+  }
+  const cors = corsApi();
+  if (!cors)
+    return { enabled: false, config: null, cors: null, error: "This Lumiverse host does not expose the CORS proxy." };
+  const apiKey = await readJevKey(jev.provider, userId);
+  if (!apiKey) {
+    return {
+      enabled: false,
+      config: null,
+      cors,
+      error: `No Jev API key is stored for ${resolveJevProvider(jev).label}. Add one in the LumiWorld drawer.`
+    };
+  }
+  return { enabled: true, config: { ...jev, apiKey }, cors, error: null };
+}
+function recoverAnswers(answers) {
+  const recovered = { ...answers };
+  const source = answers;
+  const nested = source.answers ?? readObjectPath(source, ["data", "answers"]) ?? readObjectPath(source, ["result", "answers"]);
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    try {
+      const normalized = normalizeJevResponse({ answers: nested });
+      for (const [id, answer] of Object.entries(normalized.answers)) {
+        if (!(id in recovered))
+          recovered[id] = answer;
+      }
+    } catch {}
+  }
+  return recovered;
+}
+function readObjectPath(value, path) {
+  let current = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object")
+      return null;
+    current = current[key];
+  }
+  return current ?? null;
+}
+async function runGatePhase(phase, options) {
+  const { jevRun, settings } = options;
+  const plan = planGates(phase, settings.jev, options.turnContext, options.questionOverrides ?? {});
+  const projection = buildJevState({ ...options.stateContext, draftDirective: options.directive ?? options.stateContext.draftDirective }, options.worldStateContext);
+  const empty = (error) => ({
+    plan,
+    records: resolveGateAnswers(plan, {}, settings.jev.minConfidence),
+    state: projection.state,
+    stateChars: projection.chars,
+    stateCompacted: projection.compacted,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    resolvedModel: null,
+    requests: 0,
+    durationMs: 0,
+    error
+  });
+  if (plan.gates.length === 0)
+    return empty(null);
+  if (!jevRun.enabled || !jevRun.config || !jevRun.cors)
+    return empty(jevRun.error);
+  const questions = questionsFromPlan(plan);
+  if (exceedsJevTokenBudget(projection.state, questions)) {
+    return empty("The assembled Jev state exceeds the model's 32k token allowance.");
+  }
+  const outcome = await callJev({
+    config: jevRun.config,
+    state: projection.state,
+    questions,
+    cors: jevRun.cors,
+    timeoutMs: settings.jev.timeoutMs,
+    budgetMs: jevPhaseBudgetMs(settings),
+    retryOnRateLimit: settings.jev.retryOnRateLimit
+  });
+  if (!outcome.ok || !outcome.response) {
+    return {
+      ...empty(outcome.error ?? "Jev request failed."),
+      requests: outcome.requests,
+      durationMs: outcome.durationMs
+    };
+  }
+  const answers = recoverAnswers(outcome.response.answers);
+  return {
+    plan,
+    records: resolveGateAnswers(plan, answers, settings.jev.minConfidence),
+    state: projection.state,
+    stateChars: projection.chars,
+    stateCompacted: projection.compacted,
+    inputTokens: outcome.response.usage.inputTokens,
+    outputTokens: outcome.response.usage.outputTokens,
+    costUsd: outcome.response.usage.costUsd,
+    resolvedModel: outcome.response.model,
+    requests: outcome.requests,
+    durationMs: outcome.durationMs,
+    error: null
+  };
+}
+function summaryOfMessages(messages, maxChars) {
+  if (messages.length === 0)
+    return null;
+  const prompt = formatPromptForController(messages, maxChars);
+  return prompt.prompt.trim() || null;
+}
+function contextMessageSummary(messages, label) {
+  const message = messages.find((entry) => entry[CONTROLLER_CONTEXT_LABEL_KEY] === label);
+  if (!message)
+    return null;
+  const text = serializeContent(message.content).trim();
+  return text || null;
+}
+function serializeContent(content) {
+  if (typeof content === "string")
+    return content;
+  if (!Array.isArray(content))
+    return "";
+  return content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join(`
+`);
+}
+function mergeJevDiagnostics(current, phase, phaseName) {
+  const flags = countJevFlags(phase.records);
+  const phaseFailed = !!phase.error;
+  const status = current.error || phaseFailed ? "degraded" : current.status === "degraded" ? "degraded" : "ok";
+  return {
+    ...current,
+    status,
+    error: current.error ?? phase.error,
+    requestCount: current.requestCount + phase.requests,
+    inputTokens: sumNullable(current.inputTokens, phase.inputTokens),
+    outputTokens: sumNullable(current.outputTokens, phase.outputTokens),
+    costUsd: sumNullable(current.costUsd, phase.costUsd),
+    gatePhaseMs: phaseName === "gate" ? phase.durationMs : current.gatePhaseMs,
+    verifyPhaseMs: phaseName === "verify" ? phase.durationMs : current.verifyPhaseMs,
+    resolvedModel: phase.resolvedModel ?? current.resolvedModel,
+    gateCount: current.gateCount + phase.records.length,
+    fallbackCount: current.fallbackCount + flags.fallback,
+    escalatedCount: current.escalatedCount + flags.escalated,
+    stateChars: phase.stateChars || current.stateChars,
+    stateCompacted: phase.stateCompacted || current.stateCompacted
+  };
+}
+function sumNullable(left, right) {
+  if (left === null)
+    return right;
+  if (right === null)
+    return left;
+  return left + right;
+}
+async function prepareController(settings, messages, context, chatId, userId, generationType, preserveWorldInfo = true) {
+  const identityPromise = Promise.all([
     resolvePersona(context, userId),
     resolveCharacter(context, chatId, userId)
   ]);
+  const worldState = await loadWorldState(storageApi(), chatId ?? "", userId, settings.jev.enabled && settings.jev.worldStateEnabled);
+  const [persona, character] = await identityPromise;
   const identity = makeIdentity(persona, character);
-  const messages = [
-    settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
-    settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
+  const includesCharacter = settings.includeCharacter && !!character;
+  const includesPersona = settings.includeUserPersona && !!persona;
+  const contextMessages = [
+    includesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    includesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null
   ].filter((message) => !!message);
-  return { messages, identity };
+  const worldBooks = worldBooksApi();
+  const worldInfoContext = await resolveWorldInfoContextMessages({
+    messages,
+    settings: preserveWorldInfo ? settings : { ...settings, includeWorldInfoEntries: false },
+    context,
+    canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+    fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
+    fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
+    identity
+  });
+  const selected = selectControllerMessagesForController(messages, settings, [...contextMessages, ...worldInfoContext.messages]);
+  const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
+  const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
+    generationType,
+    chatId: chatId || "",
+    connectionId: extractConnectionId(context),
+    user: identity.userName || "User",
+    char: identity.characterName || "Character"
+  });
+  const worldStateText = projectWorldState(worldState);
+  return {
+    controllerMessages,
+    promptSnapshot,
+    worldState,
+    worldInfoDiagnostics: worldInfoContext.diagnostics,
+    turnContext: {
+      hasHistory: !!promptSnapshot.prompt.trim(),
+      hasCharacter: includesCharacter,
+      hasPersona: includesPersona,
+      hasWorldInfo: preserveWorldInfo && worldInfoContext.messages.length > 0,
+      hasDirectorNotes: !!settings.additionalNotes.trim(),
+      worldStateEnabled: settings.jev.worldStateEnabled,
+      generationType
+    },
+    stateContext: {
+      settings: { historyMessageLimit: settings.jev.historyMessageLimit, maxStateChars: settings.jev.maxStateChars },
+      generationType,
+      chatId: chatId ?? "",
+      history: selectChatHistoryMessagesForController(messages, settings.jev.historyMessageLimit),
+      personaSummary: contextMessageSummary(contextMessages, "User Persona"),
+      characterSummary: contextMessageSummary(contextMessages, "Character"),
+      worldInfoSummary: summaryOfMessages(worldInfoContext.messages, 6000),
+      directorNotes: resolveIdentityMacros(settings.additionalNotes, identity).trim() || null,
+      worldState: worldState.turn > 0 ? worldStateText : null
+    }
+  };
+}
+function applyContextFilter(base, settings, messages, context, generationType, decision) {
+  if (!decision)
+    return base;
+  const contextMessages = [];
+  if (decision.keepPersona && base.stateContext.personaSummary) {
+    contextMessages.push(makeControllerContextMessage("User Persona", base.stateContext.personaSummary));
+  }
+  if (decision.keepCharacter && base.stateContext.characterSummary) {
+    contextMessages.push(makeControllerContextMessage("Character", base.stateContext.characterSummary));
+  }
+  const history = decision.keepHistory ? selectChatHistoryMessagesForController(messages, settings.historyMessageLimit) : [];
+  const promptSnapshot = formatPromptForController([...contextMessages, ...history], settings.maxInputChars);
+  const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
+    generationType,
+    chatId: base.stateContext.chatId,
+    connectionId: extractConnectionId(context)
+  });
+  return {
+    ...base,
+    controllerMessages,
+    promptSnapshot,
+    turnContext: {
+      ...base.turnContext,
+      hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
+      hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
+      hasPersona: decision.keepPersona && base.turnContext.hasPersona,
+      hasWorldInfo: false
+    }
+  };
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
-  const [connectionState, runs] = await Promise.all([
+  const [connectionState, runs, hasJevKey] = await Promise.all([
     listConnections(userId),
-    loadRuns(userId, Number.MAX_SAFE_INTEGER)
+    loadRuns(userId, Number.MAX_SAFE_INTEGER),
+    readJevKey(settings.jev.provider, userId).then((key) => !!key).catch(() => false)
   ]);
+  const providerInfo = resolveJevProvider(settings.jev);
   return {
     settings,
     connections: connectionState.connections,
     connectionError: connectionState.error,
     runs: runs.filter((run) => run.channel !== "world_agent").slice(0, settings.runLogLimit),
-    permissions: currentPermissions()
+    permissions: currentPermissions(),
+    hasJevKey,
+    jevProviderInfo: providerInfo,
+    jevEndpoint: jevEndpoint(settings.jev),
+    activeGateCount: settings.jev.enabled ? Object.values(settings.jev.gatePolicy).filter((policy) => policy.enabled === true).length : 0
   };
 }
 async function pushState(userId) {
@@ -1170,6 +2947,23 @@ async function callController(userId, settings, target, messages) {
     clearTimeout(timer);
   }
 }
+async function resolveTurnTarget(settings, records, userId) {
+  const base = resolveControllerTarget(settings, await getConnection(settings.connectionId, userId));
+  if (!wantsStrongDirectorModel(records))
+    return base.ok ? base : null;
+  if (settings.strongConnectionId) {
+    const strong = await getConnection(settings.strongConnectionId, userId);
+    if (strong) {
+      const resolved = resolveControllerTarget({ ...settings, connectionId: settings.strongConnectionId, modelOverride: settings.strongModelOverride }, strong);
+      if (resolved.ok)
+        return resolved;
+    }
+  }
+  if (settings.strongModelOverride.trim() && base.ok) {
+    return { ...base, model: settings.strongModelOverride.trim() };
+  }
+  return base.ok ? base : null;
+}
 async function handleInterceptor(messages, context) {
   const chatId = extractChatId(context);
   const userId = resolveUserId(chatId);
@@ -1197,57 +2991,127 @@ async function handleInterceptor(messages, context) {
     return messages;
   }
   let target = null;
+  let worldState = defaultWorldState();
   let worldInfoDiagnostics = {
     activatedEntryCount: 0,
     fetchedEntryCount: 0,
     fallbackTaggedEntryCount: 0,
     fetchError: null
   };
+  let prepared = null;
+  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
   try {
-    const connection = await getConnection(settings.connectionId, userId);
-    const resolved = resolveControllerTarget(settings, connection);
-    if (!resolved.ok) {
+    const jevRun = await prepareJev(settings, userId);
+    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, false);
+    worldState = prepared.worldState;
+    let gateRecords = [];
+    if (jevRun.enabled) {
+      jevDiagnostics.used = true;
+      jevDiagnostics.model = resolveJevModelForDiagnostics(settings);
+      const phase = await runGatePhase("gate", {
+        jevRun,
+        settings,
+        stateContext: prepared.stateContext,
+        worldStateContext: worldState.turn > 0 ? projectWorldState(worldState) : null,
+        turnContext: prepared.turnContext,
+        diagnostics: jevDiagnostics
+      });
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "gate"));
+      gateRecords = phase.records;
+      const decision = shouldRunDirector(gateRecords);
+      if (!decision.run) {
+        const skipped = { ...jevDiagnostics, status: "skipped", used: true };
+        const records = withConfidenceGate(withDegradationGate(gateRecords, { status: "ok", error: null }), settings.jev.minConfidence);
+        await recordRun(makeRunBase("skipped", startedAt, {
+          channel: "director",
+          generationType,
+          error: decision.reason ?? "Jev skipped this turn.",
+          ...runLogWorldInfoPatch(worldInfoDiagnostics),
+          jev: { ...skipped, gates: records, gateCount: records.length }
+        }), userId, settings);
+        return messages;
+      }
+    } else {
+      jevDiagnostics.status = "degraded";
+      jevDiagnostics.error = jevRun.error;
+    }
+    const filterDecision = contextFilterDecision(gateRecords);
+    const keepWorldInfo = settings.includeWorldInfoEntries && (!filterDecision || filterDecision.keepWorldInfo);
+    if (keepWorldInfo) {
+      const withWorldInfo = await prepareController(settings, messages, context, chatId, userId, generationType, true);
+      worldInfoDiagnostics = withWorldInfo.worldInfoDiagnostics;
+      prepared = withWorldInfo;
+    }
+    prepared = applyContextFilter(prepared, settings, messages, context, generationType, filterDecision);
+    target = await resolveTurnTarget(settings, gateRecords, userId);
+    if (!target) {
       await recordRun(makeRunBase("skipped", startedAt, {
         channel: "director",
         generationType,
         connectionId: settings.connectionId,
-        error: resolved.reason
+        error: "Choose a LumiWorld controller connection first.",
+        ...runLogWorldInfoPatch(worldInfoDiagnostics),
+        jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: gateRecords } : null
       }), userId, settings);
       return messages;
     }
-    target = resolved;
-    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
-    const worldBooks = worldBooksApi();
-    const worldInfoContext = await resolveWorldInfoContextMessages({
-      messages,
-      settings,
-      context,
-      canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
-      fetchActivated: chatId && typeof worldBooks?.getActivated === "function" ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
-      fetchEntry: typeof worldBooks?.entries?.get === "function" ? (entryId) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
-      identity: controllerContext.identity
-    });
-    worldInfoDiagnostics = worldInfoContext.diagnostics;
-    const controllerContextMessages = selectControllerMessagesForController(messages, settings, [...controllerContext.messages, ...worldInfoContext.messages]);
-    const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
-    const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
-      generationType,
-      chatId: chatId || "",
-      connectionId: extractConnectionId(context),
-      user: controllerContext.identity.userName || "User",
-      char: controllerContext.identity.characterName || "Character"
-    });
-    const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
+    const first = await callController(userId, settings, target, prepared.controllerMessages);
+    let directive = first.directive;
+    let verifyRecords = [];
+    if (jevRun.enabled) {
+      const phase = await runGatePhase("verify", {
+        jevRun,
+        settings,
+        stateContext: prepared.stateContext,
+        worldStateContext: projectWorldState(worldState),
+        turnContext: prepared.turnContext,
+        directive,
+        diagnostics: jevDiagnostics
+      });
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify"));
+      verifyRecords = phase.records;
+      const repair = decideRepair(verifyRecords);
+      if (repair) {
+        const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
+        if (repaired) {
+          directive = repaired;
+          const recheck = await runGatePhase("verify", {
+            jevRun,
+            settings,
+            stateContext: prepared.stateContext,
+            worldStateContext: projectWorldState(worldState),
+            turnContext: prepared.turnContext,
+            directive,
+            diagnostics: jevDiagnostics
+          });
+          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify"));
+          verifyRecords = recheck.records;
+          const unresolved = decideRepair(verifyRecords);
+          if (unresolved) {
+            spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
+          }
+        } else {
+          spindle.log.warn(`LumiWorld kept the original directive after a failed ${repair.action} repair.`);
+        }
+      }
+    }
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId) {
+      const committed = commitWorldState(worldState, verifyRecords, directive);
+      await saveWorldState(storageApi(), chatId, committed, userId);
+      worldState = committed;
+    }
+    const allRecords = withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
     const injected = { role: "system", content: buildInjectedDirective(directive) };
     await recordRun(makeRunBase("success", startedAt, {
       channel: "director",
       generationType,
-      durationMs,
+      durationMs: first.durationMs,
       connectionId: target.connectionId,
       connectionName: target.connectionName,
       model: target.model,
       directivePreview: makeDirectivePreview(directive),
-      ...runLogWorldInfoPatch(worldInfoDiagnostics)
+      ...runLogWorldInfoPatch(worldInfoDiagnostics),
+      jev: settings.jev.enabled || jevDiagnostics.used ? { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length } : null
     }), userId, settings);
     return { messages: [injected, ...messages], breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }] };
   } catch (error) {
@@ -1261,13 +3125,94 @@ async function handleInterceptor(messages, context) {
       connectionName: target?.connectionName,
       model: target?.model,
       error: message,
-      ...runLogWorldInfoPatch(worldInfoDiagnostics)
+      ...runLogWorldInfoPatch(worldInfoDiagnostics),
+      jev: jevDiagnostics.used ? jevDiagnostics : null
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
   } finally {
     directorBusy.release(busyKey);
   }
+}
+function resolveJevModelForDiagnostics(settings) {
+  const provider = resolveJevProvider(settings.jev);
+  return settings.jev.model.trim() || provider.defaultModel;
+}
+async function regenerateDirective(userId, settings, target, prepared, repair, records) {
+  const violated = records.filter((record) => record.usedFallback || record.value === "violation" || record.value === "repeats" || record.value === true).map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`).join(`
+`);
+  const repairMessages = [
+    ...prepared.controllerMessages,
+    {
+      role: "system",
+      content: [
+        `LumiWorld verification found a problem with the direction you just produced. Repair it with this action: ${repair.action}.`,
+        repair.reason,
+        violated ? `Flagged checks:
+${violated}` : "",
+        "Return a corrected directive only. Keep the same format and length limits."
+      ].filter(Boolean).join(`
+`)
+    }
+  ];
+  try {
+    const repaired = await callController(userId, settings, target, repairMessages);
+    return repaired.directive;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld repair attempt failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+async function runJevTest(userId, patch, draftKey) {
+  const baseSettings = await loadSettings(userId);
+  const settings = normalizeSettings({ ...baseSettings, ...patch });
+  const startedAt = Date.now();
+  const jevRun = await prepareJev(settings, userId);
+  const draft = typeof draftKey === "string" ? draftKey.trim() : "";
+  const apiKey = draft || await readJevKey(settings.jev.provider, userId);
+  if (!apiKey) {
+    const error = jevRun.error ?? `No Jev API key is stored for ${resolveJevProvider(settings.jev).label}.`;
+    send({ type: "jev_test_result", ok: false, error }, userId ?? undefined);
+    return;
+  }
+  const cors = jevRun.cors ?? corsApi();
+  if (!cors) {
+    send({ type: "jev_test_result", ok: false, error: "This Lumiverse host does not expose the CORS proxy." }, userId ?? undefined);
+    return;
+  }
+  const smoke = buildJevSmokeRequest({ ...settings.jev, apiKey });
+  const outcome = await callJev({
+    config: { ...settings.jev, apiKey },
+    state: "A storm rolls in over the harbour.",
+    questions: smoke.questions,
+    cors,
+    timeoutMs: settings.jev.timeoutMs,
+    budgetMs: MAX_JEV_PHASE_MS,
+    retryOnRateLimit: settings.jev.retryOnRateLimit
+  });
+  if (!outcome.ok || !outcome.response) {
+    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "Jev did not answer." }, userId ?? undefined);
+    return;
+  }
+  const answer = outcome.response.answers.connectivity;
+  const confidence = answer && answer.type === "noul" ? Math.max(answer.noul, 1 - answer.noul) : null;
+  const label = answer && answer.type === "noul" ? answer.noul >= 0.5 ? "yes" : "no" : "unknown";
+  if (draft) {
+    try {
+      await storeJevKey(settings.jev.provider, draft, userId);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not store the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  send({
+    type: "jev_test_result",
+    ok: true,
+    latencyMs: Date.now() - startedAt,
+    model: outcome.response.model ?? resolveJevModelForDiagnostics(settings),
+    provider: resolveJevProvider(settings.jev).label,
+    answer: label,
+    confidence
+  }, userId ?? undefined);
 }
 function tryRegisterInterceptor() {
   if (interceptorRegistered)
@@ -1379,6 +3324,17 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await runControllerTest(userId, message.settings);
         await pushState(userId);
         break;
+      case "test_jev":
+        await runJevTest(userId, message.settings, message.apiKey);
+        await pushState(userId);
+        break;
+      case "clear_jev_key": {
+        const provider = message.provider === "openrouter" ? "openrouter" : undefined;
+        const target = provider ?? (await loadSettings(userId)).jev.provider;
+        await clearJevKey(target, userId);
+        await pushState(userId);
+        break;
+      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";

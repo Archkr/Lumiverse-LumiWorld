@@ -2,21 +2,37 @@ declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
 import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessageDTO, PersonaDTO } from "lumiverse-spindle-types";
 import {
-  BREAKDOWN_NAME, KeyedOperationLock, DEFAULT_SETTINGS, appendRunLog,
+  BREAKDOWN_NAME, CONTROLLER_CONTEXT_LABEL_KEY, KeyedOperationLock, DEFAULT_SETTINGS, appendRunLog,
   buildControllerMessages, buildInjectedDirective, describeEmptyControllerResponse,
   formatPromptForController, makeDirectivePreview, makeControllerContextMessage,
-  normalizeRunLog, normalizeSettings, parseControllerDirectiveFromResponse,
-  resolveControllerTarget, resolveIdentityMacros, resolveWorldInfoContextMessages,
-  selectControllerMessagesForController, shouldInterceptGeneration,
-  type IdentityMacroValues, type LumiWorldSettings, type ConnectionLike,
+  makeJevDiagnostics, normalizeRunLog, normalizeSettings, parseControllerDirectiveFromResponse,
+  resolveControllerTarget, resolveIdentityMacros, resolveJevProvider, resolveWorldInfoContextMessages,
+  selectChatHistoryMessagesForController, selectControllerMessagesForController, shouldInterceptGeneration,
+  jevSecretKey,
+  type IdentityMacroValues, type JevGateRecord, type JevSettings, type JevTurnDiagnostics,
+  type LumiWorldSettings, type ConnectionLike,
   type ConnectionOption, type ControllerTarget, type LlmMessageLike,
   type RunLogEntry, type WorldInfoContextDiagnostics,
 } from "./shared";
+import {
+  countJevFlags, contextFilterDecision, decideRepair, planGates, questionsFromPlan,
+  resolveGateAnswers, shouldRunDirector, wantsStrongDirectorModel, withConfidenceGate, withDegradationGate,
+} from "./gates";
+import { buildJevState, buildJevSmokeRequest, callJev, exceedsJevTokenBudget, jevEndpoint, normalizeJevResponse, parseJevBody, readCorsResult, type JevAnswer, type JevQuestions } from "./jev";
+import {
+  commitWorldState, defaultWorldState, loadWorldState, projectWorldState, saveWorldState, type WorldState,
+} from "./world-state";
 import type { BackendToFrontend, FrontendState, FrontendToBackend, PermissionState } from "./types";
 
 const SETTINGS_PATH = "global/settings.json";
 const RUNS_PATH = "global/runs.json";
 const INTERCEPTOR_PRIORITY = 150;
+/** Lumiverse clamps prompt interceptor work to five minutes. */
+const INTERCEPTOR_BUDGET_MS = 300_000;
+/** Hard ceiling on Jev wall clock, per phase, independent of the configured timeout. */
+const MAX_JEV_PHASE_MS = 15_000;
+/** Wall clock reserved for the Director call and for returning the result. */
+const DIRECTOR_RESERVE_MS = 20_000;
 
 let lastFrontendUserId: string | null = null;
 const chatUserIds = new Map<string, string>();
@@ -62,6 +78,16 @@ function worldBooksApi(): any {
   return (spindle as any).world_books;
 }
 
+function enclaveApi(): any {
+  return (spindle as any).enclave;
+}
+
+/** The CORS proxy is the only network egress the extension needs. */
+function corsApi(): ((url: string, options?: unknown) => Promise<unknown>) | null {
+  const cors = (spindle as any)?.cors;
+  return typeof cors === "function" ? (url, options) => cors.call(spindle, url, options) : null;
+}
+
 function permissionsApi(): any {
   return (spindle as any).permissions;
 }
@@ -73,6 +99,7 @@ const PERMISSION_IDS: Record<keyof PermissionState, string> = {
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books",
+  corsProxy: "cors_proxy",
 };
 
 function send(message: BackendToFrontend, userId = lastFrontendUserId ?? undefined): void {
@@ -97,6 +124,7 @@ function currentPermissions(): PermissionState {
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks"),
+    corsProxy: permissionHas("corsProxy"),
   };
 }
 
@@ -359,30 +387,437 @@ async function resolveControllerContextMessages(
   context: unknown,
   chatId?: string | null,
   userId?: string | null,
+  includeCharacter = settings.includeCharacter,
+  includePersona = settings.includeUserPersona,
 ): Promise<{ messages: LlmMessageLike[]; identity: IdentityMacroValues }> {
   const [persona, character] = await Promise.all([
-    resolvePersona(context, userId),
-    resolveCharacter(context, chatId, userId),
+    includePersona ? resolvePersona(context, userId) : Promise.resolve(null),
+    includeCharacter ? resolveCharacter(context, chatId, userId) : Promise.resolve(null),
   ]);
   const identity = makeIdentity(persona, character);
   const messages = [
-    settings.includeUserPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
-    settings.includeCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
+    persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
   ].filter((message): message is LlmMessageLike => !!message);
   return { messages, identity };
 }
 
+/* ------------------------------------------------------------------ *
+ * Jev integration
+ * ------------------------------------------------------------------ */
+
+/** The Jev key lives in the encrypted per-user enclave, never in settings JSON. */
+async function readJevKey(provider: JevSettings["provider"], userId?: string | null): Promise<string | null> {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.get !== "function") return null;
+  try {
+    const value = await enclave.get(jevSecretKey(provider), userId ?? undefined);
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeJevKey(provider: JevSettings["provider"], key: string, userId?: string | null): Promise<void> {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.put !== "function") return;
+  const value = key.trim();
+  if (!value) return;
+  await enclave.put(jevSecretKey(provider), value, userId ?? undefined);
+}
+
+async function clearJevKey(provider: JevSettings["provider"], userId?: string | null): Promise<void> {
+  const enclave = enclaveApi();
+  if (!enclave || typeof enclave.delete !== "function") return;
+  try {
+    await enclave.delete(jevSecretKey(provider), userId ?? undefined);
+  } catch {
+    // Clearing a key that is already gone is not an error.
+  }
+}
+
+/** Whole-minute ceiling on Jev work, leaving the Director its reserved budget. */
+function jevPhaseBudgetMs(settings: LumiWorldSettings): number {
+  const elapsed = 0;
+  const available = INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS - elapsed;
+  return Math.max(1_000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS, available));
+}
+
+interface JevRun {
+  enabled: boolean;
+  config: ({ provider: JevSettings["provider"] } & JevSettings & { apiKey: string }) | null;
+  cors: ((url: string, options?: unknown) => Promise<unknown>) | null;
+  error: string | null;
+}
+
+async function prepareJev(settings: LumiWorldSettings, userId: string | null): Promise<JevRun> {
+  const jev = settings.jev;
+  if (!jev.enabled) return { enabled: false, config: null, cors: null, error: null };
+  if (!permissionHas("corsProxy")) {
+    return { enabled: false, config: null, cors: null, error: "The cors_proxy permission is not granted, so Jev cannot be reached." };
+  }
+  const cors = corsApi();
+  if (!cors) return { enabled: false, config: null, cors: null, error: "This Lumiverse host does not expose the CORS proxy." };
+  const apiKey = await readJevKey(jev.provider, userId);
+  if (!apiKey) {
+    return {
+      enabled: false, config: null, cors,
+      error: `No Jev API key is stored for ${resolveJevProvider(jev).label}. Add one in the LumiWorld drawer.`,
+    };
+  }
+  return { enabled: true, config: { ...jev, apiKey }, cors, error: null };
+}
+
+/**
+ * Normalizes answers that arrived with a different shape than expected, and
+ * recovers answers when the provider wrapped them in its own envelope.
+ */
+function recoverAnswers(answers: Record<string, JevAnswer>): Record<string, JevAnswer> {
+  const recovered: Record<string, JevAnswer> = { ...answers };
+  const source = answers as unknown as Record<string, unknown>;
+  const nested = source.answers ?? readObjectPath(source, ["data", "answers"]) ?? readObjectPath(source, ["result", "answers"]);
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    try {
+      const normalized = normalizeJevResponse({ answers: nested });
+      for (const [id, answer] of Object.entries(normalized.answers)) {
+        if (!(id in recovered)) recovered[id] = answer;
+      }
+    } catch {
+      // A nested envelope that will not normalize is simply ignored.
+    }
+  }
+  return recovered;
+}
+
+function readObjectPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return null;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current ?? null;
+}
+
+interface GatePhaseOutcome {
+  plan: ReturnType<typeof planGates>;
+  records: JevGateRecord[];
+  state: unknown;
+  stateChars: number;
+  stateCompacted: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  resolvedModel: string | null;
+  requests: number;
+  durationMs: number;
+  error: string | null;
+}
+
+interface GatePhaseOptions {
+  jevRun: JevRun;
+  settings: LumiWorldSettings;
+  stateContext: Parameters<typeof import("./jev").buildJevState>[0];
+  worldStateContext: string | null;
+  turnContext: Parameters<typeof planGates>[2];
+  questionOverrides?: Parameters<typeof planGates>[3];
+  directive?: string | null;
+  diagnostics: JevTurnDiagnostics;
+}
+
+/**
+ * Runs one batched gate phase.
+ *
+ * A phase is always exactly one `questions` map, so adding gates never adds a
+ * round trip. Failures are returned as data so the caller can degrade to
+ * Director-only behavior rather than aborting the generation.
+ */
+async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions): Promise<GatePhaseOutcome> {
+  const { jevRun, settings } = options;
+  const plan = planGates(phase, settings.jev, options.turnContext, options.questionOverrides ?? {});
+  const projection = buildJevState(
+    { ...options.stateContext, draftDirective: options.directive ?? options.stateContext.draftDirective },
+    options.worldStateContext,
+  );
+  const empty = (error: string | null): GatePhaseOutcome => ({
+    plan, records: resolveGateAnswers(plan, {}, settings.jev.minConfidence), state: projection.state,
+    stateChars: projection.chars, stateCompacted: projection.compacted,
+    inputTokens: null, outputTokens: null, costUsd: null, resolvedModel: null,
+    requests: 0, durationMs: 0, error,
+  });
+
+  if (plan.gates.length === 0) return empty(null);
+  if (!jevRun.enabled || !jevRun.config || !jevRun.cors) return empty(jevRun.error);
+
+  const questions: JevQuestions = questionsFromPlan(plan) as JevQuestions;
+  if (exceedsJevTokenBudget(projection.state, questions)) {
+    return empty("The assembled Jev state exceeds the model's 32k token allowance.");
+  }
+
+  const outcome = await callJev({
+    config: jevRun.config,
+    state: projection.state,
+    questions,
+    cors: jevRun.cors,
+    timeoutMs: settings.jev.timeoutMs,
+    budgetMs: jevPhaseBudgetMs(settings),
+    retryOnRateLimit: settings.jev.retryOnRateLimit,
+  });
+
+  if (!outcome.ok || !outcome.response) {
+    return {
+      ...empty(outcome.error ?? "Jev request failed."),
+      requests: outcome.requests,
+      durationMs: outcome.durationMs,
+    };
+  }
+
+  const answers = recoverAnswers(outcome.response.answers);
+  return {
+    plan,
+    records: resolveGateAnswers(plan, answers, settings.jev.minConfidence),
+    state: projection.state,
+    stateChars: projection.chars,
+    stateCompacted: projection.compacted,
+    inputTokens: outcome.response.usage.inputTokens,
+    outputTokens: outcome.response.usage.outputTokens,
+    costUsd: outcome.response.usage.costUsd,
+    resolvedModel: outcome.response.model,
+    requests: outcome.requests,
+    durationMs: outcome.durationMs,
+    error: null,
+  };
+}
+
+function summaryOfMessages(messages: LlmMessageLike[], maxChars: number): string | null {
+  if (messages.length === 0) return null;
+  const prompt = formatPromptForController(messages, maxChars);
+  return prompt.prompt.trim() || null;
+}
+
+function contextMessageSummary(messages: LlmMessageLike[], label: string): string | null {
+  const message = messages.find((entry) => entry[CONTROLLER_CONTEXT_LABEL_KEY] === label);
+  if (!message) return null;
+  const text = serializeContent(message.content).trim();
+  return text || null;
+}
+
+function serializeContent(content: LlmMessageLike["content"]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => (part.type === "text" ? part.text : "")).filter(Boolean).join("\n");
+}
+
+/**
+ * Merges one phase's outcome into the turn diagnostics.
+ *
+ * Counts come from the phase's own resolved gate records, so the synthetic
+ * cross-cutting records added afterwards cannot inflate them.
+ */
+function mergeJevDiagnostics(
+  current: JevTurnDiagnostics,
+  phase: GatePhaseOutcome,
+  phaseName: "gate" | "verify",
+): JevTurnDiagnostics {
+  const flags = countJevFlags(phase.records);
+  // A phase that answered cleanly settles the turn to "ok" unless a previous phase
+  // already degraded it. A phase that answered nothing keeps the turn degraded.
+  const phaseFailed = !!phase.error;
+  const status: JevTurnDiagnostics["status"] = current.error || phaseFailed
+    ? "degraded"
+    : current.status === "degraded" ? "degraded" : "ok";
+  return {
+    ...current,
+    status,
+    error: current.error ?? phase.error,
+    requestCount: current.requestCount + phase.requests,
+    inputTokens: sumNullable(current.inputTokens, phase.inputTokens),
+    outputTokens: sumNullable(current.outputTokens, phase.outputTokens),
+    costUsd: sumNullable(current.costUsd, phase.costUsd),
+    gatePhaseMs: phaseName === "gate" ? phase.durationMs : current.gatePhaseMs,
+    verifyPhaseMs: phaseName === "verify" ? phase.durationMs : current.verifyPhaseMs,
+    resolvedModel: phase.resolvedModel ?? current.resolvedModel,
+    gateCount: current.gateCount + phase.records.length,
+    fallbackCount: current.fallbackCount + flags.fallback,
+    escalatedCount: current.escalatedCount + flags.escalated,
+    stateChars: phase.stateChars || current.stateChars,
+    stateCompacted: phase.stateCompacted || current.stateCompacted,
+  };
+}
+
+function sumNullable(left: number | null, right: number | null): number | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left + right;
+}
+
+const CONTROLLER_CONTEXT_LABEL = CONTROLLER_CONTEXT_LABEL_KEY;
+
+/* ------------------------------------------------------------------ *
+ * Controller preparation and the Director call
+ * ------------------------------------------------------------------ */
+
+interface PreparedController {
+  controllerMessages: LlmMessageLike[];
+  promptSnapshot: ReturnType<typeof formatPromptForController>;
+  worldState: WorldState;
+  worldInfoDiagnostics: WorldInfoContextDiagnostics;
+  turnContext: {
+    hasHistory: boolean;
+    hasCharacter: boolean;
+    hasPersona: boolean;
+    hasWorldInfo: boolean;
+    hasDirectorNotes: boolean;
+    worldStateEnabled: boolean;
+    generationType: string;
+  };
+  stateContext: Parameters<typeof import("./jev").buildJevState>[0];
+}
+
+async function prepareController(
+  settings: LumiWorldSettings,
+  messages: LlmMessageDTO[],
+  context: unknown,
+  chatId: string | null,
+  userId: string | null,
+  generationType: string,
+  /** False for the gate phase: the assembled prompt is not needed yet, and the
+   *  World Info lookup is the most expensive part of preparation. */
+  preserveWorldInfo = true,
+): Promise<PreparedController> {
+  const identityPromise = Promise.all([
+    resolvePersona(context, userId),
+    resolveCharacter(context, chatId, userId),
+  ]);
+  const worldState = await loadWorldState(
+    storageApi(), chatId ?? "", userId, settings.jev.enabled && settings.jev.worldStateEnabled,
+  );
+  const [persona, character] = await identityPromise;
+  const identity = makeIdentity(persona, character);
+  const includesCharacter = settings.includeCharacter && !!character;
+  const includesPersona = settings.includeUserPersona && !!persona;
+
+  const contextMessages = [
+    includesPersona && persona ? makeControllerContextMessage("User Persona", formatPersonaContext(persona, identity)) : null,
+    includesCharacter && character ? makeControllerContextMessage("Character", formatCharacterContext(character, identity)) : null,
+  ].filter((message): message is LlmMessageLike => !!message);
+
+  const worldBooks = worldBooksApi();
+  const worldInfoContext = await resolveWorldInfoContextMessages({
+    // Skipped entirely when the phase-A filter already decided lore is irrelevant,
+    // so an unnecessary World Info fetch never costs a round trip.
+    messages: messages as LlmMessageLike[],
+    settings: preserveWorldInfo ? settings : { ...settings, includeWorldInfoEntries: false },
+    context,
+    canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
+    fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
+      ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
+    fetchEntry: typeof worldBooks?.entries?.get === "function"
+      ? (entryId: string) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
+    identity,
+  });
+
+  const selected = selectControllerMessagesForController(
+    messages as LlmMessageLike[], settings,
+    [...contextMessages, ...worldInfoContext.messages],
+  );
+  const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
+  const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
+    generationType, chatId: chatId || "", connectionId: extractConnectionId(context),
+    user: identity.userName || "User",
+    char: identity.characterName || "Character",
+  });
+
+  const worldStateText = projectWorldState(worldState);
+  return {
+    controllerMessages,
+    promptSnapshot,
+    worldState,
+    worldInfoDiagnostics: worldInfoContext.diagnostics,
+    turnContext: {
+      hasHistory: !!promptSnapshot.prompt.trim(),
+      hasCharacter: includesCharacter,
+      hasPersona: includesPersona,
+      hasWorldInfo: preserveWorldInfo && worldInfoContext.messages.length > 0,
+      hasDirectorNotes: !!settings.additionalNotes.trim(),
+      worldStateEnabled: settings.jev.worldStateEnabled,
+      generationType,
+    },
+    stateContext: {
+      settings: { historyMessageLimit: settings.jev.historyMessageLimit, maxStateChars: settings.jev.maxStateChars },
+      generationType,
+      chatId: chatId ?? "",
+      history: selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.jev.historyMessageLimit),
+      personaSummary: contextMessageSummary(contextMessages, "User Persona"),
+      characterSummary: contextMessageSummary(contextMessages, "Character"),
+      worldInfoSummary: summaryOfMessages(worldInfoContext.messages, 6000),
+      directorNotes: resolveIdentityMacros(settings.additionalNotes, identity).trim() || null,
+      worldState: worldState.turn > 0 ? worldStateText : null,
+    },
+  };
+}
+
+/**
+ * Applies the phase-A context filter to the already-prepared context.
+ *
+ * The base preparation supplies the identity, the Jev state projection, and the
+ * scene state, so nothing is looked up twice.
+ */
+function applyContextFilter(
+  base: PreparedController,
+  settings: LumiWorldSettings,
+  messages: LlmMessageDTO[],
+  context: unknown,
+  generationType: string,
+  decision: ReturnType<typeof contextFilterDecision>,
+): PreparedController {
+  if (!decision) return base;
+
+  const contextMessages: LlmMessageLike[] = [];
+  if (decision.keepPersona && base.stateContext.personaSummary) {
+    contextMessages.push(makeControllerContextMessage("User Persona", base.stateContext.personaSummary)!);
+  }
+  if (decision.keepCharacter && base.stateContext.characterSummary) {
+    contextMessages.push(makeControllerContextMessage("Character", base.stateContext.characterSummary)!);
+  }
+  const history = decision.keepHistory
+    ? selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.historyMessageLimit)
+    : [];
+  const promptSnapshot = formatPromptForController([...contextMessages, ...history], settings.maxInputChars);
+  const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
+    generationType, chatId: base.stateContext.chatId, connectionId: extractConnectionId(context),
+  });
+  return {
+    ...base,
+    controllerMessages,
+    promptSnapshot,
+    turnContext: {
+      ...base.turnContext,
+      hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
+      hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
+      hasPersona: decision.keepPersona && base.turnContext.hasPersona,
+      hasWorldInfo: false,
+    },
+  };
+}
+
 async function buildState(userId?: string | null): Promise<FrontendState> {
   const settings = await loadSettings(userId);
-  const [connectionState, runs] = await Promise.all([
+  const [connectionState, runs, hasJevKey] = await Promise.all([
     listConnections(userId), loadRuns(userId, Number.MAX_SAFE_INTEGER),
+    readJevKey(settings.jev.provider, userId).then((key) => !!key).catch(() => false),
   ]);
+  const providerInfo = resolveJevProvider(settings.jev);
   return {
     settings,
     connections: connectionState.connections,
     connectionError: connectionState.error,
     runs: runs.filter((run) => run.channel !== "world_agent").slice(0, settings.runLogLimit),
     permissions: currentPermissions(),
+    hasJevKey,
+    jevProviderInfo: providerInfo,
+    jevEndpoint: jevEndpoint(settings.jev),    activeGateCount: settings.jev.enabled
+      ? Object.values(settings.jev.gatePolicy).filter((policy) => policy.enabled === true).length
+      : 0,
   };
 }
 
@@ -456,6 +891,37 @@ async function callController(
   }
 }
 
+/**
+ * Chooses the Director target for this turn.
+ *
+ * `model_route` may promote the turn to an explicitly configured "strong"
+ * connection or model; when none is configured the normal target is kept, so the
+ * gate degrades safely on a fresh install.
+ */
+async function resolveTurnTarget(
+  settings: LumiWorldSettings,
+  records: JevGateRecord[],
+  userId: string | null,
+): Promise<ControllerTarget | null> {
+  const base = resolveControllerTarget(settings, await getConnection(settings.connectionId, userId));
+  if (!wantsStrongDirectorModel(records)) return base.ok ? base : null;
+
+  if (settings.strongConnectionId) {
+    const strong = await getConnection(settings.strongConnectionId, userId);
+    if (strong) {
+      const resolved = resolveControllerTarget(
+        { ...settings, connectionId: settings.strongConnectionId, modelOverride: settings.strongModelOverride },
+        strong,
+      );
+      if (resolved.ok) return resolved;
+    }
+  }
+  if (settings.strongModelOverride.trim() && base.ok) {
+    return { ...base, model: settings.strongModelOverride.trim() };
+  }
+  return base.ok ? base : null;
+}
+
 async function handleInterceptor(
   messages: LlmMessageDTO[], context: unknown,
 ): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
@@ -483,48 +949,145 @@ async function handleInterceptor(
   }
 
   let target: ControllerTarget | null = null;
+  let worldState: WorldState = defaultWorldState();
   let worldInfoDiagnostics: WorldInfoContextDiagnostics = {
     activatedEntryCount: 0, fetchedEntryCount: 0,
     fallbackTaggedEntryCount: 0, fetchError: null,
   };
+  let prepared: PreparedController | null = null;
+  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
+
   try {
-    const connection = await getConnection(settings.connectionId, userId);
-    const resolved = resolveControllerTarget(settings, connection);
-    if (!resolved.ok) {
+    const jevRun = await prepareJev(settings, userId);
+
+    /* ---------------- Phase A: one batched gate request ---------------- */
+    // Identities and the scene state first; the World Info lookup is deferred
+    // until after the gate phase so a discarded lore source costs nothing.
+    prepared = await prepareController(settings, messages, context, chatId, userId, generationType, false);
+    worldState = prepared.worldState;
+    let gateRecords: JevGateRecord[] = [];
+
+    if (jevRun.enabled) {
+      jevDiagnostics.used = true;
+      jevDiagnostics.model = resolveJevModelForDiagnostics(settings);
+      const phase = await runGatePhase("gate", {
+        jevRun, settings,
+        stateContext: prepared.stateContext,
+        worldStateContext: worldState.turn > 0 ? projectWorldState(worldState) : null,
+        turnContext: prepared.turnContext,
+        diagnostics: jevDiagnostics,
+      });
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "gate"));
+      gateRecords = phase.records;
+
+      const decision = shouldRunDirector(gateRecords);
+      if (!decision.run) {
+        // Jev answered cleanly and told us to hold: that is a deliberate skip,
+        // not a degradation, so the recorded status stays "skipped".
+        const skipped = { ...jevDiagnostics, status: "skipped" as const, used: true };
+        const records = withConfidenceGate(withDegradationGate(gateRecords, { status: "ok", error: null }), settings.jev.minConfidence);
+        await recordRun(makeRunBase("skipped", startedAt, {
+          channel: "director", generationType,
+          error: decision.reason ?? "Jev skipped this turn.",
+          ...runLogWorldInfoPatch(worldInfoDiagnostics),
+          jev: { ...skipped, gates: records, gateCount: records.length },
+        }), userId, settings);
+        return messages;
+      }
+    } else {
+      // Fail open: without a usable Jev connection the Director runs exactly as it
+      // did before v0.5, and the reason is recorded for the diagnostics view.
+      jevDiagnostics.status = "degraded";
+      jevDiagnostics.error = jevRun.error;
+    }
+
+    /* ---------------- Director call ---------------- */
+    const filterDecision = contextFilterDecision(gateRecords);
+    const keepWorldInfo = settings.includeWorldInfoEntries && (!filterDecision || filterDecision.keepWorldInfo);
+
+    // The gate phase deliberately skipped the World Info lookup, so it is resolved
+    // once here — and not at all when the filter already decided lore is irrelevant.
+    if (keepWorldInfo) {
+      const withWorldInfo = await prepareController(settings, messages, context, chatId, userId, generationType, true);
+      worldInfoDiagnostics = withWorldInfo.worldInfoDiagnostics;
+      prepared = withWorldInfo;
+    }
+
+    prepared = applyContextFilter(prepared, settings, messages, context, generationType, filterDecision);
+    target = await resolveTurnTarget(settings, gateRecords, userId);
+    if (!target) {
       await recordRun(makeRunBase("skipped", startedAt, {
-        channel: "director", generationType, connectionId: settings.connectionId, error: resolved.reason,
+        channel: "director", generationType, connectionId: settings.connectionId,
+        error: "Choose a LumiWorld controller connection first.",
+        ...runLogWorldInfoPatch(worldInfoDiagnostics),
+        jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: gateRecords } : null,
       }), userId, settings);
       return messages;
     }
-    target = resolved;
-    const controllerContext = await resolveControllerContextMessages(settings, context, chatId, userId);
-    const worldBooks = worldBooksApi();
-    const worldInfoContext = await resolveWorldInfoContextMessages({
-      messages: messages as LlmMessageLike[], settings, context,
-      canFetchWorldBooks: permissionHas("worldBooks") && !!worldBooks,
-      fetchActivated: chatId && typeof worldBooks?.getActivated === "function"
-        ? () => worldBooks.getActivated(chatId, userId ?? undefined) : undefined,
-      fetchEntry: typeof worldBooks?.entries?.get === "function"
-        ? (entryId: string) => worldBooks.entries.get(entryId, userId ?? undefined) : undefined,
-      identity: controllerContext.identity,
-    });
-    worldInfoDiagnostics = worldInfoContext.diagnostics;
-    const controllerContextMessages = selectControllerMessagesForController(
-      messages as LlmMessageLike[], settings,
-      [...controllerContext.messages, ...worldInfoContext.messages],
+
+    const first = await callController(userId, settings, target, prepared.controllerMessages);
+    let directive = first.directive;
+
+    /* ---------------- Phase B: one batched verification request ---------------- */
+    let verifyRecords: JevGateRecord[] = [];
+    if (jevRun.enabled) {
+      const phase = await runGatePhase("verify", {
+        jevRun, settings,
+        stateContext: prepared.stateContext,
+        worldStateContext: projectWorldState(worldState),
+        turnContext: prepared.turnContext,
+        directive,
+        diagnostics: jevDiagnostics,
+      });
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify"));
+      verifyRecords = phase.records;
+
+      const repair = decideRepair(verifyRecords);
+      if (repair) {
+        // Exactly one bounded repair attempt. A second failure keeps the original
+        // directive rather than looping, and the unresolved violation is recorded.
+        const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
+        if (repaired) {
+          directive = repaired;
+          const recheck = await runGatePhase("verify", {
+            jevRun, settings,
+            stateContext: prepared.stateContext,
+            worldStateContext: projectWorldState(worldState),
+            turnContext: prepared.turnContext,
+            directive,
+            diagnostics: jevDiagnostics,
+          });
+          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify"));
+          verifyRecords = recheck.records;
+          const unresolved = decideRepair(verifyRecords);
+          if (unresolved) {
+            spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
+          }
+        } else {
+          spindle.log.warn(`LumiWorld kept the original directive after a failed ${repair.action} repair.`);
+        }
+      }
+    }
+
+    /* ---------------- Commit derived state ---------------- */
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId) {
+      const committed = commitWorldState(worldState, verifyRecords, directive);
+      await saveWorldState(storageApi(), chatId, committed, userId);
+      worldState = committed;
+    }
+
+    const allRecords = withConfidenceGate(
+      withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }),
+      settings.jev.minConfidence,
     );
-    const promptSnapshot = formatPromptForController(controllerContextMessages, settings.maxInputChars);
-    const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
-      generationType, chatId: chatId || "", connectionId: extractConnectionId(context),
-      user: controllerContext.identity.userName || "User",
-      char: controllerContext.identity.characterName || "Character",
-    });
-    const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     const injected: LlmMessageDTO = { role: "system", content: buildInjectedDirective(directive) };
     await recordRun(makeRunBase("success", startedAt, {
-      channel: "director", generationType, durationMs,
+      channel: "director", generationType, durationMs: first.durationMs,
       connectionId: target.connectionId, connectionName: target.connectionName, model: target.model,
       directivePreview: makeDirectivePreview(directive), ...runLogWorldInfoPatch(worldInfoDiagnostics),
+      jev: settings.jev.enabled || jevDiagnostics.used
+        ? { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length }
+        : null,
     }), userId, settings);
     return { messages: [injected, ...messages], breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }] };
   } catch (error) {
@@ -536,12 +1099,126 @@ async function handleInterceptor(
       connectionId: target?.connectionId ?? settings.connectionId,
       connectionName: target?.connectionName, model: target?.model,
       error: message, ...runLogWorldInfoPatch(worldInfoDiagnostics),
+      jev: jevDiagnostics.used ? jevDiagnostics : null,
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
   } finally {
     directorBusy.release(busyKey);
   }
+}
+
+function resolveJevModelForDiagnostics(settings: LumiWorldSettings): string {
+  const provider = resolveJevProvider(settings.jev);
+  return settings.jev.model.trim() || provider.defaultModel;
+}
+
+/**
+ * Builds the repair prompt and runs the single allowed regeneration.
+ *
+ * Returns null when the repair itself fails, which leaves the original directive
+ * in place rather than escalating to an unbounded retry loop.
+ */
+async function regenerateDirective(
+  userId: string | null,
+  settings: LumiWorldSettings,
+  target: ControllerTarget,
+  prepared: PreparedController,
+  repair: { action: string; reason: string },
+  records: JevGateRecord[],
+): Promise<string | null> {
+  const violated = records
+    .filter((record) => record.usedFallback || record.value === "violation" || record.value === "repeats" || record.value === true)
+    .map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`)
+    .join("\n");
+  const repairMessages: LlmMessageLike[] = [
+    ...prepared.controllerMessages,
+    {
+      role: "system",
+      content: [
+        `LumiWorld verification found a problem with the direction you just produced. Repair it with this action: ${repair.action}.`,
+        repair.reason,
+        violated ? `Flagged checks:\n${violated}` : "",
+        "Return a corrected directive only. Keep the same format and length limits.",
+      ].filter(Boolean).join("\n"),
+    },
+  ];
+  try {
+    const repaired = await callController(userId, settings, target, repairMessages);
+    return repaired.directive;
+  } catch (error) {
+    spindle.log.warn(`LumiWorld repair attempt failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * Drawer smoke test for the Jev connection.
+ *
+ * Sends one tiny Noul question with a fixed, chat-free state so the test costs
+ * almost nothing and never transmits the user's conversation.
+ */
+async function runJevTest(
+  userId: string | null,
+  patch?: Partial<LumiWorldSettings>,
+  draftKey?: string,
+): Promise<void> {
+  const baseSettings = await loadSettings(userId);
+  const settings = normalizeSettings({ ...baseSettings, ...patch });
+  const startedAt = Date.now();
+
+  const jevRun = await prepareJev(settings, userId);
+  const draft = typeof draftKey === "string" ? draftKey.trim() : "";
+  const apiKey = draft || await readJevKey(settings.jev.provider, userId);
+  if (!apiKey) {
+    const error = jevRun.error ?? `No Jev API key is stored for ${resolveJevProvider(settings.jev).label}.`;
+    send({ type: "jev_test_result", ok: false, error }, userId ?? undefined);
+    return;
+  }
+  const cors = jevRun.cors ?? corsApi();
+  if (!cors) {
+    send({ type: "jev_test_result", ok: false, error: "This Lumiverse host does not expose the CORS proxy." }, userId ?? undefined);
+    return;
+  }
+
+  const smoke = buildJevSmokeRequest({ ...settings.jev, apiKey });
+  const outcome = await callJev({
+    config: { ...settings.jev, apiKey },
+    state: "A storm rolls in over the harbour.",
+    questions: smoke.questions,
+    cors,
+    timeoutMs: settings.jev.timeoutMs,
+    budgetMs: MAX_JEV_PHASE_MS,
+    retryOnRateLimit: settings.jev.retryOnRateLimit,
+  });
+
+  if (!outcome.ok || !outcome.response) {
+    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "Jev did not answer." }, userId ?? undefined);
+    return;
+  }
+
+  const answer = outcome.response.answers.connectivity;
+  const confidence = answer && answer.type === "noul" ? Math.max(answer.noul, 1 - answer.noul) : null;
+  const label = answer && answer.type === "noul" ? (answer.noul >= 0.5 ? "yes" : "no") : "unknown";
+
+  // Only persist a key that the provider actually accepted.
+  if (draft) {
+    try {
+      await storeJevKey(settings.jev.provider, draft, userId);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not store the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  send({
+    type: "jev_test_result",
+    ok: true,
+    latencyMs: Date.now() - startedAt,
+    model: outcome.response.model ?? resolveJevModelForDiagnostics(settings),
+    provider: resolveJevProvider(settings.jev).label,
+    answer: label,
+    confidence,
+  }, userId ?? undefined);
 }
 
 function tryRegisterInterceptor(): void {
@@ -666,6 +1343,17 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await runControllerTest(userId, message.settings);
         await pushState(userId);
         break;
+      case "test_jev":
+        await runJevTest(userId, message.settings, message.apiKey);
+        await pushState(userId);
+        break;
+      case "clear_jev_key": {
+        const provider = message.provider === "openrouter" ? "openrouter" : undefined;
+        const target = provider ?? (await loadSettings(userId)).jev.provider;
+        await clearJevKey(target, userId);
+        await pushState(userId);
+        break;
+      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";

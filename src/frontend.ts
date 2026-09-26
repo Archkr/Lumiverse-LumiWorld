@@ -1,8 +1,14 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
-import { DEFAULT_SETTINGS, VISIBLE_GENERATION_TYPES, normalizeSettings, type LumiWorldSettings, type ConnectionOption } from "./shared";
+import {
+  DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
+  summarizeJevDiagnostics,
+  type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord,
+  type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type ConnectionOption,
+} from "./shared";
+import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0-experimental";
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 const LABELS: Record<string, string> = {
   normal: "New reply", continue: "Continue", regenerate: "Regenerate", swipe: "Swipe", impersonate: "Impersonate",
@@ -83,9 +89,54 @@ const CSS = `
 .lw-footer-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .lw-loading { padding:16px 0; color:var(--lumiverse-text-muted); }
 .lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
+.lw-key-row { display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; }
+.lw-badge { display:inline-flex; align-items:center; gap:5px; min-height:22px; padding:2px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; color:var(--lumiverse-text-muted); font-size:11px; white-space:nowrap; }
+.lw-badge[data-tone="success"] { border-color:var(--lumiverse-success); color:var(--lumiverse-success); }
+.lw-badge[data-tone="warning"] { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
+.lw-badge[data-tone="error"] { border-color:var(--lumiverse-danger); color:var(--lumiverse-danger); }
+.lw-gate-group { display:grid; gap:8px; padding:12px 0 4px; }
+.lw-gate-group + .lw-gate-group { border-top:1px solid var(--lumiverse-border); }
+.lw-gate-head { display:flex; align-items:baseline; gap:8px; }
+.lw-gate-head strong { font-size:12px; }
+.lw-gate-list { display:grid; gap:6px; }
+.lw-gate { display:grid; gap:6px 10px; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; padding:6px 0; }
+.lw-gate-copy { min-width:0; }
+.lw-gate-copy .lw-hint { font-size:11px; }
+.lw-gate-threshold { display:flex; align-items:center; gap:6px; flex:none; }
+.lw-gate-threshold input { width:64px; min-height:30px; padding:4px 6px; }
+.lw-gate-threshold span { color:var(--lumiverse-text-muted); font-size:11px; }
+.lw-gate-fallback { grid-column:2 / -1; }
+.lw-gate-fallback select { min-height:30px; padding:4px 6px; font-size:11px; }
+.lw-diag { display:grid; gap:8px; }
+.lw-diag-summary { display:flex; flex-wrap:wrap; gap:6px; }
+.lw-diag-table { display:grid; gap:4px; max-height:340px; overflow:auto; }
+.lw-diag-row { display:grid; gap:2px 10px; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto; align-items:baseline; padding:7px 9px; border:1px solid var(--lumiverse-border); border-radius:7px; background:var(--lumiverse-fill-subtle); font-size:11px; }
+.lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
+.lw-diag-gate { font-weight:600; }
+.lw-diag-value { font-family:var(--lumiverse-font-mono,monospace); overflow-wrap:anywhere; }
+.lw-diag-meta { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); white-space:nowrap; }
+.lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); }
+.lw-gate-reset { justify-self:start; margin-top:2px; font-size:11px; min-height:28px; padding:2px 8px; }
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
+
+const GATE_FALLBACKS: readonly GateFallback[] = [
+  "run", "skip", "accept", "retry", "patch", "soften", "drop", "hold", "none", "ignore",
+];
+
+const GATE_FALLBACK_LABELS: Record<GateFallback, string> = {
+  run: "Run the Director ungated",
+  skip: "Skip the Director",
+  accept: "Accept the draft",
+  retry: "Regenerate once",
+  patch: "Rewrite the part that infringes",
+  soften: "Soften the directive",
+  drop: "Drop the claim",
+  hold: "Hold the beat",
+  none: "Record only",
+  ignore: "Ignore the answer",
+};
 
 type MountedHandle = { destroy(): void };
 type Notice = { tone: "info" | "success" | "warning" | "error"; text: string };
@@ -132,6 +183,16 @@ function button(label: string, handler: () => void, primary = false): HTMLButton
   return node;
 }
 
+function textInput(value: string, placeholder: string, ariaLabel: string, onInput: (next: string) => void): HTMLInputElement {
+  const input = el("input", "lw-input");
+  input.type = "text";
+  input.value = value;
+  input.placeholder = placeholder;
+  input.setAttribute("aria-label", ariaLabel);
+  input.addEventListener("input", () => onInput(input.value));
+  return input;
+}
+
 function activeChat(ctx: SpindleFrontendContext): { chatId: string | null; characterId: string | null } {
   try { return ctx.getActiveChat(); }
   catch { return { chatId: null, characterId: null }; }
@@ -149,9 +210,14 @@ export function setup(ctx: SpindleFrontendContext) {
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let testPending = false;
+  let jevTestPending = false;
+  let jevKeyDraft = "";
   let advancedOpen = false;
   let templatesOpen = false;
   let notesOpen = false;
+  let jevOpen = false;
+  let gatesOpen = false;
+  let diagnosticsOpen = false;
   let nextFieldId = 0;
 
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -348,6 +414,351 @@ export function setup(ctx: SpindleFrontendContext) {
     return state?.connections.find((item) => item.id === draft.connectionId) ?? null;
   }
 
+  /* ---------------- Jev ---------------- */
+
+  function providerInfo(): typeof JEV_PROVIDERS.typesafe {
+    return JEV_PROVIDERS[draft.jev.provider];
+  }
+
+  function hasJevKey(): boolean {
+    return !!state?.hasJevKey;
+  }
+
+  function canTestJev(): boolean {
+    if (!state?.permissions.corsProxy) return false;
+    if (jevKeyDraft.trim()) return true;
+    return hasJevKey();
+  }
+
+  function selectControl(value: string, options: Array<{ value: string; label: string }>, ariaLabel: string, onChange: (next: string) => void): HTMLElement {
+    const slot = el("div", "lw-control");
+    const select = el("select", "lw-select");
+    for (const option of options) select.appendChild(new Option(option.label, option.value));
+    select.value = value;
+    select.setAttribute("aria-label", ariaLabel);
+    select.addEventListener("change", () => onChange(select.value));
+    slot.appendChild(select);
+    return slot;
+  }
+
+  function numberInput(value: number, min: number, max: number, step: number, ariaLabel: string, onChange: (next: number) => void): HTMLInputElement {
+    const input = el("input", "lw-input");
+    input.type = "number";
+    input.value = String(value);
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.setAttribute("aria-label", ariaLabel);
+    input.addEventListener("change", () => {
+      if (input.value === "") return;
+      const parsed = Number(input.value);
+      if (Number.isFinite(parsed)) onChange(Math.min(max, Math.max(min, parsed)));
+    });
+    return input;
+  }
+
+  function mutateJev(patch: Partial<JevSettings>, rerender = false): void {
+    mutate({ jev: { ...draft.jev, ...patch } }, rerender);
+  }
+
+  /** Sparse override: only properties the user actually changed are stored. */
+  function mutateGate(gateId: string, patch: Partial<GatePolicy>): void {
+    const current = draft.jev.gatePolicy[gateId] ?? {};
+    mutateJev({ gatePolicy: { ...draft.jev.gatePolicy, [gateId]: { ...current, ...patch } } });
+  }
+
+  function resetGate(gateId: string): void {
+    if (!(gateId in draft.jev.gatePolicy)) return;
+    const next = { ...draft.jev.gatePolicy };
+    delete next[gateId];
+    mutateJev({ gatePolicy: next }, true);
+  }
+
+  function effectivePolicy(definition: GateDefinition): Required<GatePolicy> {
+    const override = draft.jev.gatePolicy[definition.id] ?? {};
+    return {
+      enabled: override.enabled ?? definition.enabledByDefault,
+      threshold: override.threshold
+        ?? (definition.id === "confidence_escalation" ? draft.jev.minConfidence : definition.threshold),
+      fallback: override.fallback ?? definition.fallback,
+    };
+  }
+
+  function testJev(): void {
+    if (jevTestPending || !canTestJev()) return;
+    jevTestPending = true;
+    showNotice({ tone: "info", text: "Testing Jev…" }, 0);
+    updateJevTestButton();
+    send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
+  }
+
+  function updateJevTestButton(): void {
+    const node = drawer.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]");
+    if (node) {
+      node.disabled = jevTestPending || !canTestJev();
+      node.setAttribute("aria-busy", String(jevTestPending));
+      node.textContent = jevTestPending ? "Testing Jev…" : "Test Jev";
+    }
+    const hint = drawer.root.querySelector<HTMLElement>("[data-lw-jev-hint]");
+    if (hint) {
+      hint.textContent = !state?.permissions.corsProxy
+        ? "The cors_proxy permission is required to reach Jev."
+        : jevKeyDraft.trim() ? "Sends one tiny yes/no question and stores the key if it works."
+        : hasJevKey() ? "Uses the stored key. One tiny yes/no question; your chat is not sent."
+        : "Paste an API key to test the connection.";
+    }
+  }
+
+  function jevSection(): HTMLElement {
+    const section = el("section", "lw-section");
+    section.append(el("h2", "lw-section-title", "Jev simulation"));
+    section.append(switchField(
+      "Use Jev gates",
+      draft.jev.enabled,
+      (enabled) => mutateJev({ enabled }, true),
+      "Ask a cheap decision model whether each turn needs the Director.",
+    ));
+
+    if (!draft.jev.enabled) {
+      section.append(el("p", "lw-hint", "With Jev off, LumiWorld runs exactly as the Director-only baseline."));
+      return section;
+    }
+
+    const fields = el("div", "lw-fields");
+    fields.append(
+      field("Provider", selectControl(
+        draft.jev.provider,
+        JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
+        "Jev provider",
+        (value) => mutateJev({ provider: value as JevProvider, model: "" }, true),
+      ), providerInfo().keyUrl),
+      field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })),
+        `Leave blank to use ${providerInfo().defaultModel}.`),
+    );
+    section.append(fields);
+
+    const keyLabel = el("div"); keyLabel.textContent = "API key";
+    const keyWrap = el("div", "lw-field");
+    keyWrap.append(keyLabel);
+    const keyRow = el("div", "lw-key-row");
+    const keyInput = el("input", "lw-input");
+    keyInput.type = "password";
+    keyInput.autocomplete = "off";
+    keyInput.spellcheck = false;
+    keyInput.value = jevKeyDraft;
+    keyInput.placeholder = hasJevKey() ? "A key is stored" : "Paste your API key";
+    keyInput.setAttribute("aria-label", "Jev API key");
+    keyInput.addEventListener("input", () => { jevKeyDraft = keyInput.value; updateJevTestButton(); });
+    const keyBadge = el("span", "lw-badge", hasJevKey() ? "Stored" : "Not set");
+    keyBadge.dataset.tone = hasJevKey() ? "success" : "warning";
+    const clear = button("Clear", () => {
+      jevKeyDraft = "";
+      send({ type: "clear_jev_key", provider: draft.jev.provider });
+    });
+    clear.disabled = !hasJevKey();
+    keyRow.append(keyInput, keyBadge, clear);
+    keyWrap.append(keyRow, el("div", "lw-hint", "Encrypted at rest per Lumiverse user and never sent back to this panel."));
+    section.append(keyWrap);
+
+    const actions = el("div", "lw-actions");
+    const test = button("Test Jev", testJev, true);
+    test.dataset.lwJevTest = "";
+    const hint = el("div", "lw-hint lw-test-hint");
+    hint.dataset.lwJevHint = "";
+    actions.append(test, hint);
+    section.append(actions);
+
+    const advancedFields = el("div", "lw-fields");
+    advancedFields.append(
+      field("State cap (chars)", numberInput(
+        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
+        (value) => mutateJev({ maxStateChars: value }),
+      ), "Jev allows 32k tokens for the state."),
+      field("History messages", numberInput(
+        draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages",
+        (value) => mutateJev({ historyMessageLimit: value }),
+      )),
+      field("Timeout (ms)", numberInput(
+        draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout",
+        (value) => mutateJev({ timeoutMs: value }),
+      )),
+      field("Confidence floor", numberInput(
+        draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor",
+        (value) => mutateJev({ minConfidence: value }),
+      ), "Decisions below this are escalated to their fallback."),
+    );
+    section.append(advancedFields);
+    return section;
+  }
+
+  function gatesSection(): HTMLElement {
+    const details = el("details", "lw-details");
+    details.open = gatesOpen;
+    details.addEventListener("toggle", () => { gatesOpen = details.open; });
+    const summary = el("summary");
+    const copy = el("span", "lw-summary-copy");
+    const active = GATE_CATALOG.filter((definition) => effectivePolicy(definition).enabled).length;
+    copy.append(
+      el("span", undefined, "Jev gates"),
+      el("span", "lw-hint", `${active} of ${GATE_CATALOG.length} enabled`),
+    );
+    summary.append(copy);
+    details.append(summary);
+
+    const body = el("div", "lw-details-body");
+    body.append(el("p", "lw-hint", "Every enabled gate travels in one batched request per phase, so adding gates adds no round trips. Unanswered gates use their declared fallback."));
+
+    for (const category of GATE_CATEGORY_ORDER) {
+      const definitions = GATE_CATALOG.filter((definition) => definition.category === category);
+      if (definitions.length === 0) continue;
+      const group = el("div", "lw-gate-group");
+      const head = el("div", "lw-gate-head");
+      head.append(el("strong", undefined, GATE_CATEGORY_LABELS[category]), el("span", "lw-hint", `${definitions.length} gates`));
+      group.append(head);
+
+      const list = el("div", "lw-gate-list");
+      for (const definition of definitions) {
+        list.append(gateRow(definition));
+      }
+      group.append(list);
+      body.append(group);
+    }
+    details.append(body);
+    return details;
+  }
+
+  function gateRow(definition: GateDefinition): HTMLElement {
+    const policy = effectivePolicy(definition);
+    const row = el("div", "lw-gate");
+    row.dataset.lwGate = definition.id;
+
+    const toggle = el("input");
+    toggle.type = "checkbox";
+    toggle.checked = policy.enabled;
+    toggle.setAttribute("aria-label", definition.label);
+    toggle.addEventListener("change", () => mutateGate(definition.id, { enabled: toggle.checked }));
+
+    const copy = el("div", "lw-gate-copy");
+    copy.append(
+      el("div", "lw-row-title", definition.label),
+      el("div", "lw-hint", definition.codeOnly
+        ? definition.appliesWhen ?? "Evaluated in code."
+        : `${definition.primitiveLabel} · ${definition.phase === "gate" ? "before the Director" : "verifies the draft"}`),
+    );
+
+    const threshold = el("div", "lw-gate-threshold");
+    threshold.append(
+      numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, (value) => mutateGate(definition.id, { threshold: value })),
+      el("span", undefined, "floor"),
+    );
+
+    const fallbackRow = el("div", "lw-gate-fallback");
+    fallbackRow.append(selectControl(
+      policy.fallback,
+      GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
+      `${definition.label} fallback`,
+      (value) => mutateGate(definition.id, { fallback: value as GateFallback }),
+    ));
+    fallbackRow.title = `${definition.rationale}\nFallback when Jev cannot answer.`;
+
+    const reset = button("Reset", () => resetGate(definition.id));
+    reset.className = "lw-button lw-gate-reset";
+    reset.hidden = !(definition.id in draft.jev.gatePolicy);
+    const resetRow = el("div", "lw-gate-fallback");
+    resetRow.append(reset);
+
+    row.append(toggle, copy, threshold, fallbackRow, resetRow);
+    return row;
+  }
+
+  function latestJevRun(): { run: { jev: JevTurnDiagnostics }; } | null {
+    for (const run of state?.runs ?? []) {
+      if (run.jev) return { run: { jev: run.jev } };
+    }
+    return null;
+  }
+
+  function diagnosticsSection(): HTMLElement {
+    const details = el("details", "lw-details");
+    details.open = diagnosticsOpen;
+    details.addEventListener("toggle", () => { diagnosticsOpen = details.open; });
+    const summary = el("summary");
+    const copy = el("span", "lw-summary-copy");
+    const latest = latestJevRun();
+    const status = summarizeJevDiagnostics(latest?.run.jev ?? null);
+    copy.append(
+      el("span", undefined, "Last turn decisions"),
+      el("span", "lw-hint", status ?? "No Jev decisions recorded yet"),
+    );
+    summary.append(copy);
+    details.append(summary);
+
+    const body = el("div", "lw-details-body");
+    const diagnostics = latest?.run.jev;
+    if (!diagnostics) {
+      body.append(el("p", "lw-hint", "Generate a reply with Jev enabled to see what each gate decided."));
+      details.append(body);
+      return details;
+    }
+    body.append(diagnosticsPanel(diagnostics));
+    details.append(body);
+    return details;
+  }
+
+  function diagnosticsPanel(diagnostics: JevTurnDiagnostics): HTMLElement {
+    const wrap = el("div", "lw-diag");
+    const badges = el("div", "lw-diag-summary");
+    const statusBadge = el("span", "lw-badge", diagnostics.status === "ok" ? "Answered" : diagnostics.status === "degraded" ? "Degraded" : "Skipped");
+    statusBadge.dataset.tone = diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error";
+    badges.append(statusBadge);
+    if (diagnostics.model) badges.append(el("span", "lw-badge", diagnostics.resolvedModel ?? diagnostics.model));
+    badges.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
+    if (diagnostics.fallbackCount) {
+      const fallback = el("span", "lw-badge", `${diagnostics.fallbackCount} fallback`);
+      fallback.dataset.tone = "warning";
+      badges.append(fallback);
+    }
+    if (diagnostics.escalatedCount) badges.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
+    if (diagnostics.gatePhaseMs !== null) badges.append(el("span", "lw-badge", `gate ${diagnostics.gatePhaseMs}ms`));
+    if (diagnostics.verifyPhaseMs !== null) badges.append(el("span", "lw-badge", `verify ${diagnostics.verifyPhaseMs}ms`));
+    wrap.append(badges);
+    if (diagnostics.error) {
+      const notice = el("div", "lw-notice", diagnostics.error);
+      notice.dataset.tone = "warning";
+      wrap.append(notice);
+    }
+
+    const table = el("div", "lw-diag-table");
+    for (const record of diagnostics.gates) table.append(gateResultRow(record));
+    wrap.append(table);
+    return wrap;
+  }
+
+  function gateResultRow(record: JevGateRecord): HTMLElement {
+    const flagged = record.usedFallback || record.escalated;
+    const row = el("div", "lw-diag-row");
+    row.dataset.flag = String(flagged);
+    row.append(
+      el("span", "lw-diag-gate", record.label),
+      el("span", "lw-diag-value", describeGateValue(record)),
+    );
+    const meta = el("span", "lw-diag-meta");
+    if (record.confidence !== null) {
+      meta.append(el("span", undefined, `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`));
+      if (record.confidence < record.threshold) meta.append(el("span", undefined, `below ${record.threshold.toFixed(2)}`));
+    }
+    if (record.usedFallback) meta.append(el("span", undefined, `fallback: ${GATE_FALLBACK_LABELS[record.fallback]}`));
+    row.append(meta);
+    if (record.note) row.append(el("span", "lw-diag-note", record.note));
+    return row;
+  }
+
+  function describeGateValue(record: JevGateRecord): string {
+    if (record.value === null) return "no answer";
+    if (typeof record.value === "boolean") return record.value ? "yes" : "no";
+    return String(record.value);
+  }
+
   function canTest(): boolean {
     const connection = selectedConnection();
     return !!(state?.permissions.generation && connection && (draft.modelOverride.trim() || connection.model.trim()));
@@ -465,6 +876,10 @@ export function setup(ctx: SpindleFrontendContext) {
     notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
     notes.append(notesBody); shell.append(notes);
 
+    shell.append(jevSection());
+    shell.append(gatesSection());
+    shell.append(diagnosticsSection());
+
     const advanced = el("details", "lw-details"); advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => { advancedOpen = advanced.open; });
     const advancedSummary = el("summary"); const advancedCopy = el("span", "lw-summary-copy");
@@ -498,7 +913,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const retry = button("Retry save", () => scheduleSave(0)); retry.dataset.lwRetry = "";
     footerStatus.append(saveStatus, retry); footer.append(footerStatus); shell.append(footer);
 
-    flushMounts(); updateDirectorStatus(); updateSaveStatus(); updateTestButton(); renderNotice();
+    flushMounts(); updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateJevTestButton(); renderNotice();
   }
 
   cleanups.push(ctx.onBackendMessage((payload) => {
@@ -530,6 +945,18 @@ export function setup(ctx: SpindleFrontendContext) {
       testPending = false; updateTestButton();
       showNotice(message.ok
         ? { tone: "success", text: `Test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` }
+        : { tone: "error", text: message.error }, 15000);
+      return;
+    }
+    if (message.type === "jev_test_result") {
+      jevTestPending = false;
+      if (message.ok) jevKeyDraft = "";
+      updateJevTestButton();
+      showNotice(message.ok
+        ? {
+            tone: "success",
+            text: `Jev answered on ${message.provider} / ${message.model} in ${message.latencyMs}ms (signal: ${message.answer}${message.confidence !== null ? `, confidence ${message.confidence.toFixed(2)}` : ""}).`,
+          }
         : { tone: "error", text: message.error }, 15000);
       return;
     }

@@ -6,6 +6,46 @@ var VISIBLE_GENERATION_TYPES = [
   "swipe",
   "impersonate"
 ];
+var JEV_PROVIDERS = {
+  typesafe: {
+    id: "typesafe",
+    label: "TypeSafe",
+    baseUrl: "https://api.typesafe.ai",
+    path: "/v1/systemone",
+    defaultModel: "jev-latest",
+    keyUrl: "https://console.typesafe.ai/keys"
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    path: "/alpha/decisions",
+    defaultModel: "typesafe/jev-1.13",
+    keyUrl: "https://openrouter.ai/settings/keys"
+  }
+};
+var JEV_PROVIDER_IDS = ["typesafe", "openrouter"];
+var DEFAULT_JEV_STATE_CHARS = 30000;
+var MIN_JEV_STATE_CHARS = 2000;
+var MAX_JEV_STATE_CHARS = 32000;
+var DEFAULT_JEV_TIMEOUT_MS = 8000;
+var MIN_JEV_TIMEOUT_MS = 1000;
+var MAX_JEV_TIMEOUT_MS = 60000;
+var MAX_JEV_HISTORY_MESSAGES = 24;
+var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
+var DEFAULT_JEV_SETTINGS = {
+  enabled: false,
+  provider: "typesafe",
+  model: "",
+  baseUrlOverride: "",
+  timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
+  maxStateChars: DEFAULT_JEV_STATE_CHARS,
+  historyMessageLimit: 10,
+  minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
+  retryOnRateLimit: true,
+  worldStateEnabled: true,
+  gatePolicy: {}
+};
 var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_DIRECTOR_TIMEOUT_MS = 300000;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
@@ -133,6 +173,8 @@ var DEFAULT_SETTINGS = {
   enabled: false,
   connectionId: null,
   modelOverride: "",
+  strongConnectionId: null,
+  strongModelOverride: "",
   temperature: 0.35,
   maxTokens: 420,
   timeoutMs: 45000,
@@ -145,7 +187,8 @@ var DEFAULT_SETTINGS = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
-  runLogLimit: DEFAULT_RUN_LOG_LIMIT
+  runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  jev: { ...DEFAULT_JEV_SETTINGS }
 };
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -172,6 +215,75 @@ function normalizeGenerationTypes(value) {
   const normalized = incoming.filter((item) => typeof item === "string" && allowed.has(item));
   return Array.isArray(value) ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
+var GATE_FALLBACKS = [
+  "run",
+  "skip",
+  "accept",
+  "retry",
+  "patch",
+  "soften",
+  "drop",
+  "hold",
+  "none",
+  "ignore"
+];
+function normalizeProbability(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n))
+    return;
+  return Math.min(1, Math.max(0, n));
+}
+function normalizeGatePolicy(value) {
+  const obj = asRecord(value);
+  const normalized = {};
+  for (const [gateId, raw] of Object.entries(obj)) {
+    const id = gateId.trim();
+    if (!id)
+      continue;
+    const entry = asRecord(raw);
+    const policy = {};
+    if (typeof entry.enabled === "boolean")
+      policy.enabled = entry.enabled;
+    const threshold = normalizeProbability(entry.threshold);
+    if (threshold !== undefined)
+      policy.threshold = threshold;
+    const fallback = cleanString(entry.fallback);
+    if (GATE_FALLBACKS.includes(fallback))
+      policy.fallback = fallback;
+    if (Object.keys(policy).length > 0)
+      normalized[id] = policy;
+  }
+  return normalized;
+}
+function normalizeJevSettings(value) {
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
+    provider,
+    model: cleanString(obj.model),
+    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
+    maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
+    minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
+    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
+    worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
+    gatePolicy: normalizeGatePolicy(obj.gatePolicy)
+  };
+}
+function summarizeJevDiagnostics(diagnostics) {
+  if (!diagnostics || !diagnostics.used)
+    return null;
+  const parts = [
+    `${diagnostics.gateCount} gate${diagnostics.gateCount === 1 ? "" : "s"}`,
+    diagnostics.requestCount ? `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}` : null,
+    diagnostics.fallbackCount ? `${diagnostics.fallbackCount} fallback${diagnostics.fallbackCount === 1 ? "" : "s"}` : null,
+    diagnostics.escalatedCount ? `${diagnostics.escalatedCount} escalated` : null,
+    diagnostics.status === "degraded" ? "degraded" : null
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
 function normalizeSettings(value) {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -182,6 +294,8 @@ function normalizeSettings(value) {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
     modelOverride: cleanString(obj.modelOverride),
+    strongConnectionId: cleanNullableString(obj.strongConnectionId),
+    strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
@@ -194,12 +308,329 @@ function normalizeSettings(value) {
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
-    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50)
+    runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    jev: normalizeJevSettings(obj.jev)
   };
 }
 
+// src/gates.ts
+var GATE_CATEGORY_LABELS = {
+  director_control: "Director control",
+  guardrails: "Guardrails",
+  state_accuracy: "State accuracy",
+  narrative: "Narrative direction",
+  world: "World progression"
+};
+var GATE_CATEGORY_ORDER = [
+  "director_control",
+  "guardrails",
+  "state_accuracy",
+  "narrative",
+  "world"
+];
+function noul(id, label, category, phase, instructions, rationale, criteria, fallback) {
+  return {
+    id,
+    label,
+    primitive: "noul",
+    primitiveLabel: "Yes / No",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.6,
+    fallback,
+    safeValue: true,
+    blockValue: false
+  };
+}
+function choice(id, label, category, phase, instructions, rationale, criteria, fallback, safeValue, blockValue) {
+  return {
+    id,
+    label,
+    primitive: "choice",
+    primitiveLabel: "Choice",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback,
+    safeValue,
+    blockValue
+  };
+}
+function score(id, label, category, phase, instructions, rationale, criteria, fallback, safeValue, blockValue) {
+  return {
+    id,
+    label,
+    primitive: "score",
+    primitiveLabel: "Score",
+    phase,
+    category,
+    instructions,
+    rationale,
+    criteria,
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback,
+    safeValue,
+    blockValue
+  };
+}
+var CORE_GATES = new Set([
+  "smart_trigger",
+  "context_filter",
+  "model_route",
+  "director_verification",
+  "player_agency",
+  "duplicate_suppression",
+  "continuity_guard",
+  "intensity_boundary",
+  "confidence_escalation",
+  "budget_degradation",
+  "scene_state_tracking"
+]);
+function withCore(gates) {
+  return gates.map((gate) => CORE_GATES.has(gate.id) ? { ...gate, enabledByDefault: true } : gate);
+}
+var GATE_CATALOG = withCore([
+  noul("smart_trigger", "Smart Director triggering", "director_control", "gate", "Given `chat_history`, `scene_state`, `director_notes`, and the latest player message, is there anything in this turn that a private world director should intervene in before the visible reply is written? Judge only whether intervention would add something the main model would otherwise miss.", "Decides whether the Director runs at all, so a quiet or purely conversational turn costs one cheap Jev call instead of a full Director generation.", {
+    true: "The turn creates or changes world pressure, NPC intent, an offscreen consequence, a reveal, or a development the main model would plausibly miss",
+    false: "The turn is a direct continuation of the immediately preceding exchange and needs no new world development"
+  }, "run"),
+  choice("context_filter", "Context filtering", "director_control", "gate", "Which parts of the assembled context are actually relevant to directing this turn? Choose the smallest set that still covers what the Director needs.", "Drops irrelevant lore and context before the Director sees it, which cuts prompt tokens and reduces distraction.", {
+    all: "Every available context source is relevant",
+    history_and_character: "Recent chat history and the active character matter; detailed lore does not",
+    world_info_only: "The activated lore matters more than the recent small talk",
+    history_only: "Only the recent exchange matters; drop character sheets and lore"
+  }, "run", "all", "history_only"),
+  choice("model_route", "Model routing", "director_control", "gate", "How difficult is this turn to direct? Judge the complexity of the world development needed, not the length of the chat.", "Selects a cheap or strong Director model per turn instead of paying for the strongest model on every reply.", {
+    cheap: "A small, local development is enough; no deep reasoning required",
+    strong: "A consequential, multi-thread, or continuity-sensitive development is needed"
+  }, "run", "cheap", "strong"),
+  choice("pacing_control", "Pacing control", "director_control", "gate", "How should the scene's pacing be handled in the next development?", "Translates stagnation, tension, and urgency into a pacing instruction for the Director.", {
+    hold: "Let the current beat breathe; do not accelerate",
+    tighten: "Increase pressure and shorten the scene's patience",
+    slow: "Give the scene a slower, quieter treatment",
+    turn: "Introduce a reversal that changes the direction of the scene"
+  }, "run", "hold", "slow"),
+  choice("npc_autonomy", "NPC autonomy", "director_control", "gate", "Which category of action should a non-player character take next, if any?", "Picks who acts and the kind of action, after which the Director writes the specific, natural action.", {
+    none: "No NPC needs to act in this turn",
+    confront: "An NPC directly challenges, blocks, or pushes back",
+    withdraw: "An NPC pulls away, goes quiet, or leaves the exchange",
+    reveal_intent: "An NPC shows their true motive or loyalty",
+    assist: "An NPC helps, concedes, or offers something",
+    conspire: "An NPC acts behind the scenes or coordinates with another"
+  }, "run", "none", "withdraw"),
+  noul("world_movement", "World movement", "director_control", "gate", "Should offscreen factions, organisations, or background events advance during this turn?", "Keeps the world moving without the visible cast, and prevents the world from freezing around the player.", {
+    true: "Something offscreen would plausibly progress now and its consequence could reach the scene",
+    false: "Nothing offscreen would meaningfully change in the span of this turn"
+  }, "run"),
+  noul("reveal_control", "Reveal control", "director_control", "gate", "Is now a good moment for a previously withheld secret or reveal to begin landing? Judge readiness, not whether the secret exists.", "Stops the Director from either hoarding a reveal forever or spending it too early.", {
+    true: "Enough has been established that landing part of this reveal now would read as earned",
+    false: "The reveal has not been set up enough, or the scene has no room for it now"
+  }, "run"),
+  choice("conflict_escalation", "Conflict escalation", "director_control", "gate", "What should happen to the current conflict?", "Chooses the conflict beat so the Director constructs an event in the right register.", {
+    hold: "Leave the conflict at its current level",
+    escalate: "Raise the stakes, cost, or hostility",
+    interrupt: "Cut the conflict short with an outside event",
+    resolve: "Bring this conflict to a genuine conclusion",
+    redirect: "Move the conflict somewhere else or onto a different target"
+  }, "run", "hold", "resolve"),
+  choice("story_thread", "Story-thread management", "director_control", "gate", "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for the open threads if present.", "Picks the thread to advance so the Director does not drift onto uninteresting tangents.", {
+    none: "No open thread needs movement right now",
+    primary: "The main unresolved thread",
+    secondary: "A background or supporting thread",
+    newest: "The thread introduced most recently",
+    neglected: "The thread that has been untouched longest"
+  }, "run", "none", "primary"),
+  choice("arc_position", "Arc position", "director_control", "gate", "Where does this scene currently sit in its dramatic arc?", "Anchors the Director's development to the scene's dramatic position instead of an arbitrary beat.", {
+    setup: "Establishing characters, place, and stakes",
+    rising: "Pressure and complications building",
+    turn: "A reversal or reframing has just occurred",
+    climax: "The decisive confrontation or peak",
+    release: "Aftermath and decompression"
+  }, "run", "setup", "release"),
+  choice("development_shape", "Development shape", "director_control", "gate", "What form should the next development take?", "Decides the shape of the beat so the Director realises that form rather than defaulting to a description of the environment.", {
+    npc_action: "A character does something with visible consequence",
+    dialogue: "A line of dialogue reframes the situation",
+    environmental: "The environment or setting itself changes",
+    revelation: "Information is disclosed",
+    time_skip: "Time passes and the situation has moved on",
+    offscreen_cut: "The scene cuts to something happening elsewhere"
+  }, "run", "environmental", "offscreen_cut"),
+  choice("focus_selection", "Focus selection", "director_control", "gate", "Which element should this development centre on?", "Focuses the beat so it lands rather than diffusing across the whole cast.", {
+    player: "The player's character and their immediate situation",
+    active_npc: "The character currently most engaged with the player",
+    absent_npc: "A character who is not in the scene right now",
+    location: "The place itself and what it is doing",
+    faction: "An organisation or group acting in the background"
+  }, "run", "player", "faction"),
+  choice("time_clock", "Time and clock control", "world", "gate", "Should in-world time advance during this turn, and roughly how far?", "Controls the story clock so the Director does not narrate irrelevant passage of time.", {
+    none: "Time does not meaningfully advance",
+    minutes: "A few minutes pass",
+    hours: "Some hours pass",
+    day: "A day or more passes"
+  }, "run", "none", "day"),
+  choice("environment_conditions", "Environment and conditions", "world", "gate", "Should the environment change during this turn — weather, light, temperature, or the condition of the location?", "Lets the world react physically without the Director decorating every reply with weather.", {
+    unchanged: "Leave conditions as they are",
+    weather: "Weather shifts",
+    light: "Light or time-of-day shifts",
+    location_state: "The location itself is altered or damaged",
+    worsening: "Conditions deteriorate in a way that presses on the scene"
+  }, "run", "unchanged", "worsening"),
+  choice("npc_entry_exit", "NPC entry and exit", "world", "gate", "Should any non-player character enter or leave the scene during this turn?", "Stages arrivals and departures deliberately instead of leaving the cast static.", {
+    none: "The current cast stays as it is",
+    enter_known: "A character already established elsewhere arrives",
+    enter_new: "A new character appears",
+    exit: "A present character leaves"
+  }, "run", "none", "exit"),
+  choice("consequence_propagation", "Consequence propagation", "world", "gate", "Should the most recent committed development ripple outward into factions, threads, or relationships offscreen?", "Propagates consequences so the world remembers what happened even when the scene moves on.", {
+    contained: "The development stays local to the scene",
+    faction: "An organisation reacts",
+    relationship: "A relationship changes because of it",
+    thread: "Another thread is affected by it",
+    broad: "Several of the above react at once"
+  }, "run", "contained", "broad"),
+  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `chat_history` and `scene_state`. Does it contain a contradiction, a repetition of something already committed, or a premature resolution of an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
+    clean: "The directive is free of contradictions, repetition, and premature resolution",
+    violation: "The directive contains at least one of those problems",
+    uncertain: "Something looks off, but it is not clear enough to call a violation"
+  }, "accept", "clean", "violation"),
+  noul("player_agency", "Player agency guard", "guardrails", "verify", "Does `draft_directive` decide what the player's character thinks, feels, says, or does? Judge only the player's character, not NPCs and not the world.", "Catches the most damaging Director failure: a private note that hijacks the player's character.", {
+    true: "The directive dictates the player's character's decision, dialogue, thoughts, or movement",
+    false: "The directive leaves the player's character's choices open"
+  }, "patch"),
+  choice("user_intent_arbitration", "User-intent arbitration", "guardrails", "verify", "The player's explicit out-of-character instruction, if any, is in `director_notes`. Does `draft_directive` follow that instruction, follow the world's momentum, or blend them?", "Reconciles an explicit player instruction with the world's own momentum instead of silently overriding the player.", {
+    follows_instruction: "The directive honours the explicit instruction",
+    follows_world: "The directive follows world momentum and sets the instruction aside",
+    blends: "The directive satisfies both, weighting the instruction",
+    not_applicable: "There is no explicit out-of-character instruction to reconcile"
+  }, "accept", "not_applicable", "follows_world"),
+  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compared with the recent exchange in `chat_history`, does `draft_directive` develop something genuinely new or repeat a development that has already been committed?", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
+    new: "The development has not happened yet in the recent exchange",
+    repeats: "The directive repeats a development that already happened",
+    near_duplicate: "The directive is a thin variation on something that already happened"
+  }, "retry", "new", "repeats"),
+  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict established facts in `chat_history`, `scene_state`, or `world_info`?", "Prevents the Director from breaking facts the story has already committed to.", {
+    consistent: "Nothing in the directive contradicts established facts",
+    violation: "The directive contradicts an established fact",
+    uncertain: "The directive may contradict an established fact, but it is not clear"
+  }, "soften", "consistent", "violation"),
+  choice("intensity_boundary", "Intensity and boundary gating", "guardrails", "verify", "Weigh `draft_directive` against `director_notes` and the scene's established intensity. Does it stay inside the range the player has signalled?", "Keeps the Director inside the intensity band the player actually asked for, rather than escalating past it.", {
+    within_range: "The directive stays inside the established range",
+    borderline: "The directive sits at the edge of the range",
+    out_of_range: "The directive exceeds the established range or crosses a stated boundary"
+  }, "soften", "within_range", "out_of_range"),
+  noul("claim_extraction", "Claim extraction", "state_accuracy", "verify", "Does `draft_directive` assert a concrete fact, action, or state change that should be recorded as committed?", "Flags directives that introduce committable facts, so only validated claims reach the world state.", {
+    true: "The directive asserts at least one concrete fact, action, or state change",
+    false: "The directive is purely atmospheric and commits nothing"
+  }, "none"),
+  noul("contradiction_localization", "Contradiction localization", "state_accuracy", "verify", "If `draft_directive` conflicts with committed facts, is the conflict confined to a single element rather than the whole directive?", "Tells the repair path whether a targeted patch is viable or the whole directive must be regenerated.", {
+    true: "The conflict is confined to one element that could be replaced on its own",
+    false: "The conflict affects the directive as a whole, or there is no conflict"
+  }, "patch"),
+  choice("repair_strategy", "Repair strategy", "state_accuracy", "verify", "Given the checks recorded in `scene_state` and the draft in `draft_directive`, which repair fits best if a repair is needed?", "Chooses the cheapest repair that resolves the problem instead of always regenerating.", {
+    accept: "No repair needed",
+    full_retry: "Regenerate the directive from scratch",
+    patch: "Replace only the offending element",
+    soften: "Keep the directive but reduce its force",
+    drop_claim: "Drop the offending claim and keep the rest"
+  }, "accept", "accept", "soften"),
+  noul("scene_state_tracking", "Scene state tracking", "state_accuracy", "verify", "Does the draft directive change the scene's location, danger level, tension, active characters, or unresolved hooks in a way worth persisting for the next turn?", "Decides whether the derived scene state needs updating, so later turns inherit an accurate world model.", {
+    true: "The directive changes at least one tracked scene state field",
+    false: "The scene state is unchanged by this directive"
+  }, "none"),
+  score("scene_state_diff", "Scene state diff", "state_accuracy", "verify", "How much did this directive move the scene's tension?", "Supplies the per-turn tension delta that the persisted scene state advances by.", [
+    "Tension fell sharply; the scene decompressed",
+    "Tension eased slightly",
+    "Tension is unchanged",
+    "Tension rose slightly",
+    "Tension rose sharply; the scene is now wound much tighter"
+  ], "none", 2, 2),
+  score("relationship_deltas", "Relationship deltas", "state_accuracy", "verify", "In this directive, how did the most affected character's stance toward the player change?", "Records the per-character shift in stance so later dialogue and action reflect the new relationship.", [
+    "Markedly more hostile or distrustful",
+    "Slightly cooler or more guarded",
+    "Unchanged",
+    "Slightly warmer or more trusting",
+    "Markedly more trusting, indebted, or attached"
+  ], "none", 2, 2),
+  choice("thread_lifecycle", "Thread lifecycle", "state_accuracy", "verify", "What is the state of the story thread this directive develops?", "Closes or parks threads deliberately so the open-thread list stays meaningful.", {
+    continue: "Still open and worth developing further",
+    resolve: "Brought to a genuine conclusion by this directive",
+    dormant: "Parked for now, still open but not active",
+    abandoned: "Dropped; this thread is no longer part of the story"
+  }, "none", "continue", "abandoned"),
+  score("emotional_release", "Emotional release", "narrative", "gate", "Given `chat_history` and `scene_state`, how much does the accumulated tension in this scene need a release right now?", "Stops the Director from holding tension forever, which is the usual way a slow scene becomes tiring.", [
+    "Hold the tension; a release now would deflate the scene",
+    "Ease the tension very slightly",
+    "Neutral; no release is needed either way",
+    "A short release would help the scene breathe",
+    "The scene urgently needs a release, comic beat, or quiet moment"
+  ], "run", 2, 2),
+  noul("foreshadowing", "Foreshadowing", "narrative", "gate", "Should this turn plant a small seed for a future development without paying it off now?", "Encourages deliberate setup so later revelations feel earned rather than abrupt.", {
+    true: "A detail could be planted now that would pay off later without drawing attention",
+    false: "A planted detail would read as conspicuous, or there is nothing worth setting up"
+  }, "run"),
+  noul("callback", "Callback", "narrative", "gate", "Does `chat_history` contain an earlier established detail that would land well if it were echoed in this turn?", "Reuses what the story has already built instead of introducing new material by default.", {
+    true: "There is an earlier detail whose return would feel meaningful now",
+    false: "No earlier detail would land naturally in this turn"
+  }, "run"),
+  score("hook_prioritization", "Hook prioritization", "narrative", "gate", "Judging by stakes and readiness, how strong is the case for advancing the most promising unresolved hook this turn?", "Ranks open hooks so the Director advances the one that most deserves movement.", [
+    "Advance no hook this turn",
+    "Weak case; the hooks can wait",
+    "Moderate case for advancing the top hook",
+    "Strong case; this hook is ready and matters",
+    "Advance the top hook now; further delay would deflate it"
+  ], "run", 2, 2),
+  noul("context_compaction", "Context compaction", "narrative", "gate", "Is `chat_history` long or repetitive enough that older context should be summarised to protect the context window?", "Decides when the Director should spend tokens summarising rather than re-reading old context.", {
+    true: "Older context has become long or repetitive enough to be worth summarising",
+    false: "The current context is compact enough to keep as it is"
+  }, "run"),
+  {
+    id: "confidence_escalation",
+    label: "Confidence escalation",
+    primitive: "noul",
+    primitiveLabel: "Computed",
+    phase: "verify",
+    category: "guardrails",
+    instructions: "",
+    rationale: "Flags every gate answer whose confidence falls below the configured floor so only the uncertain decisions are escalated and logged for the diagnostics view.",
+    enabledByDefault: false,
+    threshold: 0.55,
+    fallback: "none",
+    safeValue: true,
+    blockValue: false,
+    codeOnly: true,
+    appliesWhen: "Evaluated in code from the confidence Jev reports for the other gates."
+  },
+  {
+    id: "budget_degradation",
+    label: "Graceful degradation",
+    primitive: "noul",
+    primitiveLabel: "Computed",
+    phase: "gate",
+    category: "guardrails",
+    instructions: "",
+    rationale: "Detects unavailability, timeout, token-budget exhaustion, and rate limiting, then selects the declared fallback so LumiWorld still runs Director-only.",
+    enabledByDefault: false,
+    threshold: 0.5,
+    fallback: "run",
+    safeValue: true,
+    blockValue: false,
+    codeOnly: true,
+    appliesWhen: "Evaluated in code from the Jev client result and the remaining interceptor budget."
+  }
+]);
+var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+
 // src/frontend.ts
-var VERSION = "0.4.0";
+var VERSION = "0.5.0-experimental";
 var ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 var LABELS = {
   normal: "New reply",
@@ -284,9 +715,61 @@ var CSS = `
 .lw-footer-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .lw-loading { padding:16px 0; color:var(--lumiverse-text-muted); }
 .lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
+.lw-key-row { display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; }
+.lw-badge { display:inline-flex; align-items:center; gap:5px; min-height:22px; padding:2px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; color:var(--lumiverse-text-muted); font-size:11px; white-space:nowrap; }
+.lw-badge[data-tone="success"] { border-color:var(--lumiverse-success); color:var(--lumiverse-success); }
+.lw-badge[data-tone="warning"] { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
+.lw-badge[data-tone="error"] { border-color:var(--lumiverse-danger); color:var(--lumiverse-danger); }
+.lw-gate-group { display:grid; gap:8px; padding:12px 0 4px; }
+.lw-gate-group + .lw-gate-group { border-top:1px solid var(--lumiverse-border); }
+.lw-gate-head { display:flex; align-items:baseline; gap:8px; }
+.lw-gate-head strong { font-size:12px; }
+.lw-gate-list { display:grid; gap:6px; }
+.lw-gate { display:grid; gap:6px 10px; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; padding:6px 0; }
+.lw-gate-copy { min-width:0; }
+.lw-gate-copy .lw-hint { font-size:11px; }
+.lw-gate-threshold { display:flex; align-items:center; gap:6px; flex:none; }
+.lw-gate-threshold input { width:64px; min-height:30px; padding:4px 6px; }
+.lw-gate-threshold span { color:var(--lumiverse-text-muted); font-size:11px; }
+.lw-gate-fallback { grid-column:2 / -1; }
+.lw-gate-fallback select { min-height:30px; padding:4px 6px; font-size:11px; }
+.lw-diag { display:grid; gap:8px; }
+.lw-diag-summary { display:flex; flex-wrap:wrap; gap:6px; }
+.lw-diag-table { display:grid; gap:4px; max-height:340px; overflow:auto; }
+.lw-diag-row { display:grid; gap:2px 10px; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto; align-items:baseline; padding:7px 9px; border:1px solid var(--lumiverse-border); border-radius:7px; background:var(--lumiverse-fill-subtle); font-size:11px; }
+.lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
+.lw-diag-gate { font-weight:600; }
+.lw-diag-value { font-family:var(--lumiverse-font-mono,monospace); overflow-wrap:anywhere; }
+.lw-diag-meta { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); white-space:nowrap; }
+.lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); }
+.lw-gate-reset { justify-self:start; margin-top:2px; font-size:11px; min-height:28px; padding:2px 8px; }
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
+var GATE_FALLBACKS2 = [
+  "run",
+  "skip",
+  "accept",
+  "retry",
+  "patch",
+  "soften",
+  "drop",
+  "hold",
+  "none",
+  "ignore"
+];
+var GATE_FALLBACK_LABELS = {
+  run: "Run the Director ungated",
+  skip: "Skip the Director",
+  accept: "Accept the draft",
+  retry: "Regenerate once",
+  patch: "Rewrite the part that infringes",
+  soften: "Soften the directive",
+  drop: "Drop the claim",
+  hold: "Hold the beat",
+  none: "Record only",
+  ignore: "Ignore the answer"
+};
 function normalizeFrontendSettings(value) {
   return normalizeSettings(value);
 }
@@ -337,6 +820,15 @@ function button(label, handler, primary = false) {
   node.addEventListener("click", handler);
   return node;
 }
+function textInput(value, placeholder, ariaLabel, onInput) {
+  const input = el("input", "lw-input");
+  input.type = "text";
+  input.value = value;
+  input.placeholder = placeholder;
+  input.setAttribute("aria-label", ariaLabel);
+  input.addEventListener("input", () => onInput(input.value));
+  return input;
+}
 function activeChat(ctx) {
   try {
     return ctx.getActiveChat();
@@ -356,9 +848,14 @@ function setup(ctx) {
   let noticeTimer = null;
   let saveTimer = null;
   let testPending = false;
+  let jevTestPending = false;
+  let jevKeyDraft = "";
   let advancedOpen = false;
   let templatesOpen = false;
   let notesOpen = false;
+  let jevOpen = false;
+  let gatesOpen = false;
+  let diagnosticsOpen = false;
   let nextFieldId = 0;
   cleanups.push(ctx.dom.addStyle(CSS));
   const drawer = ctx.ui.registerDrawerTab({
@@ -608,6 +1105,283 @@ function setup(ctx) {
   function selectedConnection() {
     return state?.connections.find((item) => item.id === draft.connectionId) ?? null;
   }
+  function providerInfo() {
+    return JEV_PROVIDERS[draft.jev.provider];
+  }
+  function hasJevKey() {
+    return !!state?.hasJevKey;
+  }
+  function canTestJev() {
+    if (!state?.permissions.corsProxy)
+      return false;
+    if (jevKeyDraft.trim())
+      return true;
+    return hasJevKey();
+  }
+  function selectControl(value, options, ariaLabel, onChange) {
+    const slot = el("div", "lw-control");
+    const select = el("select", "lw-select");
+    for (const option of options)
+      select.appendChild(new Option(option.label, option.value));
+    select.value = value;
+    select.setAttribute("aria-label", ariaLabel);
+    select.addEventListener("change", () => onChange(select.value));
+    slot.appendChild(select);
+    return slot;
+  }
+  function numberInput(value, min, max, step, ariaLabel, onChange) {
+    const input = el("input", "lw-input");
+    input.type = "number";
+    input.value = String(value);
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.setAttribute("aria-label", ariaLabel);
+    input.addEventListener("change", () => {
+      if (input.value === "")
+        return;
+      const parsed = Number(input.value);
+      if (Number.isFinite(parsed))
+        onChange(Math.min(max, Math.max(min, parsed)));
+    });
+    return input;
+  }
+  function mutateJev(patch, rerender = false) {
+    mutate({ jev: { ...draft.jev, ...patch } }, rerender);
+  }
+  function mutateGate(gateId, patch) {
+    const current = draft.jev.gatePolicy[gateId] ?? {};
+    mutateJev({ gatePolicy: { ...draft.jev.gatePolicy, [gateId]: { ...current, ...patch } } });
+  }
+  function resetGate(gateId) {
+    if (!(gateId in draft.jev.gatePolicy))
+      return;
+    const next = { ...draft.jev.gatePolicy };
+    delete next[gateId];
+    mutateJev({ gatePolicy: next }, true);
+  }
+  function effectivePolicy(definition) {
+    const override = draft.jev.gatePolicy[definition.id] ?? {};
+    return {
+      enabled: override.enabled ?? definition.enabledByDefault,
+      threshold: override.threshold ?? (definition.id === "confidence_escalation" ? draft.jev.minConfidence : definition.threshold),
+      fallback: override.fallback ?? definition.fallback
+    };
+  }
+  function testJev() {
+    if (jevTestPending || !canTestJev())
+      return;
+    jevTestPending = true;
+    showNotice({ tone: "info", text: "Testing Jev…" }, 0);
+    updateJevTestButton();
+    send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
+  }
+  function updateJevTestButton() {
+    const node = drawer.root.querySelector("[data-lw-jev-test]");
+    if (node) {
+      node.disabled = jevTestPending || !canTestJev();
+      node.setAttribute("aria-busy", String(jevTestPending));
+      node.textContent = jevTestPending ? "Testing Jev…" : "Test Jev";
+    }
+    const hint = drawer.root.querySelector("[data-lw-jev-hint]");
+    if (hint) {
+      hint.textContent = !state?.permissions.corsProxy ? "The cors_proxy permission is required to reach Jev." : jevKeyDraft.trim() ? "Sends one tiny yes/no question and stores the key if it works." : hasJevKey() ? "Uses the stored key. One tiny yes/no question; your chat is not sent." : "Paste an API key to test the connection.";
+    }
+  }
+  function jevSection() {
+    const section = el("section", "lw-section");
+    section.append(el("h2", "lw-section-title", "Jev simulation"));
+    section.append(switchField("Use Jev gates", draft.jev.enabled, (enabled) => mutateJev({ enabled }, true), "Ask a cheap decision model whether each turn needs the Director."));
+    if (!draft.jev.enabled) {
+      section.append(el("p", "lw-hint", "With Jev off, LumiWorld runs exactly as the Director-only baseline."));
+      return section;
+    }
+    const fields = el("div", "lw-fields");
+    fields.append(field("Provider", selectControl(draft.jev.provider, JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })), "Jev provider", (value) => mutateJev({ provider: value, model: "" }, true)), providerInfo().keyUrl), field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })), `Leave blank to use ${providerInfo().defaultModel}.`));
+    section.append(fields);
+    const keyLabel = el("div");
+    keyLabel.textContent = "API key";
+    const keyWrap = el("div", "lw-field");
+    keyWrap.append(keyLabel);
+    const keyRow = el("div", "lw-key-row");
+    const keyInput = el("input", "lw-input");
+    keyInput.type = "password";
+    keyInput.autocomplete = "off";
+    keyInput.spellcheck = false;
+    keyInput.value = jevKeyDraft;
+    keyInput.placeholder = hasJevKey() ? "A key is stored" : "Paste your API key";
+    keyInput.setAttribute("aria-label", "Jev API key");
+    keyInput.addEventListener("input", () => {
+      jevKeyDraft = keyInput.value;
+      updateJevTestButton();
+    });
+    const keyBadge = el("span", "lw-badge", hasJevKey() ? "Stored" : "Not set");
+    keyBadge.dataset.tone = hasJevKey() ? "success" : "warning";
+    const clear = button("Clear", () => {
+      jevKeyDraft = "";
+      send({ type: "clear_jev_key", provider: draft.jev.provider });
+    });
+    clear.disabled = !hasJevKey();
+    keyRow.append(keyInput, keyBadge, clear);
+    keyWrap.append(keyRow, el("div", "lw-hint", "Encrypted at rest per Lumiverse user and never sent back to this panel."));
+    section.append(keyWrap);
+    const actions = el("div", "lw-actions");
+    const test = button("Test Jev", testJev, true);
+    test.dataset.lwJevTest = "";
+    const hint = el("div", "lw-hint lw-test-hint");
+    hint.dataset.lwJevHint = "";
+    actions.append(test, hint);
+    section.append(actions);
+    const advancedFields = el("div", "lw-fields");
+    advancedFields.append(field("State cap (chars)", numberInput(draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap", (value) => mutateJev({ maxStateChars: value })), "Jev allows 32k tokens for the state."), field("History messages", numberInput(draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages", (value) => mutateJev({ historyMessageLimit: value }))), field("Timeout (ms)", numberInput(draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout", (value) => mutateJev({ timeoutMs: value }))), field("Confidence floor", numberInput(draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor", (value) => mutateJev({ minConfidence: value })), "Decisions below this are escalated to their fallback."));
+    section.append(advancedFields);
+    return section;
+  }
+  function gatesSection() {
+    const details = el("details", "lw-details");
+    details.open = gatesOpen;
+    details.addEventListener("toggle", () => {
+      gatesOpen = details.open;
+    });
+    const summary = el("summary");
+    const copy = el("span", "lw-summary-copy");
+    const active = GATE_CATALOG.filter((definition) => effectivePolicy(definition).enabled).length;
+    copy.append(el("span", undefined, "Jev gates"), el("span", "lw-hint", `${active} of ${GATE_CATALOG.length} enabled`));
+    summary.append(copy);
+    details.append(summary);
+    const body = el("div", "lw-details-body");
+    body.append(el("p", "lw-hint", "Every enabled gate travels in one batched request per phase, so adding gates adds no round trips. Unanswered gates use their declared fallback."));
+    for (const category of GATE_CATEGORY_ORDER) {
+      const definitions = GATE_CATALOG.filter((definition) => definition.category === category);
+      if (definitions.length === 0)
+        continue;
+      const group = el("div", "lw-gate-group");
+      const head = el("div", "lw-gate-head");
+      head.append(el("strong", undefined, GATE_CATEGORY_LABELS[category]), el("span", "lw-hint", `${definitions.length} gates`));
+      group.append(head);
+      const list = el("div", "lw-gate-list");
+      for (const definition of definitions) {
+        list.append(gateRow(definition));
+      }
+      group.append(list);
+      body.append(group);
+    }
+    details.append(body);
+    return details;
+  }
+  function gateRow(definition) {
+    const policy = effectivePolicy(definition);
+    const row = el("div", "lw-gate");
+    row.dataset.lwGate = definition.id;
+    const toggle = el("input");
+    toggle.type = "checkbox";
+    toggle.checked = policy.enabled;
+    toggle.setAttribute("aria-label", definition.label);
+    toggle.addEventListener("change", () => mutateGate(definition.id, { enabled: toggle.checked }));
+    const copy = el("div", "lw-gate-copy");
+    copy.append(el("div", "lw-row-title", definition.label), el("div", "lw-hint", definition.codeOnly ? definition.appliesWhen ?? "Evaluated in code." : `${definition.primitiveLabel} · ${definition.phase === "gate" ? "before the Director" : "verifies the draft"}`));
+    const threshold = el("div", "lw-gate-threshold");
+    threshold.append(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, (value) => mutateGate(definition.id, { threshold: value })), el("span", undefined, "floor"));
+    const fallbackRow = el("div", "lw-gate-fallback");
+    fallbackRow.append(selectControl(policy.fallback, GATE_FALLBACKS2.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })), `${definition.label} fallback`, (value) => mutateGate(definition.id, { fallback: value })));
+    fallbackRow.title = `${definition.rationale}
+Fallback when Jev cannot answer.`;
+    const reset = button("Reset", () => resetGate(definition.id));
+    reset.className = "lw-button lw-gate-reset";
+    reset.hidden = !(definition.id in draft.jev.gatePolicy);
+    const resetRow = el("div", "lw-gate-fallback");
+    resetRow.append(reset);
+    row.append(toggle, copy, threshold, fallbackRow, resetRow);
+    return row;
+  }
+  function latestJevRun() {
+    for (const run of state?.runs ?? []) {
+      if (run.jev)
+        return { run: { jev: run.jev } };
+    }
+    return null;
+  }
+  function diagnosticsSection() {
+    const details = el("details", "lw-details");
+    details.open = diagnosticsOpen;
+    details.addEventListener("toggle", () => {
+      diagnosticsOpen = details.open;
+    });
+    const summary = el("summary");
+    const copy = el("span", "lw-summary-copy");
+    const latest = latestJevRun();
+    const status = summarizeJevDiagnostics(latest?.run.jev ?? null);
+    copy.append(el("span", undefined, "Last turn decisions"), el("span", "lw-hint", status ?? "No Jev decisions recorded yet"));
+    summary.append(copy);
+    details.append(summary);
+    const body = el("div", "lw-details-body");
+    const diagnostics = latest?.run.jev;
+    if (!diagnostics) {
+      body.append(el("p", "lw-hint", "Generate a reply with Jev enabled to see what each gate decided."));
+      details.append(body);
+      return details;
+    }
+    body.append(diagnosticsPanel(diagnostics));
+    details.append(body);
+    return details;
+  }
+  function diagnosticsPanel(diagnostics) {
+    const wrap = el("div", "lw-diag");
+    const badges = el("div", "lw-diag-summary");
+    const statusBadge = el("span", "lw-badge", diagnostics.status === "ok" ? "Answered" : diagnostics.status === "degraded" ? "Degraded" : "Skipped");
+    statusBadge.dataset.tone = diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error";
+    badges.append(statusBadge);
+    if (diagnostics.model)
+      badges.append(el("span", "lw-badge", diagnostics.resolvedModel ?? diagnostics.model));
+    badges.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
+    if (diagnostics.fallbackCount) {
+      const fallback = el("span", "lw-badge", `${diagnostics.fallbackCount} fallback`);
+      fallback.dataset.tone = "warning";
+      badges.append(fallback);
+    }
+    if (diagnostics.escalatedCount)
+      badges.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
+    if (diagnostics.gatePhaseMs !== null)
+      badges.append(el("span", "lw-badge", `gate ${diagnostics.gatePhaseMs}ms`));
+    if (diagnostics.verifyPhaseMs !== null)
+      badges.append(el("span", "lw-badge", `verify ${diagnostics.verifyPhaseMs}ms`));
+    wrap.append(badges);
+    if (diagnostics.error) {
+      const notice = el("div", "lw-notice", diagnostics.error);
+      notice.dataset.tone = "warning";
+      wrap.append(notice);
+    }
+    const table = el("div", "lw-diag-table");
+    for (const record of diagnostics.gates)
+      table.append(gateResultRow(record));
+    wrap.append(table);
+    return wrap;
+  }
+  function gateResultRow(record) {
+    const flagged = record.usedFallback || record.escalated;
+    const row = el("div", "lw-diag-row");
+    row.dataset.flag = String(flagged);
+    row.append(el("span", "lw-diag-gate", record.label), el("span", "lw-diag-value", describeGateValue(record)));
+    const meta = el("span", "lw-diag-meta");
+    if (record.confidence !== null) {
+      meta.append(el("span", undefined, `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`));
+      if (record.confidence < record.threshold)
+        meta.append(el("span", undefined, `below ${record.threshold.toFixed(2)}`));
+    }
+    if (record.usedFallback)
+      meta.append(el("span", undefined, `fallback: ${GATE_FALLBACK_LABELS[record.fallback]}`));
+    row.append(meta);
+    if (record.note)
+      row.append(el("span", "lw-diag-note", record.note));
+    return row;
+  }
+  function describeGateValue(record) {
+    if (record.value === null)
+      return "no answer";
+    if (typeof record.value === "boolean")
+      return record.value ? "yes" : "no";
+    return String(record.value);
+  }
   function canTest() {
     const connection = selectedConnection();
     return !!(state?.permissions.generation && connection && (draft.modelOverride.trim() || connection.model.trim()));
@@ -758,6 +1532,9 @@ function setup(ctx) {
     notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
     notes.append(notesBody);
     shell.append(notes);
+    shell.append(jevSection());
+    shell.append(gatesSection());
+    shell.append(diagnosticsSection());
     const advanced = el("details", "lw-details");
     advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => {
@@ -799,6 +1576,7 @@ function setup(ctx) {
     updateDirectorStatus();
     updateSaveStatus();
     updateTestButton();
+    updateJevTestButton();
     renderNotice();
   }
   cleanups.push(ctx.onBackendMessage((payload) => {
@@ -841,6 +1619,17 @@ function setup(ctx) {
       testPending = false;
       updateTestButton();
       showNotice(message.ok ? { tone: "success", text: `Test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` } : { tone: "error", text: message.error }, 15000);
+      return;
+    }
+    if (message.type === "jev_test_result") {
+      jevTestPending = false;
+      if (message.ok)
+        jevKeyDraft = "";
+      updateJevTestButton();
+      showNotice(message.ok ? {
+        tone: "success",
+        text: `Jev answered on ${message.provider} / ${message.model} in ${message.latencyMs}ms (signal: ${message.answer}${message.confidence !== null ? `, confidence ${message.confidence.toFixed(2)}` : ""}).`
+      } : { tone: "error", text: message.error }, 15000);
       return;
     }
     if (message.type === "error") {

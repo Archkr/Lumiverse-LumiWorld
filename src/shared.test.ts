@@ -66,6 +66,74 @@ describe("settings normalization", () => {
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
     expect(settings.runLogLimit).toBe(50);
+    // A settings file written before v0.5 must load with Jev off.
+    expect(settings.jev).toEqual(DEFAULT_SETTINGS.jev);
+    expect(settings.jev.enabled).toBe(false);
+  });
+
+  test("normalizes the Jev section and clamps its numeric fields", () => {
+    const settings = normalizeSettings({
+      jev: {
+        enabled: true,
+        provider: "openrouter",
+        model: "  typesafe/jev-1.13  ",
+        baseUrlOverride: "  https://example.test/api/  ",
+        timeoutMs: 999999,
+        maxStateChars: 5,
+        historyMessageLimit: 900,
+        minConfidence: 4,
+        retryOnRateLimit: false,
+        worldStateEnabled: false,
+        gatePolicy: {},
+      },
+    });
+
+    expect(settings.jev.enabled).toBe(true);
+    expect(settings.jev.provider).toBe("openrouter");
+    expect(settings.jev.model).toBe("typesafe/jev-1.13");
+    expect(settings.jev.baseUrlOverride).toBe("https://example.test/api");
+    expect(settings.jev.timeoutMs).toBe(60000);
+    expect(settings.jev.maxStateChars).toBe(2000);
+    expect(settings.jev.historyMessageLimit).toBe(24);
+    expect(settings.jev.minConfidence).toBe(1);
+    expect(settings.jev.retryOnRateLimit).toBe(false);
+    expect(settings.jev.worldStateEnabled).toBe(false);
+  });
+
+  test("falls back to TypeSafe for an unknown Jev provider", () => {
+    expect(normalizeSettings({ jev: { provider: "nonsense" } }).jev.provider).toBe("typesafe");
+  });
+
+  test("drops malformed gate policy entries", () => {
+    const settings = normalizeSettings({
+      jev: {
+        gatePolicy: {
+          smart_trigger: { enabled: false, threshold: 0.8, fallback: "skip" },
+          rounded: { threshold: 9 },
+          bad_fallback: { fallback: "explode" },
+          empty: {},
+          "  ": { enabled: true },
+        },
+      },
+    });
+
+    expect(settings.jev.gatePolicy.smart_trigger).toEqual({ enabled: false, threshold: 0.8, fallback: "skip" });
+    expect(settings.jev.gatePolicy.rounded).toEqual({ threshold: 1 });
+    expect(settings.jev.gatePolicy.bad_fallback).toBeUndefined();
+    expect(settings.jev.gatePolicy.empty).toBeUndefined();
+    expect(Object.keys(settings.jev.gatePolicy)).toEqual(["smart_trigger", "rounded"]);
+  });
+
+  test("normalizes the optional strong Director target", () => {
+    const settings = normalizeSettings({
+      strongConnectionId: "  conn-strong  ",
+      strongModelOverride: "  big-model  ",
+    });
+    expect(settings.strongConnectionId).toBe("conn-strong");
+    expect(settings.strongModelOverride).toBe("big-model");
+    const cleared = normalizeSettings({ strongConnectionId: "   ", strongModelOverride: "" });
+    expect(cleared.strongConnectionId).toBeNull();
+    expect(cleared.strongModelOverride).toBe("");
   });
 
   test("migrates previous built-in controller templates", () => {
@@ -460,5 +528,75 @@ describe("run log retention", () => {
       worldInfoFetchError: "one entry was missing",
     });
     expect("worldInfoContent" in (runs[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  test("round-trips Jev gate diagnostics and drops malformed records", () => {
+    const runs = normalizeRunLog([
+      {
+        id: "run-jev",
+        timestamp: 20,
+        status: "success",
+        jev: {
+          used: true,
+          enabled: true,
+          provider: "typesafe",
+          model: "jev-latest",
+          resolvedModel: "jev-1.13.0",
+          status: "ok",
+          error: null,
+          requestCount: 2,
+          inputTokens: 240,
+          outputTokens: 24,
+          costUsd: 0.00001,
+          gatePhaseMs: 120,
+          verifyPhaseMs: 90,
+          gateCount: 2,
+          fallbackCount: 1,
+          escalatedCount: 0,
+          stateChars: 900,
+          stateCompacted: false,
+          gates: [
+            {
+              gateId: "smart_trigger", label: "Smart Director triggering", primitive: "noul", phase: "gate",
+              value: true, probability: 0.95, confidence: 0.95, confidenceDerived: true,
+              threshold: 0.6, escalated: false, usedFallback: false, fallback: "run",
+            },
+            { gateId: "healthy" },
+            {
+              gateId: "continuity_guard", label: "Continuity guard", primitive: "choice", phase: "verify",
+              value: "violation", probability: 0.8, confidence: 0.8, confidenceDerived: false,
+              threshold: 0.5, escalated: true, usedFallback: true, fallback: "soften",
+              probabilities: { violation: 0.8, consistent: 0.2 }, note: "escalated",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const jev = runs[0]?.jev;
+    expect(jev?.used).toBe(true);
+    expect(jev?.status).toBe("ok");
+    expect(jev?.resolvedModel).toBe("jev-1.13.0");
+    expect(jev?.inputTokens).toBe(240);
+    expect(jev?.stateChars).toBe(900);
+    // The malformed record is dropped rather than failing the whole entry.
+    expect(jev?.gates).toHaveLength(2);
+    expect(jev?.gates[0]?.value).toBe(true);
+    expect(jev?.gates[1]?.probabilities).toEqual({ violation: 0.8, consistent: 0.2 });
+    expect(jev?.gates[1]?.fallback).toBe("soften");
+  });
+
+  test("treats a corrupt Jev block as absent", () => {
+    const runs = normalizeRunLog([
+      { id: "run-junk", timestamp: 30, status: "success", jev: "not an object" },
+      { id: "run-partial", timestamp: 31, status: "success", jev: { gates: "nope", inputTokens: "x" } },
+    ]);
+    // Runs are returned newest first.
+    const partial = runs.find((run) => run.id === "run-partial")?.jev;
+    expect(runs.find((run) => run.id === "run-junk")?.jev).toBeNull();
+    expect(partial?.gates).toEqual([]);
+    expect(partial?.inputTokens).toBeNull();
+    expect(partial?.status).toBe("skipped");
+    expect(partial?.requestCount).toBe(0);
   });
 });

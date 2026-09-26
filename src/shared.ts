@@ -30,6 +30,13 @@ export interface LumiWorldSettings {
   enabled: boolean;
   connectionId: string | null;
   modelOverride: string;
+  /**
+   * Optional escalation target used when Jev's `model_route` gate asks for a
+   * stronger Director. Both blank/empty keeps the normal target, which makes the
+   * gate degrade safely on a fresh install.
+   */
+  strongConnectionId: string | null;
+  strongModelOverride: string;
   temperature: number;
   maxTokens: number;
   timeoutMs: number;
@@ -43,6 +50,235 @@ export interface LumiWorldSettings {
   systemTemplate: string;
   userTemplate: string;
   runLogLimit: number;
+  jev: JevSettings;
+}
+
+/* ------------------------------------------------------------------ *
+ * Jev (TypeSafe System One) integration
+ * ------------------------------------------------------------------ */
+
+export type JevProvider = "typesafe" | "openrouter";
+
+export interface JevProviderInfo {
+  id: JevProvider;
+  label: string;
+  baseUrl: string;
+  path: string;
+  defaultModel: string;
+  keyUrl: string;
+}
+
+/**
+ * The Jev wire contract is identical for both providers except for the base
+ * URL, the route, and the model naming convention.
+ */
+export const JEV_PROVIDERS: Record<JevProvider, JevProviderInfo> = {
+  typesafe: {
+    id: "typesafe",
+    label: "TypeSafe",
+    baseUrl: "https://api.typesafe.ai",
+    path: "/v1/systemone",
+    defaultModel: "jev-latest",
+    keyUrl: "https://console.typesafe.ai/keys",
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    path: "/alpha/decisions",
+    defaultModel: "typesafe/jev-1.13",
+    keyUrl: "https://openrouter.ai/settings/keys",
+  },
+};
+
+export const JEV_PROVIDER_IDS = ["typesafe", "openrouter"] as const;
+
+/**
+ * Enclave is per-user AES-256-GCM at-rest secret storage. One slot per provider
+ * so switching providers never destroys the other credential.
+ */
+export const JEV_SECRET_KEY_PREFIX = "jev-api-key";
+
+export function jevSecretKey(provider: JevProvider): string {
+  return `${JEV_SECRET_KEY_PREFIX}:${provider}`;
+}
+
+/** Jev reports 64k tokens per request, of which the `state` may use 32k. */
+export const JEV_MAX_STATE_TOKENS = 32_000;
+export const DEFAULT_JEV_STATE_CHARS = 30_000;
+export const MIN_JEV_STATE_CHARS = 2_000;
+export const MAX_JEV_STATE_CHARS = 32_000;
+export const DEFAULT_JEV_TIMEOUT_MS = 8_000;
+export const MIN_JEV_TIMEOUT_MS = 1_000;
+export const MAX_JEV_TIMEOUT_MS = 60_000;
+export const MAX_JEV_HISTORY_MESSAGES = 24;
+export const DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
+
+export interface JevSettings {
+  enabled: boolean;
+  provider: JevProvider;
+  /** Blank means "use the provider default model". */
+  model: string;
+  /** Blank means "use the provider default base URL". */
+  baseUrlOverride: string;
+  timeoutMs: number;
+  maxStateChars: number;
+  historyMessageLimit: number;
+  /** Decisions below this confidence are escalated (flag + gate fallback). */
+  minConfidence: number;
+  retryOnRateLimit: boolean;
+  /** Opt-in persistence of the derived scene state between turns. */
+  worldStateEnabled: boolean;
+  /** Per-gate enable / threshold / fallback overrides, keyed by gate id. */
+  gatePolicy: Record<string, GatePolicy>;
+}
+
+export const DEFAULT_JEV_SETTINGS: JevSettings = {
+  enabled: false,
+  provider: "typesafe",
+  model: "",
+  baseUrlOverride: "",
+  timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
+  maxStateChars: DEFAULT_JEV_STATE_CHARS,
+  historyMessageLimit: 10,
+  minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
+  retryOnRateLimit: true,
+  worldStateEnabled: true,
+  gatePolicy: {},
+};
+
+export function resolveJevProvider(settings: { provider?: unknown }): JevProviderInfo {
+  const provider = settings.provider === "openrouter" ? "openrouter" : "typesafe";
+  return JEV_PROVIDERS[provider];
+}
+
+export function resolveJevModel(settings: { provider?: unknown; model?: unknown }): string {
+  const model = typeof settings.model === "string" ? settings.model.trim() : "";
+  return model || resolveJevProvider(settings).defaultModel;
+}
+
+export function resolveJevBaseUrl(settings: { provider?: unknown; baseUrlOverride?: unknown }): string {
+  const override = typeof settings.baseUrlOverride === "string" ? settings.baseUrlOverride.trim().replace(/\/+$/, "") : "";
+  return override || resolveJevProvider(settings).baseUrl;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gate catalog types
+ * ------------------------------------------------------------------ */
+
+export type JevPrimitive = "noul" | "choice" | "score";
+
+/** Which Jev round-trip a gate belongs to. Each phase is one batched request. */
+export type GatePhase = "gate" | "verify";
+
+export type GateCategory = "director_control" | "guardrails" | "state_accuracy" | "narrative" | "world";
+
+export type GateFallback =
+  | "run"
+  | "skip"
+  | "accept"
+  | "retry"
+  | "patch"
+  | "soften"
+  | "drop"
+  | "hold"
+  | "none"
+  | "ignore";
+
+export type GateValue = string | number | boolean;
+
+export interface GatePolicyOverride {
+  enabled?: boolean;
+  threshold?: number;
+  fallback?: GateFallback;
+}
+
+export type GatePolicy = GatePolicyOverride;
+
+export type GateCriteria = Record<string, string> | string[] | { true: string; false: string };
+
+export interface GateDefinition {
+  /** Doubles as the Jev question id: answers return under this exact key. */
+  id: string;
+  label: string;
+  /** Shape of the question sent to Jev and the shape of the answer returned. */
+  primitive: JevPrimitive;
+  phase: GatePhase;
+  category: GateCategory;
+  primitiveLabel: string;
+  /** Options for Choice, ordered levels for Score, true/false wording for Noul. */
+  criteria?: GateCriteria;
+  instructions: string;
+  /**
+   * What the gate asks for in plain language. Jev returns only a typed value and
+   * probabilities, never prose, so there is no model-authored rationale to store.
+   */
+  rationale: string;
+  enabledByDefault: boolean;
+  threshold: number;
+  fallback: GateFallback;
+  /** Value that means "the Director should run" for this gate. */
+  safeValue: GateValue;
+  /** Value that means "the Director should not run" for this gate. */
+  blockValue: GateValue;
+  /** Gate only applies when this condition holds for the current turn. */
+  appliesWhen?: string;
+  /** Evaluated in code from thresholds and request state, not sent to Jev. */
+  codeOnly?: boolean;
+}
+
+/** A gate policy with every field filled in, ready to be applied. */
+export interface ResolvedGatePolicy extends GatePolicy {
+  enabled: boolean;
+  threshold: number;
+  fallback: GateFallback;
+  definition: GateDefinition;
+}
+
+export interface JevGateRecord {
+  gateId: string;
+  label: string;
+  primitive: JevPrimitive;
+  phase: GatePhase;
+  /** Raw typed answer from Jev, or null when the gate had no answer. */
+  value: GateValue | null;
+  probability: number | null;
+  /** Choice/Score report confidence; Noul confidence is derived from p and flagged. */
+  confidence: number | null;
+  confidenceDerived: boolean;
+  threshold: number;
+  escalated: boolean;
+  usedFallback: boolean;
+  fallback: GateFallback;
+  /** Full reported distribution, kept for the diagnostics view. */
+  probabilities?: Record<string, number>;
+  note?: string;
+}
+
+export interface JevTurnDiagnostics {
+  /** Whether Jev was consulted at all this turn. */
+  used: boolean;
+  enabled: boolean;
+  provider: JevProvider | null;
+  model: string | null;
+  /** Model id the provider reported as the actual responder. */
+  resolvedModel: string | null;
+  /** "ok" when every phase answered, otherwise the degradation reason. */
+  status: "ok" | "degraded" | "skipped";
+  error: string | null;
+  requestCount: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  gatePhaseMs: number | null;
+  verifyPhaseMs: number | null;
+  gateCount: number;
+  fallbackCount: number;
+  escalatedCount: number;
+  stateChars: number;
+  /** True when the state had to be compacted to fit the configured cap. */
+  stateCompacted: boolean;
+  gates: JevGateRecord[];
 }
 
 export interface ConnectionOption {
@@ -77,6 +313,8 @@ export interface RunLogEntry {
   worldInfoFetchedCount?: number | null;
   worldInfoFallbackTaggedCount?: number | null;
   worldInfoFetchError?: string | null;
+  /** Jev gate diagnostics for this turn. Absent when Jev was not consulted. */
+  jev?: JevTurnDiagnostics | null;
 }
 
 export interface PromptSnapshot {
@@ -305,6 +543,8 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   enabled: false,
   connectionId: null,
   modelOverride: "",
+  strongConnectionId: null,
+  strongModelOverride: "",
   temperature: 0.35,
   maxTokens: 420,
   timeoutMs: 45000,
@@ -318,6 +558,7 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  jev: { ...DEFAULT_JEV_SETTINGS },
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -350,6 +591,179 @@ export function normalizeGenerationTypes(value: unknown): LumiWorldGenerationTyp
   return Array.isArray(value) ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
 
+const GATE_FALLBACKS: readonly GateFallback[] = [
+  "run", "skip", "accept", "retry", "patch", "soften", "drop", "hold", "none", "ignore",
+];
+
+function normalizeProbability(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Gate policy overrides are sparse: an unknown or malformed entry is dropped so a
+ * corrupted settings file cannot disable a guardrail by accident.
+ */
+export function normalizeGatePolicy(value: unknown): Record<string, GatePolicy> {
+  const obj = asRecord(value);
+  const normalized: Record<string, GatePolicy> = {};
+  for (const [gateId, raw] of Object.entries(obj)) {
+    const id = gateId.trim();
+    if (!id) continue;
+    const entry = asRecord(raw);
+    const policy: GatePolicy = {};
+    if (typeof entry.enabled === "boolean") policy.enabled = entry.enabled;
+    const threshold = normalizeProbability(entry.threshold);
+    if (threshold !== undefined) policy.threshold = threshold;
+    const fallback = cleanString(entry.fallback) as GateFallback;
+    if (GATE_FALLBACKS.includes(fallback)) policy.fallback = fallback;
+    if (Object.keys(policy).length > 0) normalized[id] = policy;
+  }
+  return normalized;
+}
+
+export function normalizeJevSettings(value: unknown): JevSettings {
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
+    provider,
+    model: cleanString(obj.model),
+    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
+    maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
+    minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
+    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
+    worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
+    gatePolicy: normalizeGatePolicy(obj.gatePolicy),
+  };
+}
+
+const JEV_STATUSES: readonly JevTurnDiagnostics["status"][] = ["ok", "degraded", "skipped"];
+const JEV_PRIMITIVES: readonly JevPrimitive[] = ["noul", "choice", "score"];
+const JEV_PHASES: readonly GatePhase[] = ["gate", "verify"];
+
+function normalizeGateValue(value: unknown): GateValue | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  return null;
+}
+
+function normalizeProbabilityMap(value: unknown): Record<string, number> | undefined {
+  const obj = asRecord(value);
+  const entries = Object.entries(obj)
+    .map(([key, raw]): [string, number] | null => {
+      const probability = normalizeProbability(raw);
+      return probability === undefined ? null : [key, probability];
+    })
+    .filter((entry): entry is [string, number] => entry !== null);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+export function normalizeJevGateRecord(value: unknown): JevGateRecord | null {
+  const obj = asRecord(value);
+  const gateId = cleanString(obj.gateId);
+  const primitive = cleanString(obj.primitive) as JevPrimitive;
+  const phase = cleanString(obj.phase) as GatePhase;
+  if (!gateId || !JEV_PRIMITIVES.includes(primitive) || !JEV_PHASES.includes(phase)) return null;
+  const fallback = cleanString(obj.fallback) as GateFallback;
+  const rawConfidence = normalizeProbability(obj.confidence);
+  return {
+    gateId,
+    label: cleanString(obj.label) || gateId,
+    primitive,
+    phase,
+    value: normalizeGateValue(obj.value),
+    probability: normalizeProbability(obj.probability) ?? null,
+    confidence: rawConfidence ?? null,
+    confidenceDerived: obj.confidenceDerived === true,
+    threshold: numberInRange(obj.threshold, 0, 0, 1),
+    escalated: obj.escalated === true,
+    usedFallback: obj.usedFallback === true,
+    fallback: GATE_FALLBACKS.includes(fallback) ? fallback : "none",
+    probabilities: normalizeProbabilityMap(obj.probabilities),
+    note: cleanNullableString(obj.note) ?? undefined,
+  };
+}
+
+export function normalizeJevTurnDiagnostics(value: unknown): JevTurnDiagnostics | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider);
+  const status = cleanString(obj.status) as JevTurnDiagnostics["status"];
+  // Non-numeric or negative counts are treated as absent rather than as zero.
+  const nullableInt = (raw: unknown): number | null => {
+    if (raw == null) return null;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.round(n));
+  };
+  const gates = (Array.isArray(obj.gates) ? obj.gates : [])
+    .map(normalizeJevGateRecord)
+    .filter((gate): gate is JevGateRecord => gate !== null);
+  return {
+    used: obj.used === true,
+    enabled: obj.enabled === true,
+    provider: provider === "typesafe" || provider === "openrouter" ? provider : null,
+    model: cleanNullableString(obj.model),
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    status: JEV_STATUSES.includes(status) ? status : "skipped",
+    error: cleanNullableString(obj.error),
+    requestCount: integerInRange(obj.requestCount, gates.length > 0 ? 1 : 0, 0, 16),
+    inputTokens: nullableInt(obj.inputTokens),
+    outputTokens: nullableInt(obj.outputTokens),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    gatePhaseMs: nullableInt(obj.gatePhaseMs),
+    verifyPhaseMs: nullableInt(obj.verifyPhaseMs),
+    gateCount: integerInRange(obj.gateCount, gates.length, 0, Number.MAX_SAFE_INTEGER),
+    fallbackCount: integerInRange(obj.fallbackCount, gates.filter((gate) => gate.usedFallback).length, 0, Number.MAX_SAFE_INTEGER),
+    escalatedCount: integerInRange(obj.escalatedCount, gates.filter((gate) => gate.escalated).length, 0, Number.MAX_SAFE_INTEGER),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    gates,
+  };
+}
+
+export function makeJevDiagnostics(patch: Partial<JevTurnDiagnostics> = {}): JevTurnDiagnostics {
+  return {
+    used: false,
+    enabled: false,
+    provider: null,
+    model: null,
+    resolvedModel: null,
+    status: "skipped",
+    error: null,
+    requestCount: 0,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    gatePhaseMs: null,
+    verifyPhaseMs: null,
+    gateCount: 0,
+    fallbackCount: 0,
+    escalatedCount: 0,
+    stateChars: 0,
+    stateCompacted: false,
+    gates: [],
+    ...patch,
+  };
+}
+
+export function summarizeJevDiagnostics(diagnostics: JevTurnDiagnostics | null | undefined): string | null {
+  if (!diagnostics || !diagnostics.used) return null;
+  const parts = [
+    `${diagnostics.gateCount} gate${diagnostics.gateCount === 1 ? "" : "s"}`,
+    diagnostics.requestCount ? `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}` : null,
+    diagnostics.fallbackCount ? `${diagnostics.fallbackCount} fallback${diagnostics.fallbackCount === 1 ? "" : "s"}` : null,
+    diagnostics.escalatedCount ? `${diagnostics.escalatedCount} escalated` : null,
+    diagnostics.status === "degraded" ? "degraded" : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function normalizeSettings(value: unknown): LumiWorldSettings {
   const obj = asRecord(value);
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
@@ -373,6 +787,8 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
     modelOverride: cleanString(obj.modelOverride),
+    strongConnectionId: cleanNullableString(obj.strongConnectionId),
+    strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
@@ -386,6 +802,7 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     systemTemplate,
     userTemplate,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    jev: normalizeJevSettings(obj.jev),
   };
 }
 
@@ -416,6 +833,7 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
+        jev: normalizeJevTurnDiagnostics(obj.jev),
       };
     })
     .filter((item): item is RunLogEntry => !!item)
