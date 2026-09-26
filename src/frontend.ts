@@ -1,7 +1,7 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import {
   BUILTIN_PROMPT_PRESET_ID, DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
-  type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord,
+  type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord, type JevPhaseTrace,
   type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type RunLogEntry,
 } from "./shared";
 import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates } from "./gates";
@@ -175,12 +175,27 @@ const CSS = `
 .lw-diag-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:4px 10px; padding:8px 10px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); }
 .lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
 .lw-diag-row[data-on="false"] { opacity:.65; }
-.lw-diag-head { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.lw-diag-head { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; min-width:0; }
 .lw-diag-name { font-size:12px; font-weight:600; }
 .lw-diag-value { flex:none; padding:1px 7px; border:1px solid var(--lumiverse-border); border-radius:6px; background:var(--lumiverse-input-bg); font-family:var(--lumiverse-font-mono,monospace); font-size:10.5px; }
 .lw-diag-row[data-flag="true"] .lw-diag-value { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
-.lw-diag-meta { display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.lw-diag-meta { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
 .lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); font-size:11px; line-height:1.45; }
+.lw-diag-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.lw-diag-toolbar .lw-button { min-height:28px; padding:4px 9px; font-size:11px; }
+.lw-diag-step { display:grid; gap:8px; padding:10px; border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill-subtle); }
+.lw-diag-step:not([open]) > :not(summary), .lw-diag-raw:not([open]) > :not(summary), .lw-diag-evidence:not([open]) > :not(summary) { display:none; }
+.lw-diag-step > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; list-style:none; cursor:pointer; font-size:12px; font-weight:650; }
+.lw-diag-step > summary::-webkit-details-marker { display:none; }
+.lw-diag-step-title { min-width:0; }
+.lw-diag-step-meta { color:var(--lumiverse-text-muted); font-size:10.5px; font-weight:450; text-align:right; }
+.lw-diag-step .lw-diag-list { max-height:420px; }
+.lw-diag-raw { border-top:1px solid var(--lumiverse-border); padding-top:7px; }
+.lw-diag-raw > summary, .lw-diag-evidence > summary { color:var(--lumiverse-text-muted); cursor:pointer; font-size:11px; }
+.lw-diag-raw pre, .lw-diag-evidence pre { max-height:300px; margin:7px 0 0; padding:9px; overflow:auto; border-radius:6px; background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:10.5px/1.5 var(--lumiverse-font-mono,monospace); white-space:pre-wrap; overflow-wrap:anywhere; }
+.lw-diag-evidence { grid-column:1 / -1; }
+.lw-diag-step .lw-diag-row { background:var(--lumiverse-surface-raised); }
+.lw-diag-copy-status { color:var(--lumiverse-text-muted); font-size:11px; }
 .lw-gate-reset { justify-self:start; }
 
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
@@ -1065,102 +1080,260 @@ export function setup(ctx: SpindleFrontendContext) {
     return reset;
   }
 
-  function latestJevRun(): RunLogEntry | null {
-    for (const run of state?.runs ?? []) {
-      if (run.jev) return run;
-    }
-    return null;
+  function latestTurnRun(): RunLogEntry | null {
+    return (state?.runs ?? []).find((run) => run.channel === "director" && run.generationType !== "test"
+      && !run.status.startsWith("test_") && !(run.status === "timeout" && !run.generationType && !run.trace)) ?? null;
   }
 
   function diagnosticsSection(): HTMLElement {
-    const run = latestJevRun();
-    const diagnostics = run?.jev ?? null;
-
+    const run = latestTurnRun();
+    const generationOutcome = run?.trace?.generationOutcome;
+    const badge = !run ? undefined : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded"
+      ? generationOutcome : run.status === "success"
+      ? run.jev?.status === "degraded" ? "degraded" : run.jev?.fallbackCount ? "partial" : "completed"
+      : run.status;
     return collapsible({
-      title: "Last recorded Jev turn",
-      badge: diagnostics ? (diagnostics.status === "ok"
-        ? diagnostics.fallbackCount > 0 ? "partial" : "answered"
-        : diagnostics.status) : undefined,
-      badgeTone: diagnostics
-        ? (diagnostics.status === "ok" && diagnostics.fallbackCount === 0 ? "success"
-          : diagnostics.status === "degraded" || diagnostics.fallbackCount > 0 ? "warning" : "error")
-        : "neutral",
+      title: "Last turn", badge,
+      badgeTone: generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error"
+        : run?.status === "success" ? run.jev?.status === "degraded" || run.jev?.fallbackCount ? "warning" : "success"
+        : run?.status === "error" || run?.status === "timeout" ? "error" : "warning",
       expanded: diagnosticsOpen,
       onToggle: (open) => { diagnosticsOpen = open; },
     }, (body) => {
-      if (!diagnostics) {
-        body.append(el("p", "lw-hint",
-          state?.settings.jev.enabled
-            ? "Generate a reply to see what each gate decided for that turn."
-            : "Turn on Enable Jev to start recording decisions."));
-        return;
-      }
-      body.append(diagnosticsPanel(diagnostics, run!.timestamp));
+      if (run) body.append(diagnosticsPanel(run));
+      else body.append(el("p", "lw-hint", "Generate a reply to see the full turn trace here."));
     });
   }
 
-  function diagnosticsPanel(diagnostics: JevTurnDiagnostics, timestamp: number): HTMLElement {
-    const wrap = el("div", "lw-diag");
-    const skipped = diagnostics.status === "skipped";
+  function rawTraceSection(title: string, value: string | null | undefined): HTMLElement | null {
+    if (value == null) return null;
+    const details = el("details", "lw-diag-raw");
+    details.append(el("summary", undefined, title));
+    let display = value;
+    try { display = JSON.stringify(JSON.parse(value), null, 2); } catch { /* Plain text directive. */ }
+    details.append(el("pre", undefined, display));
+    return details;
+  }
 
-    if (skipped) {
-      wrap.append(el("div", "lw-diag-outcome", "Jev chose not to run the Director. No LumiWorld note was added to the main prompt."));
-      const trigger = diagnostics.gates.find((record) => record.gateId === "smart_trigger");
-      if (trigger) wrap.append(gateResultRow(trigger));
+  function traceStep(title: string, meta: string, open = false): HTMLDetailsElement {
+    const details = el("details", "lw-diag-step") as HTMLDetailsElement;
+    details.open = open;
+    const summary = el("summary");
+    summary.append(el("span", "lw-diag-step-title", title), el("span", "lw-diag-step-meta", meta));
+    details.append(summary);
+    return details;
+  }
+
+  function phaseStep(phase: JevPhaseTrace, skipped: boolean, open: boolean): HTMLElement {
+    const title = phase.stage === "before_director" ? "1 · Before Director"
+      : phase.stage === "verify_draft" ? "3 · Check draft" : "5 · Check revision";
+    const flags = phase.gates.filter((gate) => gate.usedFallback).length;
+    const meta = [
+      `${phase.gates.length} decisions`,
+      `${phase.requestCount} request${phase.requestCount === 1 ? "" : "s"}`,
+      flags ? `${flags} fallback` : null,
+      phase.error ? "error" : null,
+    ].filter(Boolean).join(" · ");
+    const step = traceStep(title, meta, open);
+    const metrics = el("div", "lw-diag-strip");
+    metrics.append(el("span", "lw-badge", `${phase.durationMs}ms`));
+    if (phase.resolvedModel) metrics.append(el("span", "lw-badge", phase.resolvedModel));
+    if (phase.inputTokens !== null) metrics.append(el("span", "lw-badge", `${phase.inputTokens} in / ${phase.outputTokens ?? 0} out`));
+    metrics.append(el("span", "lw-badge", `${phase.stateChars} state chars`));
+    if (phase.stateCompacted) metrics.append(el("span", "lw-badge", "state compacted"));
+    if (phase.costUsd !== null) metrics.append(el("span", "lw-badge", `$${phase.costUsd.toFixed(6)}`));
+    step.append(metrics);
+    if (phase.error) step.append(el("div", "lw-notice", phase.error));
+    if (phase.requestCount === 0 && !phase.error) step.append(el("p", "lw-hint", "No request was needed for this pass."));
+    if (skipped && phase.stage === "before_director" && phase.gates.length > 1) {
+      step.append(el("p", "lw-hint", "Other answers arrived in the same request but did not affect this reply."));
     }
-    if (timestamp >= Date.UTC(2000, 0, 1)) {
-      wrap.append(el("div", "lw-diag-time", `Recorded ${new Date(timestamp).toLocaleString()}`));
+    const list = el("div", "lw-diag-list");
+    for (const gate of phase.gates) {
+      list.append(gateResultRow(gate, false, skipped && phase.stage === "before_director" && gate.gateId !== "smart_trigger"));
     }
+    step.append(list);
+    const request = rawTraceSection(phase.requestCount ? "Full Jev request" : "Prepared Jev payload", phase.requestJson);
+    const response = rawTraceSection("Raw Jev response attempts", phase.responseJson);
+    if (request) step.append(request);
+    if (response) step.append(response);
+    return step;
+  }
+
+  function copyReport(run: RunLogEntry): string {
+    const expanded = JSON.parse(JSON.stringify(run)) as Record<string, any>;
+    const expand = (holder: Record<string, any>, field: string, target: string): void => {
+      const raw = holder[field];
+      if (typeof raw !== "string") return;
+      try { holder[target] = JSON.parse(raw); } catch { holder[target] = raw; }
+      delete holder[field];
+    };
+    if (expanded.trace) {
+      expand(expanded.trace, "settingsJson", "settings");
+      expand(expanded.trace, "incomingMessagesJson", "incomingMessages");
+      expand(expanded.trace, "directorMessagesJson", "directorMessages");
+      expand(expanded.trace, "initialResponseJson", "initialResponse");
+      expand(expanded.trace, "worldStateBeforeJson", "worldStateBefore");
+      expand(expanded.trace, "worldStateAfterJson", "worldStateAfter");
+    }
+    for (const phase of expanded.jev?.phases ?? []) {
+      expand(phase, "requestJson", "request");
+      expand(phase, "responseJson", "responseAttempts");
+    }
+    if (expanded.jev?.revision) {
+      expand(expanded.jev.revision, "promptJson", "prompt");
+      expand(expanded.jev.revision, "responseJson", "response");
+    }
+    return JSON.stringify({ format: "LumiWorld full turn trace", run: expanded }, null, 2);
+  }
+
+  async function copyTurn(button: HTMLButtonElement, status: HTMLElement, run: RunLogEntry): Promise<void> {
+    try {
+      const report = copyReport(run);
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(report);
+      else {
+        const input = el("textarea") as HTMLTextAreaElement;
+        input.value = report; input.style.position = "fixed"; input.style.opacity = "0";
+        document.body.append(input); input.select();
+        let copied = false;
+        try { copied = document.execCommand("copy"); }
+        finally { input.remove(); }
+        if (!copied) throw new Error("Clipboard unavailable");
+      }
+      status.textContent = "Copied";
+      button.textContent = "Copied";
+    } catch {
+      status.textContent = "Could not copy. Check clipboard access.";
+    }
+  }
+
+  function diagnosticsPanel(run: RunLogEntry): HTMLElement {
+    const diagnostics = run.jev ?? null;
+    const skippedByJev = diagnostics?.status === "skipped";
+    const wrap = el("div", "lw-diag");
+    const generationOutcome = run.trace?.generationOutcome;
+    const outcome = generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn."
+      : generationOutcome === "stopped" ? "The visible reply was stopped after LumiWorld prepared this turn."
+        : generationOutcome === "superseded" ? "A newer generation replaced this turn."
+          : run.trace?.dryRun && run.status === "success" ? "Preview prepared a Director note; no live reply was changed."
+            : run.status === "success" ? "Director note added to the main prompt."
+      : skippedByJev ? "Jev chose not to run the Director. No LumiWorld note was added to the main prompt."
+        : run.status === "timeout" ? "The Director timed out. No LumiWorld note was added."
+          : run.status === "error" ? "The Director failed. No LumiWorld note was added."
+            : "No LumiWorld note was added to the main prompt.";
+    wrap.append(el("div", "lw-diag-outcome", outcome));
+
+    const toolbar = el("div", "lw-diag-toolbar");
+    if (run.timestamp >= Date.UTC(2000, 0, 1)) toolbar.append(el("div", "lw-diag-time", `Recorded ${new Date(run.timestamp).toLocaleString()}`));
+    const copy = el("button", "lw-button", "Copy all") as HTMLButtonElement;
+    copy.type = "button";
+    const copyStatus = el("span", "lw-diag-copy-status");
+    copyStatus.setAttribute("role", "status");
+    copy.addEventListener("click", () => { void copyTurn(copy, copyStatus, run); });
+    toolbar.append(copy, copyStatus); wrap.append(toolbar);
+    wrap.append(el("p", "lw-hint", "Copy all includes chat text and private prompts. Review it before sharing."));
 
     const strip = el("div", "lw-diag-strip");
-    if (diagnostics.resolvedModel) strip.append(el("span", "lw-badge", diagnostics.resolvedModel));
-    strip.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
-    if (!skipped && diagnostics.fallbackCount) {
-      const fallback = el("span", "lw-badge");
-      fallback.dataset.tone = "warning";
-      fallback.append(el("span", "lw-dot"), el("span", undefined, `${diagnostics.fallbackCount} fallback`));
-      strip.append(fallback);
-    }
-    if (!skipped && diagnostics.escalatedCount) {
-      strip.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
-    }
-    const latency = [diagnostics.gatePhaseMs, diagnostics.verifyPhaseMs]
-      .filter((value): value is number => value !== null)
-      .reduce((total, value) => total + value, 0);
-    if (latency > 0) strip.append(el("span", "lw-badge", `${latency}ms in Jev`));
-    if (diagnostics.inputTokens !== null) strip.append(el("span", "lw-badge", `${diagnostics.inputTokens} in / ${diagnostics.outputTokens ?? 0} out`));
-    if (diagnostics.stateCompacted) strip.append(el("span", "lw-badge", "state compacted"));
+    if (run.generationType) strip.append(el("span", "lw-badge", run.generationType));
+    if (run.trace?.dryRun) strip.append(el("span", "lw-badge", "preview"));
+    if (generationOutcome) strip.append(el("span", "lw-badge", `reply ${generationOutcome}`));
+    if (run.trace?.worldStateOutcome && run.trace.worldStateOutcome !== "not_used") strip.append(el("span", "lw-badge", `scene state ${run.trace.worldStateOutcome}`));
+    if (run.connectionName || run.connectionId || run.model) strip.append(el("span", "lw-badge", [run.connectionName ?? run.connectionId, run.model].filter(Boolean).join(" · ")));
+    if (run.durationMs !== null && run.durationMs !== undefined) strip.append(el("span", "lw-badge", `${run.durationMs}ms total`));
+    if (run.directorDurationMs !== null && run.directorDurationMs !== undefined) strip.append(el("span", "lw-badge", `${run.directorDurationMs}ms Director`));
+    if (diagnostics) {
+      if (diagnostics.provider) strip.append(el("span", "lw-badge", diagnostics.provider));
+      if (diagnostics.model && diagnostics.model !== diagnostics.resolvedModel) strip.append(el("span", "lw-badge", `requested ${diagnostics.model}`));
+      if (diagnostics.resolvedModel) strip.append(el("span", "lw-badge", diagnostics.resolvedModel));
+      strip.append(el("span", "lw-badge", `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}`));
+      strip.append(el("span", "lw-badge", `${diagnostics.gateCount} recorded decisions`));
+      if (diagnostics.fallbackCount) strip.append(pill(`${diagnostics.fallbackCount} fallback${skippedByJev ? " · unused answers included" : ""}`, "warning"));
+      if (diagnostics.escalatedCount) strip.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated${skippedByJev ? " · unused answers included" : ""}`));
+      if (diagnostics.inputTokens !== null) strip.append(el("span", "lw-badge", `${diagnostics.inputTokens} in / ${diagnostics.outputTokens ?? 0} out`));
+      if (diagnostics.costUsd !== null) strip.append(el("span", "lw-badge", `$${diagnostics.costUsd.toFixed(6)} Jev`));
+      if (diagnostics.stateCompacted) strip.append(el("span", "lw-badge", "state compacted"));
+    } else strip.append(el("span", "lw-badge", "Jev not used"));
     wrap.append(strip);
-
-    if (diagnostics.error) {
-      const notice = el("div", "lw-notice", diagnostics.error);
-      notice.dataset.tone = "warning";
-      wrap.append(notice);
+    if (run.error) {
+      const notice = el("div", "lw-notice", run.error); notice.dataset.tone = "warning"; wrap.append(notice);
     }
-    if (diagnostics.gateCount > 0 && diagnostics.gates.length === 0) {
-      wrap.append(el("p", "lw-hint", "Decision details were not saved for this turn."));
+    if (run.trace?.generationError) {
+      const notice = el("div", "lw-notice", run.trace.generationError); notice.dataset.tone = "warning"; wrap.append(notice);
+    }
+    if (diagnostics?.error && diagnostics.error !== run.error) {
+      const notice = el("div", "lw-notice", diagnostics.error); notice.dataset.tone = "warning"; wrap.append(notice);
     }
 
-    // A skipped turn has one acting decision. Other answers were returned in the
-    // same batch, but their fallback actions never affected the main prompt.
-    const decided = diagnostics.gates.filter((record) => record.gateId !== "confidence_escalation" && record.gateId !== "budget_degradation");
-    const computed = diagnostics.gates.filter((record) => record.gateId === "confidence_escalation" || record.gateId === "budget_degradation");
-    if (skipped) {
-      const unused = decided.filter((record) => record.gateId !== "smart_trigger");
-      if (unused.length) {
-        const details = el("details", "lw-diag-unused");
-        details.append(el("summary", undefined, `${unused.length} other Jev answer${unused.length === 1 ? "" : "s"} · not used`));
-        details.append(el("p", "lw-hint", "Jev returned these in the same request. They did not change this reply."));
-        const list = el("div", "lw-diag-list");
-        for (const record of unused) list.append(gateResultRow(record, false, true));
-        details.append(list); wrap.append(details);
-      }
-    } else {
+    const incoming = rawTraceSection("Full incoming messages", run.trace?.incomingMessagesJson);
+    if (incoming) wrap.append(incoming);
+    const settings = rawTraceSection("Settings used for this turn", run.trace?.settingsJson);
+    if (settings) wrap.append(settings);
+    const phases = diagnostics?.phases ?? [];
+    if (phases.length) {
+      const before = phases.find((phase) => phase.stage === "before_director");
+      if (before) wrap.append(phaseStep(before, skippedByJev, !phases.some((phase) => phase.stage === "verify_revision")));
+    } else if (diagnostics?.gates.length) {
+      const legacy = traceStep("Jev decisions", `${diagnostics.gates.length} recorded`, true);
+      legacy.append(el("p", "lw-hint", "This older turn did not save separate pass details."));
+      if (skippedByJev && diagnostics.gates.length > 1) legacy.append(el("p", "lw-hint", "Other Jev answers were not used after the skip decision."));
       const list = el("div", "lw-diag-list");
-      for (const record of decided) list.append(gateResultRow(record));
-      for (const record of computed) list.append(gateResultRow(record, true));
-      wrap.append(list);
+      for (const gate of diagnostics.gates) list.append(gateResultRow(gate,
+        gate.gateId === "confidence_escalation" || gate.gateId === "budget_degradation",
+        skippedByJev && gate.gateId !== "smart_trigger"));
+      legacy.append(list); wrap.append(legacy);
+    } else if (diagnostics?.gateCount) wrap.append(el("p", "lw-hint", "Decision details were not saved for this turn."));
+
+    if (run.trace?.directorMessagesJson || run.trace?.initialDirective || run.directivePreview) {
+      const draft = traceStep("2 · Director draft", run.trace?.initialDirective ? "returned" : "no draft");
+      if (run.trace?.initialDirective) draft.append(el("div", "lw-diag-outcome", run.trace.initialDirective));
+      else if (run.directivePreview) draft.append(el("div", "lw-diag-outcome", run.directivePreview));
+      const prompt = rawTraceSection("Full Director prompt", run.trace?.directorMessagesJson);
+      const response = rawTraceSection("Raw Director response", run.trace?.initialResponseJson);
+      if (prompt) draft.append(prompt);
+      if (response) draft.append(response);
+      wrap.append(draft);
     }
+    const draftCheck = phases.find((phase) => phase.stage === "verify_draft");
+    if (draftCheck) wrap.append(phaseStep(draftCheck, false, false));
+    if (diagnostics?.revision) {
+      const revision = diagnostics.revision;
+      const step = traceStep("4 · Director revision", `${revision.action} · ${revision.status} · ${revision.durationMs}ms`, true);
+      step.append(el("p", "lw-hint", revision.reason));
+      if (revision.error) step.append(el("div", "lw-notice", revision.error));
+      if (revision.revisedDirective) step.append(el("div", "lw-diag-outcome", revision.revisedDirective));
+      if (revision.unresolved) step.append(el("p", "lw-hint", "The final check still found a problem after the one allowed revision."));
+      const prompt = rawTraceSection("Full revision prompt", revision.promptJson);
+      const response = rawTraceSection("Raw revision response", revision.responseJson);
+      if (prompt) step.append(prompt);
+      if (response) step.append(response);
+      wrap.append(step);
+    }
+    const revisionCheck = phases.find((phase) => phase.stage === "verify_revision");
+    if (revisionCheck) wrap.append(phaseStep(revisionCheck, false, true));
+
+    const final = traceStep("Final outcome", [run.status, generationOutcome ? `reply ${generationOutcome}` : null].filter(Boolean).join(" · "), true);
+    if (run.trace?.finalDirective) final.append(el("div", "lw-diag-outcome", run.trace.finalDirective));
+    else if (run.directivePreview) final.append(el("div", "lw-diag-outcome", run.directivePreview));
+    if (run.worldInfoActivatedCount !== null && run.worldInfoActivatedCount !== undefined) {
+      final.append(el("p", "lw-hint", `World Info: ${run.worldInfoActivatedCount} activated, ${run.worldInfoFetchedCount ?? 0} fetched, ${run.worldInfoFallbackTaggedCount ?? 0} fallback tagged.`));
+    }
+    if (run.worldInfoFetchError) final.append(el("p", "lw-hint", run.worldInfoFetchError));
+    const beforeState = rawTraceSection("Scene state before", run.trace?.worldStateBeforeJson);
+    const afterState = rawTraceSection("Scene state after Director", run.trace?.worldStateAfterJson);
+    if (beforeState) final.append(beforeState);
+    if (afterState) final.append(afterState);
+    if (run.trace?.finalReply !== null && run.trace?.finalReply !== undefined) {
+      const reply = rawTraceSection(run.trace.generationOutcome === "stopped" ? "Partial visible reply" : "Final visible reply", run.trace.finalReply);
+      if (reply) final.append(reply);
+    } else if (run.trace?.generationOutcome === "pending") final.append(el("p", "lw-hint", "Waiting for the visible reply to finish."));
+    if (run.trace?.messageId) final.append(el("p", "lw-hint", `Saved message: ${run.trace.messageId}`));
+    const computed = diagnostics?.gates.filter((gate) => gate.gateId === "confidence_escalation" || gate.gateId === "budget_degradation") ?? [];
+    if (computed.length) {
+      const list = el("div", "lw-diag-list");
+      for (const gate of computed) list.append(gateResultRow(gate, true));
+      final.append(list);
+    }
+    wrap.append(final);
     return wrap;
   }
 
@@ -1196,6 +1369,10 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     row.append(head, meta);
     if (record.note && !unused) row.append(el("span", "lw-diag-note", record.note));
+    const evidence = el("details", "lw-diag-evidence");
+    evidence.append(el("summary", undefined, "Full decision evidence"),
+      el("pre", undefined, JSON.stringify(record, null, 2)));
+    row.append(evidence);
     return row;
   }
 
@@ -1675,6 +1852,14 @@ export function setup(ctx: SpindleFrontendContext) {
       if (drawer.root.contains(document.activeElement) && document.activeElement?.matches("input,textarea,select,[role=combobox]")) {
         updateWarnings(); updateDirectorStatus(); updateSaveStatus(); updateTestButton();
       } else render();
+      return;
+    }
+    if (message.type === "run_logged") {
+      if (state) {
+        state = { ...state, runs: [message.run, ...state.runs.filter((run) => run.id !== message.run.id)]
+          .sort((left, right) => right.timestamp - left.timestamp).slice(0, state.settings.runLogLimit) };
+        if (!drawer.root.contains(document.activeElement) || !document.activeElement?.matches("input,textarea,select,[role=combobox]")) render();
+      }
       return;
     }
     if (message.type === "settings_saved") {

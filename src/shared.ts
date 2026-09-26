@@ -284,6 +284,57 @@ export interface JevGateRecord {
   note?: string;
 }
 
+export interface JevPhaseTrace {
+  stage: "before_director" | "verify_draft" | "verify_revision";
+  questionCount: number;
+  requestCount: number;
+  durationMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  resolvedModel: string | null;
+  stateChars: number;
+  stateCompacted: boolean;
+  error: string | null;
+  gates: JevGateRecord[];
+  /** Complete request and normalized response, including the projected chat context. */
+  requestJson: string | null;
+  responseJson: string | null;
+}
+
+export interface JevRevisionTrace {
+  action: string;
+  reason: string;
+  status: "revised" | "failed";
+  durationMs: number;
+  error: string | null;
+  initialDirectivePreview: string;
+  revisedDirectivePreview: string | null;
+  unresolved: boolean;
+  promptJson: string | null;
+  revisedDirective: string | null;
+  responseJson: string | null;
+}
+
+export interface TurnTrace {
+  chatId: string | null;
+  generationId: string | null;
+  dryRun: boolean;
+  generationOutcome: "preview" | "pending" | "completed" | "failed" | "stopped" | "superseded" | "unknown";
+  generationError: string | null;
+  messageId: string | null;
+  finalReply: string | null;
+  worldStateOutcome: "not_used" | "pending" | "saved" | "discarded" | "save_failed";
+  worldStateBeforeJson: string | null;
+  worldStateAfterJson: string | null;
+  settingsJson: string | null;
+  incomingMessagesJson: string | null;
+  directorMessagesJson: string | null;
+  initialDirective: string | null;
+  finalDirective: string | null;
+  initialResponseJson: string | null;
+}
+
 export interface JevTurnDiagnostics {
   /** Whether Jev was consulted at all this turn. */
   used: boolean;
@@ -308,6 +359,9 @@ export interface JevTurnDiagnostics {
   /** True when the state had to be compacted to fit the configured cap. */
   stateCompacted: boolean;
   gates: JevGateRecord[];
+  /** Ordered passes, including both sides of a Director revision. */
+  phases: JevPhaseTrace[];
+  revision: JevRevisionTrace | null;
 }
 
 export interface ConnectionOption {
@@ -333,6 +387,7 @@ export interface RunLogEntry {
   action?: string | null;
   generationType?: string | null;
   durationMs?: number | null;
+  directorDurationMs?: number | null;
   connectionId?: string | null;
   connectionName?: string | null;
   model?: string | null;
@@ -344,6 +399,8 @@ export interface RunLogEntry {
   worldInfoFetchError?: string | null;
   /** Jev gate diagnostics for this turn. Absent when Jev was not consulted. */
   jev?: JevTurnDiagnostics | null;
+  /** Full text for the latest turn only; older run entries retain summaries. */
+  trace?: TurnTrace | null;
 }
 
 export interface PromptSnapshot {
@@ -728,6 +785,74 @@ export function normalizeJevGateRecord(value: unknown): JevGateRecord | null {
   };
 }
 
+function normalizeJevPhaseTrace(value: unknown): JevPhaseTrace | null {
+  const obj = asRecord(value);
+  const stage = cleanString(obj.stage);
+  if (stage !== "before_director" && stage !== "verify_draft" && stage !== "verify_revision") return null;
+  return {
+    stage,
+    questionCount: integerInRange(obj.questionCount, 0, 0, Number.MAX_SAFE_INTEGER),
+    requestCount: integerInRange(obj.requestCount, 0, 0, 16),
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    inputTokens: obj.inputTokens == null ? null : integerInRange(obj.inputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    outputTokens: obj.outputTokens == null ? null : integerInRange(obj.outputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    error: cleanNullableString(obj.error),
+    gates: (Array.isArray(obj.gates) ? obj.gates : [])
+      .map(normalizeJevGateRecord).filter((gate): gate is JevGateRecord => gate !== null),
+    requestJson: typeof obj.requestJson === "string" ? obj.requestJson : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null,
+  };
+}
+
+function normalizeJevRevisionTrace(value: unknown): JevRevisionTrace | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  const status = cleanString(obj.status);
+  if (status !== "revised" && status !== "failed") return null;
+  return {
+    action: cleanString(obj.action),
+    reason: cleanString(obj.reason),
+    status,
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    error: cleanNullableString(obj.error),
+    initialDirectivePreview: cleanString(obj.initialDirectivePreview),
+    revisedDirectivePreview: cleanNullableString(obj.revisedDirectivePreview),
+    unresolved: obj.unresolved === true,
+    promptJson: typeof obj.promptJson === "string" ? obj.promptJson : null,
+    revisedDirective: typeof obj.revisedDirective === "string" ? obj.revisedDirective : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null,
+  };
+}
+
+function normalizeTurnTrace(value: unknown): TurnTrace | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  return {
+    chatId: cleanNullableString(obj.chatId),
+    generationId: cleanNullableString(obj.generationId),
+    dryRun: obj.dryRun === true,
+    generationOutcome: ["preview", "pending", "completed", "failed", "stopped", "superseded", "unknown"].includes(cleanString(obj.generationOutcome))
+      ? cleanString(obj.generationOutcome) as TurnTrace["generationOutcome"] : "unknown",
+    generationError: cleanNullableString(obj.generationError),
+    messageId: cleanNullableString(obj.messageId),
+    finalReply: typeof obj.finalReply === "string" ? obj.finalReply : null,
+    worldStateOutcome: ["not_used", "pending", "saved", "discarded", "save_failed"].includes(cleanString(obj.worldStateOutcome))
+      ? cleanString(obj.worldStateOutcome) as TurnTrace["worldStateOutcome"] : "not_used",
+    worldStateBeforeJson: typeof obj.worldStateBeforeJson === "string" ? obj.worldStateBeforeJson : null,
+    worldStateAfterJson: typeof obj.worldStateAfterJson === "string" ? obj.worldStateAfterJson : null,
+    settingsJson: typeof obj.settingsJson === "string" ? obj.settingsJson : null,
+    incomingMessagesJson: typeof obj.incomingMessagesJson === "string" ? obj.incomingMessagesJson : null,
+    directorMessagesJson: typeof obj.directorMessagesJson === "string" ? obj.directorMessagesJson : null,
+    initialDirective: typeof obj.initialDirective === "string" ? obj.initialDirective : null,
+    finalDirective: typeof obj.finalDirective === "string" ? obj.finalDirective : null,
+    initialResponseJson: typeof obj.initialResponseJson === "string" ? obj.initialResponseJson : null,
+  };
+}
+
 export function normalizeJevTurnDiagnostics(value: unknown): JevTurnDiagnostics | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const obj = asRecord(value);
@@ -763,6 +888,9 @@ export function normalizeJevTurnDiagnostics(value: unknown): JevTurnDiagnostics 
     stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
     stateCompacted: obj.stateCompacted === true,
     gates,
+    phases: (Array.isArray(obj.phases) ? obj.phases : [])
+      .map(normalizeJevPhaseTrace).filter((phase): phase is JevPhaseTrace => phase !== null),
+    revision: normalizeJevRevisionTrace(obj.revision),
   };
 }
 
@@ -787,6 +915,8 @@ export function makeJevDiagnostics(patch: Partial<JevTurnDiagnostics> = {}): Jev
     stateChars: 0,
     stateCompacted: false,
     gates: [],
+    phases: [],
+    revision: null,
     ...patch,
   };
 }
@@ -901,6 +1031,7 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         action: cleanNullableString(obj.action),
         generationType: cleanNullableString(obj.generationType),
         durationMs: obj.durationMs == null ? null : numberInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+        directorDurationMs: obj.directorDurationMs == null ? null : numberInRange(obj.directorDurationMs, 0, 0, Number.MAX_SAFE_INTEGER),
         connectionId: cleanNullableString(obj.connectionId),
         connectionName: cleanNullableString(obj.connectionName),
         model: cleanNullableString(obj.model),
@@ -911,6 +1042,7 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
         jev: normalizeJevTurnDiagnostics(obj.jev),
+        trace: normalizeTurnTrace(obj.trace),
       };
     })
     .filter((item): item is RunLogEntry => !!item)

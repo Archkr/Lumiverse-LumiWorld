@@ -9,10 +9,10 @@ import {
   resolveControllerTarget, resolveIdentityMacros, resolveJevProvider, resolveWorldInfoContextMessages,
   selectChatHistoryMessagesForController, selectControllerMessagesForController, shouldInterceptGeneration,
   jevSecretKey,
-  type IdentityMacroValues, type JevGateRecord, type JevSettings, type JevTurnDiagnostics,
+  type IdentityMacroValues, type JevGateRecord, type JevPhaseTrace, type JevSettings, type JevTurnDiagnostics,
   type LumiWorldSettings, type ConnectionLike,
   type ConnectionOption, type ControllerTarget, type LlmMessageLike,
-  type RunLogEntry, type WorldInfoContextDiagnostics,
+  type RunLogEntry, type TurnTrace, type WorldInfoContextDiagnostics,
 } from "./shared";
 import {
   countJevFlags, contextFilterDecision, decideRepair, directorGuidanceFromGates, planGates, questionsFromPlan,
@@ -42,6 +42,7 @@ let interceptorRegistered = false;
 /** GENERATION_STARTED arrives before prompt assembly and supplies the ID absent from interceptor context. */
 const activeGenerationIds = new Map<string, string>();
 const pendingCommits = new Map<string, { userId: string; chatId: string; state: WorldState }>();
+const generationRunIds = new Map<string, string>();
 
 function generationChatKey(userId: string, chatId: string): string {
   return JSON.stringify([userId, chatId]);
@@ -59,9 +60,11 @@ class ControllerTimeoutError extends Error {
 }
 
 class EmptyControllerDirectiveError extends Error {
+  readonly responseJson: string | null;
   constructor(response: unknown) {
     super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
+    this.responseJson = jsonText(response);
   }
 }
 
@@ -290,8 +293,10 @@ async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: 
       // Preserve historical World Agent run records without rewriting their fields.
       const legacy = raw.filter((run): run is Record<string, unknown> =>
         !!run && typeof run === "object" && !Array.isArray(run) && run.channel === "world_agent");
+      const priorDirector = existing.filter((run) => run.channel !== "world_agent");
       const director = appendRunLog(
-        existing.filter((run) => run.channel !== "world_agent"), entry, resolvedSettings.runLogLimit,
+        entry.status.startsWith("test_") || entry.generationType === "test" ? priorDirector : priorDirector.map(stripFullTurnText),
+        entry, resolvedSettings.runLogLimit,
       );
       const next = [...director, ...legacy].sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
       await storageApi().setJson(RUNS_PATH, next, { indent: 2, userId: userId ?? undefined });
@@ -303,6 +308,64 @@ async function recordRun(entry: RunLogEntry, userId?: string | null, settings?: 
   runLogWrites.set(key, write);
   await write;
   if (runLogWrites.get(key) === write) runLogWrites.delete(key);
+}
+
+async function recordTurnRun(entry: RunLogEntry, userId: string | null, settings: LumiWorldSettings): Promise<void> {
+  const trace = entry.trace;
+  if (userId && trace?.generationOutcome === "pending" && trace.chatId && trace.generationId
+    && activeGenerationIds.get(generationChatKey(userId, trace.chatId)) !== trace.generationId) {
+    trace.generationOutcome = "unknown";
+    if (trace.worldStateOutcome === "pending") trace.worldStateOutcome = "discarded";
+  }
+  await recordRun(entry, userId, settings);
+  if (userId && trace?.generationOutcome === "pending" && trace.chatId && trace.generationId) {
+    generationRunIds.set(generationCommitKey(userId, trace.chatId, trace.generationId), entry.id);
+  }
+}
+
+async function patchRunTrace(userId: string, runId: string, patch: Partial<TurnTrace>): Promise<void> {
+  const previous = runLogWrites.get(userId) ?? Promise.resolve();
+  const write = previous.catch(() => {}).then(async () => {
+    try {
+      const stored = await storageApi().getJson(RUNS_PATH, { fallback: [], userId });
+      if (!Array.isArray(stored)) return;
+      const index = stored.findIndex((value) => value && typeof value === "object" && (value as { id?: unknown }).id === runId);
+      if (index < 0) return;
+      const current = stored[index] as RunLogEntry;
+      // A later turn strips full text from older records. Do not recreate it when
+      // a late generation event arrives for one of those records.
+      if (!current.trace) return;
+      const updated = { ...current, trace: { ...current.trace, ...patch } };
+      const next = [...stored]; next[index] = updated;
+      await storageApi().setJson(RUNS_PATH, next, { indent: 2, userId });
+      send({ type: "run_logged", run: updated }, userId);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not update turn trace: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  runLogWrites.set(userId, write);
+  await write;
+  if (runLogWrites.get(userId) === write) runLogWrites.delete(userId);
+}
+
+function stripFullTurnText(run: RunLogEntry): RunLogEntry {
+  if (!run.trace && !run.jev?.phases?.length && !run.jev?.revision) return run;
+  return {
+    ...run,
+    trace: null,
+    jev: run.jev ? {
+      ...run.jev,
+      phases: run.jev.phases.map((phase) => ({ ...phase, requestJson: null, responseJson: null })),
+      revision: run.jev.revision
+        ? { ...run.jev.revision, promptJson: null, revisedDirective: null, responseJson: null }
+        : null,
+    } : null,
+  };
+}
+
+function jsonText(value: unknown): string | null {
+  try { return JSON.stringify(value); }
+  catch { return null; }
 }
 
 async function listConnections(userId?: string | null): Promise<{ connections: ConnectionOption[]; error: string | null }> {
@@ -560,6 +623,8 @@ interface GatePhaseOutcome {
   requests: number;
   durationMs: number;
   error: string | null;
+  requestJson: string | null;
+  responseJson: string | null;
 }
 
 interface GatePhaseOptions {
@@ -587,17 +652,18 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
     { ...options.stateContext, draftDirective: options.directive ?? options.stateContext.draftDirective },
     options.worldStateContext,
   );
+  const questions: JevQuestions = questionsFromPlan(plan) as JevQuestions;
+  const requestJson = jsonText({ state: projection.state, questions });
   const empty = (error: string | null): GatePhaseOutcome => ({
     plan, records: resolveGateAnswers(plan, {}, settings.jev.minConfidence), state: projection.state,
     stateChars: projection.chars, stateCompacted: projection.compacted,
     inputTokens: null, outputTokens: null, costUsd: null, resolvedModel: null,
-    requests: 0, durationMs: 0, error,
+    requests: 0, durationMs: 0, error, requestJson, responseJson: null,
   });
 
   if (plan.gates.length === 0) return empty(null);
   if (!jevRun.enabled || !jevRun.config || !jevRun.cors) return empty(jevRun.error);
 
-  const questions: JevQuestions = questionsFromPlan(plan) as JevQuestions;
   if (exceedsJevTokenBudget(projection.state, questions)) {
     return empty("The assembled Jev state exceeds the model's 32k token allowance.");
   }
@@ -617,6 +683,8 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
       ...empty(outcome.error ?? "Jev request failed."),
       requests: outcome.requests,
       durationMs: outcome.durationMs,
+      requestJson: outcome.request?.body ?? requestJson,
+      responseJson: jsonText(outcome.attempts),
     };
   }
 
@@ -634,6 +702,8 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
     requests: outcome.requests,
     durationMs: outcome.durationMs,
     error: null,
+    requestJson: outcome.request?.body ?? requestJson,
+    responseJson: jsonText(outcome.attempts),
   };
 }
 
@@ -665,7 +735,7 @@ function serializeContent(content: LlmMessageLike["content"]): string {
 function mergeJevDiagnostics(
   current: JevTurnDiagnostics,
   phase: GatePhaseOutcome,
-  phaseName: "gate" | "verify",
+  stage: JevPhaseTrace["stage"],
 ): JevTurnDiagnostics {
   const flags = countJevFlags(phase.records);
   // A phase that answered cleanly settles the turn to "ok" unless a previous phase
@@ -682,14 +752,22 @@ function mergeJevDiagnostics(
     inputTokens: sumNullable(current.inputTokens, phase.inputTokens),
     outputTokens: sumNullable(current.outputTokens, phase.outputTokens),
     costUsd: sumNullable(current.costUsd, phase.costUsd),
-    gatePhaseMs: phaseName === "gate" ? phase.durationMs : current.gatePhaseMs,
-    verifyPhaseMs: phaseName === "verify" ? phase.durationMs : current.verifyPhaseMs,
+    gatePhaseMs: stage === "before_director" ? phase.durationMs : current.gatePhaseMs,
+    verifyPhaseMs: stage !== "before_director" ? (current.verifyPhaseMs ?? 0) + phase.durationMs : current.verifyPhaseMs,
     resolvedModel: phase.resolvedModel ?? current.resolvedModel,
     gateCount: current.gateCount + phase.records.length,
     fallbackCount: current.fallbackCount + flags.fallback,
     escalatedCount: current.escalatedCount + flags.escalated,
     stateChars: phase.stateChars || current.stateChars,
     stateCompacted: phase.stateCompacted || current.stateCompacted,
+    phases: [...current.phases, {
+      stage, questionCount: phase.plan.gates.length, requestCount: phase.requests,
+      durationMs: phase.durationMs, inputTokens: phase.inputTokens, outputTokens: phase.outputTokens,
+      costUsd: phase.costUsd, resolvedModel: phase.resolvedModel,
+      stateChars: phase.stateChars, stateCompacted: phase.stateCompacted,
+      error: phase.error, gates: phase.records,
+      requestJson: phase.requestJson, responseJson: phase.responseJson,
+    }],
   };
 }
 
@@ -911,7 +989,7 @@ async function callController(
   settings: LumiWorldSettings,
   target: ControllerTarget,
   messages: LlmMessageLike[],
-): Promise<{ directive: string; durationMs: number }> {
+): Promise<{ directive: string; durationMs: number; responseJson: string | null }> {
   if (!userId) {
     throw new Error("LumiWorld could not resolve the active Lumiverse user for the controller call.");
   }
@@ -942,7 +1020,7 @@ async function callController(
     if (!directive) {
       throw new EmptyControllerDirectiveError(response);
     }
-    return { directive, durationMs: Date.now() - startedAt };
+    return { directive, durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
   } catch (error) {
     if (timedOut || (error instanceof Error && error.name === "AbortError")) {
       throw new ControllerTimeoutError(settings.timeoutMs);
@@ -997,18 +1075,27 @@ async function handleInterceptor(
   rememberChatUser(chatId, userId);
   const settings = await loadSettings(userId);
   if (!shouldInterceptGeneration(settings, generationType).intercept) return messages;
+  const turnTrace: TurnTrace = {
+    chatId, generationId: generationId ?? null, dryRun, settingsJson: jsonText(settings),
+    generationOutcome: dryRun ? "preview" : userId && chatId && generationId
+      && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
+    generationError: null, messageId: null, finalReply: null, worldStateOutcome: "not_used",
+    worldStateBeforeJson: null, worldStateAfterJson: null,
+    incomingMessagesJson: jsonText(messages), directorMessagesJson: null,
+    initialDirective: null, finalDirective: null, initialResponseJson: null,
+  };
 
   if (!permissionHas("generation")) {
-    await recordRun(makeRunBase("skipped", startedAt, {
-      channel: "director", generationType, error: "Generation permission is not granted.",
+    await recordTurnRun(makeRunBase("skipped", startedAt, {
+      channel: "director", generationType, error: "Generation permission is not granted.", trace: turnTrace,
     }), userId, settings);
     return messages;
   }
 
   const busyKey = directorBusyKey(userId, chatId);
   if (!directorBusy.acquire(busyKey)) {
-    await recordRun(makeRunBase("skipped", startedAt, {
-      channel: "director", generationType, error: "Another LumiWorld controller call is already running.",
+    await recordTurnRun(makeRunBase("skipped", startedAt, {
+      channel: "director", generationType, error: "Another LumiWorld controller call is already running.", trace: turnTrace,
     }), userId, settings);
     return messages;
   }
@@ -1032,6 +1119,7 @@ async function handleInterceptor(
     // the Director fetch can wait until after Jev has chosen its context filter.
     prepared = await prepareController(settings, messages, context, chatId, userId, generationType, jevRun.enabled && settings.jev.includeWorldInfoEntries);
     worldState = prepared.worldState;
+    turnTrace.worldStateBeforeJson = jsonText(worldState);
     worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
@@ -1043,7 +1131,7 @@ async function handleInterceptor(
         turnContext: prepared.turnContext,
         diagnostics: jevDiagnostics,
       });
-      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "gate"));
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "before_director"));
       gateRecords = phase.records;
 
       const decision = shouldRunDirector(gateRecords);
@@ -1052,11 +1140,11 @@ async function handleInterceptor(
         // not a degradation, so the recorded status stays "skipped".
         const skipped = { ...jevDiagnostics, status: "skipped" as const, used: true };
         const records = withConfidenceGate(withDegradationGate(gateRecords, { status: "ok", error: null }), settings.jev.minConfidence);
-        await recordRun(makeRunBase("skipped", startedAt, {
+        await recordTurnRun(makeRunBase("skipped", startedAt, {
           channel: "director", generationType,
           error: decision.reason ?? "Jev skipped this turn.",
           ...runLogWorldInfoPatch(worldInfoDiagnostics),
-          jev: { ...skipped, gates: records, gateCount: records.length },
+          jev: { ...skipped, gates: records, gateCount: records.length }, trace: turnTrace,
         }), userId, settings);
         return messages;
       }
@@ -1091,19 +1179,23 @@ async function handleInterceptor(
     prepared = applyContextFilter(prepared, settings, messages, context, generationType, filterDecision);
     const gateGuidance = directorGuidanceFromGates(gateRecords);
     if (gateGuidance) prepared.controllerMessages.splice(1, 0, { role: "system", content: gateGuidance });
+    turnTrace.directorMessagesJson = jsonText(prepared.controllerMessages);
     target = await resolveTurnTarget(settings, gateRecords, userId);
     if (!target) {
-      await recordRun(makeRunBase("skipped", startedAt, {
+      await recordTurnRun(makeRunBase("skipped", startedAt, {
         channel: "director", generationType, connectionId: settings.connectionId,
         error: "Choose a LumiWorld controller connection first.",
         ...runLogWorldInfoPatch(worldInfoDiagnostics),
         jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: gateRecords } : null,
+        trace: turnTrace,
       }), userId, settings);
       return messages;
     }
 
     const first = await callController(userId, settings, target, prepared.controllerMessages);
     let directive = first.directive;
+    turnTrace.initialDirective = directive;
+    turnTrace.initialResponseJson = first.responseJson;
 
     /* ---------------- Phase B: one batched verification request ---------------- */
     if (jevRun.enabled) {
@@ -1115,7 +1207,7 @@ async function handleInterceptor(
         directive,
         diagnostics: jevDiagnostics,
       });
-      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify"));
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify_draft"));
       verifyRecords = phase.records;
 
       const repair = decideRepair(verifyRecords);
@@ -1123,8 +1215,17 @@ async function handleInterceptor(
         // Exactly one bounded repair attempt. A second failure keeps the original
         // directive rather than looping, and the unresolved violation is recorded.
         const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
-        if (repaired) {
-          directive = repaired;
+        jevDiagnostics.revision = {
+          action: repair.action, reason: repair.reason,
+          status: repaired.directive ? "revised" : "failed",
+          durationMs: repaired.durationMs, error: repaired.error,
+          initialDirectivePreview: makeDirectivePreview(directive) ?? "",
+          revisedDirectivePreview: makeDirectivePreview(repaired.directive), unresolved: false,
+          promptJson: repaired.promptJson, revisedDirective: repaired.directive,
+          responseJson: repaired.responseJson,
+        };
+        if (repaired.directive) {
+          directive = repaired.directive;
           const recheck = await runGatePhase("verify", {
             jevRun, settings,
             stateContext: prepared.stateContext,
@@ -1133,9 +1234,10 @@ async function handleInterceptor(
             directive,
             diagnostics: jevDiagnostics,
           });
-          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify"));
+          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify_revision"));
           verifyRecords = recheck.records;
           const unresolved = decideRepair(verifyRecords);
+          jevDiagnostics.revision.unresolved = !!unresolved;
           if (unresolved) {
             spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
           }
@@ -1152,39 +1254,45 @@ async function handleInterceptor(
     if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
       worldState = committed;
+      turnTrace.worldStateAfterJson = jsonText(committed);
       if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
         pendingCommits.set(generationCommitKey(userId, chatId, generationId), { userId, chatId, state: committed });
+        turnTrace.worldStateOutcome = "pending";
       } else {
         // A generation that was superseded during Jev work, or one whose start
         // event was unavailable, must never commit under another generation's ID.
         spindle.log.warn("LumiWorld skipped a scene-state commit because its generation could not be matched.");
+        turnTrace.worldStateOutcome = "discarded";
       }
     }
 
     const allRecords = withConfidenceGate(
-      withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }),
+      withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), { status: jevDiagnostics.status, error: jevDiagnostics.error }),
       settings.jev.minConfidence,
     );
+    turnTrace.finalDirective = directive;
     const injected: LlmMessageDTO = { role: "system", content: buildInjectedDirective(directive) };
-    await recordRun(makeRunBase("success", startedAt, {
-      channel: "director", generationType, durationMs: first.durationMs,
+    await recordTurnRun(makeRunBase("success", startedAt, {
+      channel: "director", generationType, directorDurationMs: first.durationMs,
       connectionId: target.connectionId, connectionName: target.connectionName, model: target.model,
       directivePreview: makeDirectivePreview(directive), ...runLogWorldInfoPatch(worldInfoDiagnostics),
       jev: settings.jev.enabled || jevDiagnostics.used
         ? { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length }
         : null,
+      trace: turnTrace,
     }), userId, settings);
     return { messages: [injected, ...messages], breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }] };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
     const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof EmptyControllerDirectiveError) turnTrace.initialResponseJson = error.responseJson;
     const recordedGates = jevDiagnostics.used
-      ? withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], {
+      ? withConfidenceGate(withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), {
         status: jevDiagnostics.status, error: jevDiagnostics.error,
       }), settings.jev.minConfidence)
       : [];
-    await recordRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
+    await recordTurnRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
       channel: "director", generationType,
       connectionId: target?.connectionId ?? settings.connectionId,
       connectionName: target?.connectionName, model: target?.model,
@@ -1192,6 +1300,7 @@ async function handleInterceptor(
       jev: jevDiagnostics.used
         ? { ...jevDiagnostics, gates: recordedGates, gateCount: recordedGates.length }
         : null,
+      trace: turnTrace,
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
@@ -1218,7 +1327,7 @@ async function regenerateDirective(
   prepared: PreparedController,
   repair: { action: string; reason: string },
   records: JevGateRecord[],
-): Promise<string | null> {
+): Promise<{ directive: string | null; durationMs: number; error: string | null; promptJson: string | null; responseJson: string | null }> {
   const violated = records
     .filter((record) => !record.usedFallback && ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value as string | boolean))
     .map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`)
@@ -1235,12 +1344,16 @@ async function regenerateDirective(
       ].filter(Boolean).join("\n"),
     },
   ];
+  const promptJson = jsonText(repairMessages);
+  const startedAt = Date.now();
   try {
     const repaired = await callController(userId, settings, target, repairMessages);
-    return repaired.directive;
+    return { directive: repaired.directive, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
   } catch (error) {
-    spindle.log.warn(`LumiWorld repair attempt failed: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    const message = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWorld repair attempt failed: ${message}`);
+    return { directive: null, durationMs: Date.now() - startedAt, error: message, promptJson,
+      responseJson: error instanceof EmptyControllerDirectiveError ? error.responseJson : null };
   }
 }
 
@@ -1335,7 +1448,7 @@ async function runControllerTest(userId: string | null, patch?: Partial<LumiWorl
 
   if (!permissionHas("generation")) {
     const error = "Generation permission is not granted.";
-    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", error }), userId, settings);
+    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", generationType: "test", error }), userId, settings);
     send({ type: "test_result", ok: false, error }, userId ?? undefined);
     return;
   }
@@ -1343,7 +1456,7 @@ async function runControllerTest(userId: string | null, patch?: Partial<LumiWorl
   const connection = await getConnection(settings.connectionId, userId);
   const target = resolveControllerTarget(settings, connection);
   if (!target.ok) {
-    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", connectionId: settings.connectionId, error: target.reason }), userId, settings);
+    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", generationType: "test", connectionId: settings.connectionId, error: target.reason }), userId, settings);
     send({ type: "test_result", ok: false, error: target.reason }, userId ?? undefined);
     return;
   }
@@ -1365,6 +1478,7 @@ async function runControllerTest(userId: string | null, patch?: Partial<LumiWorl
     await recordRun(
       makeRunBase("test_success", startedAt, {
         channel: "director",
+        generationType: "test",
         durationMs,
         connectionId: target.connectionId,
         connectionName: target.connectionName,
@@ -1387,6 +1501,7 @@ async function runControllerTest(userId: string | null, patch?: Partial<LumiWorl
     await recordRun(
       makeRunBase(error instanceof ControllerTimeoutError ? "timeout" : "test_error", startedAt, {
         channel: "director",
+        generationType: "test",
         connectionId: target.connectionId,
         connectionName: target.connectionName,
         model: target.model,
@@ -1413,7 +1528,13 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
   const chatKey = generationChatKey(eventUserId, chatId);
   const previous = activeGenerationIds.get(chatKey);
   if (previous && previous !== generationId) {
-    pendingCommits.delete(generationCommitKey(eventUserId, chatId, previous));
+    const previousKey = generationCommitKey(eventUserId, chatId, previous);
+    const hadPendingState = pendingCommits.delete(previousKey);
+    const previousRunId = generationRunIds.get(previousKey);
+    generationRunIds.delete(previousKey);
+    if (previousRunId) void patchRunTrace(eventUserId, previousRunId, {
+      generationOutcome: "superseded", worldStateOutcome: hadPendingState ? "discarded" : "not_used",
+    });
   }
   activeGenerationIds.set(chatKey, generationId);
 });
@@ -1432,14 +1553,30 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
   if (activeGenerationIds.get(chatKey) === generationId) activeGenerationIds.delete(chatKey);
   const commitKey = generationCommitKey(eventUserId, chatId, generationId);
   const pending = pendingCommits.get(commitKey);
-  if (!pending) return;
   pendingCommits.delete(commitKey);
+  const runId = generationRunIds.get(commitKey);
+  generationRunIds.delete(commitKey);
 
-  const failed = !!(payload && typeof payload === "object" && (payload as { error?: unknown }).error);
-  if (failed) return;
+  const event = payload as { error?: unknown; content?: unknown; messageId?: unknown };
+  const failed = !!event.error;
+  const patch: Partial<TurnTrace> = {
+    generationOutcome: failed ? "failed" : "completed",
+    generationError: failed ? String(event.error) : null,
+    finalReply: typeof event.content === "string" ? event.content : null,
+    messageId: typeof event.messageId === "string" ? event.messageId : null,
+    worldStateOutcome: pending ? failed ? "discarded" : "saved" : "not_used",
+  };
+  if (failed || !pending) {
+    if (runId) void patchRunTrace(eventUserId, runId, patch);
+    return;
+  }
 
   void saveWorldState(storageApi(), pending.chatId, pending.state, pending.userId)
-    .catch((error: unknown) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
+    .then(() => { if (runId) return patchRunTrace(eventUserId, runId, patch); })
+    .catch((error: unknown) => {
+      spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`);
+      if (runId) void patchRunTrace(eventUserId, runId, { ...patch, worldStateOutcome: "save_failed" });
+    });
 });
 
 /** A stopped generation never produced a reply, so its staged commit is discarded. */
@@ -1449,7 +1586,15 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
   if (!chatId || !generationId || !eventUserId) return;
   const chatKey = generationChatKey(eventUserId, chatId);
   if (activeGenerationIds.get(chatKey) === generationId) activeGenerationIds.delete(chatKey);
-  pendingCommits.delete(generationCommitKey(eventUserId, chatId, generationId));
+  const commitKey = generationCommitKey(eventUserId, chatId, generationId);
+  const hadPendingState = pendingCommits.delete(commitKey);
+  const runId = generationRunIds.get(commitKey);
+  generationRunIds.delete(commitKey);
+  if (runId) void patchRunTrace(eventUserId, runId, {
+    generationOutcome: "stopped",
+    finalReply: typeof (payload as { content?: unknown }).content === "string" ? (payload as { content: string }).content : null,
+    worldStateOutcome: hadPendingState ? "discarded" : "not_used",
+  });
 });
 
 (spindle as any).on?.("CHAT_SWITCHED", (payload: unknown, eventUserId?: string) => {

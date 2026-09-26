@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { DEFAULT_SETTINGS, JEV_PROVIDERS, normalizeSettings, type LumiWorldSettings } from "./shared";
+import { DEFAULT_SETTINGS, JEV_PROVIDERS, normalizeSettings, type JevGateRecord, type LumiWorldSettings } from "./shared";
 import { GATE_CATALOG } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
@@ -794,6 +794,8 @@ describe("Jev diagnostics panel", () => {
     escalatedCount: 1,
     stateChars: 900,
     stateCompacted: false,
+    phases: [],
+    revision: null,
     gates: [
       {
         gateId: "smart_trigger", label: "Smart Director triggering", primitive: "noul" as const, phase: "gate" as const,
@@ -811,8 +813,8 @@ describe("Jev diagnostics panel", () => {
 
   test("explains that no decisions exist yet", () => {
     const harness = mount(makeState());
-    expect(harness.root.textContent).toContain("Last recorded Jev turn");
-    expect(harness.root.textContent).toContain("Turn on Enable Jev to start recording decisions.");
+    expect(harness.root.textContent).toContain("Last turn");
+    expect(harness.root.textContent).toContain("Generate a reply to see the full turn trace here.");
     harness.destroy();
   });
 
@@ -821,7 +823,7 @@ describe("Jev diagnostics panel", () => {
       runs: [{ id: "run-1", timestamp: 1, status: "success", channel: "director", jev: jevRun }],
     }));
     const root = harness.root;
-    expect(root.textContent).toContain("2 requests");
+    expect(root.textContent).toContain("2 Jev requests");
     expect(root.textContent).toContain("1 fallback");
     expect(root.textContent).toContain("partial");
     expect(root.textContent).toContain("1 escalated");
@@ -874,14 +876,11 @@ describe("Jev diagnostics panel", () => {
     }));
     const panel = harness.root.querySelector<HTMLElement>(".lw-diag")!;
     expect(panel.querySelector(".lw-diag-outcome")?.textContent).toContain("No LumiWorld note was added");
-    expect(panel.querySelector(":scope > .lw-diag-row")?.textContent).toContain("Smart Director triggering");
-    const unused = panel.querySelector<HTMLDetailsElement>(".lw-diag-unused")!;
-    expect(unused.open).toBe(false);
-    expect(unused.textContent).toContain("Continuity guard");
-    expect(unused.textContent).toContain("not used");
-    expect(unused.textContent).not.toContain("Run the Director ungated");
-    expect(panel.textContent).not.toContain("1 fallback");
-    expect(panel.textContent).not.toContain("1 escalated");
+    const rows = panel.querySelectorAll<HTMLElement>(".lw-diag-row");
+    expect(rows[0]?.textContent).toContain("Smart Director triggering");
+    expect(rows[1]?.textContent).toContain("Continuity guard");
+    expect(rows[1]?.dataset.on).toBe("false");
+    expect(panel.textContent).toContain("not used");
     harness.destroy();
   });
 
@@ -906,15 +905,113 @@ describe("Jev diagnostics panel", () => {
     harness.destroy();
   });
 
-  test("labels older Jev diagnostics as the last recorded Jev turn", () => {
+  test("shows the actual latest turn, even if Jev was not used", () => {
     const harness = mount(makeState({
       runs: [
         { id: "run-new", timestamp: 2, status: "success", channel: "director" },
         { id: "run-old", timestamp: 1, status: "success", channel: "director", jev: jevRun },
       ],
     }));
-    expect(harness.root.textContent).toContain("Last recorded Jev turn");
-    expect(harness.root.textContent).toContain("2 requests");
+    expect(harness.root.textContent).toContain("Last turn");
+    expect(harness.root.textContent).toContain("Jev not used");
+    expect(harness.root.querySelector(".lw-diag")?.textContent).not.toContain("2 Jev requests");
+    harness.destroy();
+  });
+
+  test("shows every pass and copies the complete turn including chat text", async () => {
+    const copied: string[] = [];
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true, value: { clipboard: { writeText: async (value: string) => { copied.push(value); } } },
+    });
+    const initial = jevRun.gates[1]! as JevGateRecord;
+    const final = { ...initial, value: "consistent", confidence: 0.92, usedFallback: false, escalated: false };
+    const phase = (stage: "before_director" | "verify_draft" | "verify_revision", gates: JevGateRecord[]) => ({
+      stage, questionCount: gates.length, requestCount: 1, durationMs: 40,
+      inputTokens: 120, outputTokens: 12, costUsd: 0.00001, resolvedModel: "jev-1.13.0",
+      stateChars: 800, stateCompacted: false, error: null, gates,
+      requestJson: JSON.stringify({ state: { chat_history: ["PRIVATE_CHAT_CANARY"] }, questions: {} }),
+      responseJson: JSON.stringify([{ status: 200, body: "RAW_JEV_RESPONSE" }]),
+    });
+    const run = {
+      id: "turn-full", timestamp: 2, status: "success" as const, channel: "director" as const,
+      durationMs: 320, directorDurationMs: 90, directivePreview: "Revised note",
+      trace: {
+        chatId: "chat-1", generationId: "generation-1", dryRun: false,
+        generationOutcome: "completed" as const, generationError: null, messageId: "m1",
+        finalReply: "VISIBLE_REPLY_CANARY", worldStateOutcome: "saved" as const,
+        worldStateBeforeJson: JSON.stringify({ turn: 1 }), worldStateAfterJson: JSON.stringify({ turn: 2 }),
+        settingsJson: JSON.stringify({ jev: { enabled: true }, privateNotes: "PRIVATE_SETTINGS_CANARY" }),
+        incomingMessagesJson: JSON.stringify([{ role: "user", content: "PRIVATE_CHAT_CANARY" }]),
+        directorMessagesJson: JSON.stringify([{ role: "system", content: "PRIVATE_DIRECTOR_PROMPT" }]),
+        initialDirective: "Initial note", finalDirective: "Revised note",
+        initialResponseJson: JSON.stringify({ choices: [{ message: { content: "Initial note" } }] }),
+      },
+      jev: {
+        ...jevRun, requestCount: 3, gateCount: 3, fallbackCount: 1,
+        gates: [jevRun.gates[0]!, initial, final],
+        phases: [phase("before_director", [jevRun.gates[0]!]), phase("verify_draft", [initial]), phase("verify_revision", [final])],
+        revision: {
+          action: "soften", reason: "Continuity conflict", status: "revised" as const,
+          durationMs: 80, error: null, initialDirectivePreview: "Initial note",
+          revisedDirectivePreview: "Revised note", unresolved: false,
+          promptJson: JSON.stringify([{ role: "system", content: "PRIVATE_REVISION_PROMPT" }]),
+          revisedDirective: "Revised note", responseJson: JSON.stringify({ result: "Revised note" }),
+        },
+      },
+    };
+    try {
+      const harness = mount(makeState({ runs: [run] }));
+      const steps = [...harness.root.querySelectorAll<HTMLDetailsElement>(".lw-diag-step")];
+      expect(steps.map((step) => step.querySelector("summary")?.textContent)).toEqual([
+        expect.stringContaining("Before Director"), expect.stringContaining("Director draft"),
+        expect.stringContaining("Check draft"), expect.stringContaining("Director revision"),
+        expect.stringContaining("Check revision"), expect.stringContaining("Final outcome"),
+      ]);
+      expect(steps[2]?.textContent).toContain("violation");
+      expect(steps[4]?.textContent).toContain("consistent");
+      expect(harness.root.textContent).toContain("PRIVATE_CHAT_CANARY");
+      const copy = [...harness.root.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "Copy all")!;
+      copy.click();
+      await Promise.resolve();
+      const report = JSON.parse(copied[0]!) as any;
+      expect(report.run.trace.incomingMessages[0].content).toBe("PRIVATE_CHAT_CANARY");
+      expect(report.run.trace.settings.privateNotes).toBe("PRIVATE_SETTINGS_CANARY");
+      expect(report.run.trace.finalReply).toBe("VISIBLE_REPLY_CANARY");
+      expect(report.run.trace.worldStateAfter.turn).toBe(2);
+      expect(report.run.jev.phases).toHaveLength(3);
+      expect(report.run.jev.revision.prompt[0].content).toBe("PRIVATE_REVISION_PROMPT");
+      expect(report.run.jev.phases[1].responseAttempts[0].body).toBe("RAW_JEV_RESPONSE");
+      harness.destroy();
+    } finally {
+      if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+      else delete (globalThis as any).navigator;
+    }
+  });
+
+  test("updates Last turn as soon as the backend records a run", () => {
+    const harness = mount(makeState());
+    harness.push({ type: "run_logged", run: {
+      id: "just-recorded", timestamp: 10, status: "success", channel: "director",
+      trace: { chatId: "chat-1", generationId: null, dryRun: false, settingsJson: null,
+        generationOutcome: "unknown", generationError: null, messageId: null,
+        finalReply: null, worldStateOutcome: "not_used",
+        worldStateBeforeJson: null, worldStateAfterJson: null,
+        incomingMessagesJson: "[]", directorMessagesJson: null,
+        initialDirective: "A new note", finalDirective: "A new note", initialResponseJson: null },
+    } });
+    expect(harness.root.querySelector(".lw-diag")?.textContent).toContain("A new note");
+    harness.destroy();
+  });
+
+  test("does not replace the last reply with a Director connection test", () => {
+    const harness = mount(makeState({ runs: [
+      { id: "test-timeout", timestamp: 11, status: "timeout", channel: "director", generationType: "test" },
+      { id: "real-turn", timestamp: 10, status: "success", channel: "director", directivePreview: "Real turn note" },
+    ] }));
+    expect(harness.root.querySelector(".lw-diag")?.textContent).toContain("Real turn note");
+    expect(harness.root.querySelector(".lw-diag")?.textContent).not.toContain("test-timeout");
     harness.destroy();
   });
 });

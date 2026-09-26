@@ -326,6 +326,8 @@ export interface CallJevResult {
   requests: number;
   durationMs: number;
   request: JevRequest | null;
+  /** Raw response body or transport error for each HTTP attempt. Never includes request headers. */
+  attempts: Array<{ status: number | null; body: string | null; error: string | null; durationMs: number }>;
 }
 
 /**
@@ -369,9 +371,12 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
   const timeoutMs = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
   const request = buildJevRequest(options.config, options.state, options.questions);
   let requests = 0;
+  const attempts: CallJevResult["attempts"] = [];
 
   const attempt = async (): Promise<{ response: JevResponse } | { retryAfterMs: number | null; error: JevError }> => {
     requests += 1;
+    const attemptStartedAt = Date.now();
+    let recordedResponse = false;
     const budget = remainingBudgetMs(startedAt, options.budgetMs);
     const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
 
@@ -388,6 +393,8 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
         () => new JevTimeoutError(effective),
       );
       const result = readCorsResult(raw);
+      attempts.push({ status: result.status, body: result.body, error: null, durationMs: Date.now() - attemptStartedAt });
+      recordedResponse = true;
       if (result.status === 429 || result.status >= 500) {
         return {
           retryAfterMs: parseRetryAfterMs(result.headers),
@@ -399,6 +406,10 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
       }
       return { response: normalizeJevResponse(parseJevBody(result.body)) };
     } catch (error) {
+      if (!recordedResponse) attempts.push({
+        status: null, body: null, error: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - attemptStartedAt,
+      });
       if (error instanceof JevError || error instanceof JevTimeoutError) throw error;
       if (error instanceof Error && error.name === "AbortError") {
         throw new JevTimeoutError(effective);
@@ -421,6 +432,7 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
         requests,
         durationMs: Date.now() - startedAt,
         request,
+        attempts,
       };
     }
 
@@ -440,6 +452,7 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
           requests,
           durationMs: Date.now() - startedAt,
           request,
+          attempts,
         };
       }
       await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -454,9 +467,10 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
             requests,
             durationMs: Date.now() - startedAt,
             request,
+            attempts,
           };
         }
-        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
       } catch (error) {
         return {
           ok: false,
@@ -466,11 +480,12 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
           requests,
           durationMs: Date.now() - startedAt,
           request,
+          attempts,
         };
       }
     }
 
-    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
   } catch (error) {
     return {
       ok: false,
@@ -480,6 +495,7 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
       requests,
       durationMs: Date.now() - startedAt,
       request,
+      attempts,
     };
   }
 }

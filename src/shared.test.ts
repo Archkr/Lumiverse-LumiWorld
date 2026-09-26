@@ -663,4 +663,35 @@ describe("run log retention", () => {
     expect(partial?.status).toBe("skipped");
     expect(partial?.requestCount).toBe(0);
   });
+
+  test("round-trips full turn text and separate Jev passes", () => {
+    const record = {
+      gateId: "smart_trigger", label: "Smart Director triggering", primitive: "noul", phase: "gate",
+      value: true, probability: 0.9, confidence: 0.9, confidenceDerived: true,
+      threshold: 0.55, escalated: false, usedFallback: false, fallback: "run",
+    };
+    const runs = normalizeRunLog([{ id: "full-turn", timestamp: 99, status: "success", channel: "director",
+      directorDurationMs: 77,
+      trace: { chatId: "chat", generationId: "gen", dryRun: false, generationOutcome: "completed",
+        generationError: null, messageId: "message", finalReply: "visible reply", worldStateOutcome: "saved",
+        worldStateBeforeJson: '{"turn":1}', worldStateAfterJson: '{"turn":2}',
+        settingsJson: '{"jev":{"enabled":true}}', incomingMessagesJson: '[{"content":"chat text"}]',
+        directorMessagesJson: '[{"content":"prompt"}]', initialDirective: "draft",
+        finalDirective: "revised", initialResponseJson: '{"content":"draft"}' },
+      jev: { used: true, enabled: true, status: "ok", requestCount: 1, gates: [record],
+        phases: [{ stage: "before_director", questionCount: 1, requestCount: 1, durationMs: 30,
+          inputTokens: 10, outputTokens: 2, costUsd: 0.001, resolvedModel: "jev",
+          stateChars: 100, stateCompacted: false, error: null, gates: [record],
+          requestJson: '{"state":"chat text"}', responseJson: '[{"body":"response"}]' }],
+        revision: { action: "soften", reason: "conflict", status: "revised", durationMs: 20,
+          error: null, initialDirectivePreview: "draft", revisedDirectivePreview: "revised",
+          unresolved: false, promptJson: '[{"content":"repair"}]', revisedDirective: "revised",
+          responseJson: '{"content":"revised"}' } },
+    }]);
+    expect(runs[0]?.directorDurationMs).toBe(77);
+    expect(runs[0]?.trace?.finalReply).toBe("visible reply");
+    expect(runs[0]?.trace?.incomingMessagesJson).toContain("chat text");
+    expect(runs[0]?.jev?.phases[0]?.requestJson).toContain("chat text");
+    expect(runs[0]?.jev?.revision?.revisedDirective).toBe("revised");
+  });
 });

@@ -484,6 +484,46 @@ describe("v0.5 Jev turn flow", () => {
     expect(latestRun().status).toBe("success");
   });
 
+  test("records both verification passes, full text, and retains full text only for the latest turn", async () => {
+    answerCleanTurn();
+    let verifications = 0;
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => {
+      if (gateId !== "director_verification") return clean(gateId);
+      verifications += 1;
+      return verifications === 1
+        ? { type: "choice", choice: "violation", probabilities: { violation: 0.99, clean: 0.01 }, confidence: 0.99 }
+        : { type: "choice", choice: "clean", probabilities: { clean: 0.95, violation: 0.05 }, confidence: 0.95 };
+    };
+    await runJevTurn();
+    const first = latestRun();
+    expect(first.jev.phases.map((phase: any) => phase.stage)).toEqual(["before_director", "verify_draft", "verify_revision"]);
+    expect(first.jev.gates.filter((gate: any) => gate.gateId === "director_verification")).toHaveLength(2);
+    expect(first.jev.gateCount).toBe(first.jev.gates.length);
+    expect(first.jev.revision.status).toBe("revised");
+    expect(first.jev.revision.unresolved).toBe(false);
+    expect(first.trace.incomingMessagesJson).toContain("I open the observatory door.");
+    expect(first.trace.directorMessagesJson).toContain("I open the observatory door.");
+    expect(first.trace.initialResponseJson).toContain("Make the storm intensify.");
+    expect(first.jev.phases[0].requestJson).toContain("I open the observatory door.");
+    expect(first.jev.phases[0].responseJson).toContain("answers");
+    expect(first.jev.revision.promptJson).toContain("Repair it with this action");
+
+    await messageHandler!({ type: "test_controller" }, "user-jev");
+    const afterTest = (stored.get("global/runs.json") as any[]).find((run) => run.id === first.id)!;
+    expect(afterTest.trace.incomingMessagesJson).toContain("I open the observatory door.");
+
+    answerCleanTurn();
+    await runJevTurn();
+    const old = (stored.get("global/runs.json") as any[]).find((run) => run.id === first.id)!;
+    expect(old.trace).toBeNull();
+    expect(old.jev.phases[0].requestJson).toBeNull();
+    expect(old.jev.phases[0].responseJson).toBeNull();
+    expect(old.jev.revision.promptJson).toBeNull();
+    expect(old.jev.gates.length).toBeGreaterThan(0);
+    expect(latestRun().trace.incomingMessagesJson).toContain("I open the observatory door.");
+  });
+
   test("never loops: a persistent violation stops after one repair", async () => {
     answerCleanTurn();
     const clean = jevAnswerFor;
@@ -529,6 +569,60 @@ describe("v0.5 Jev turn flow", () => {
     const state = stored.get(path) as any;
     expect(state.turn).toBe(1);
     expect(state.tension).toBe(3);
+  });
+
+  test("adds the final visible reply and scene-state result to the same turn trace", async () => {
+    answerCleanTurn();
+    beginGeneration("chat-trace-end", "gen-trace-end");
+    await runJevTurn("chat-trace-end");
+    expect(latestRun().trace.generationOutcome).toBe("pending");
+    expect(latestRun().trace.worldStateOutcome).toBe("pending");
+
+    emitEvent("GENERATION_ENDED", {
+      generationId: "gen-trace-end", chatId: "chat-trace-end", messageId: "message-trace",
+      content: "VISIBLE_REPLY_CANARY",
+    }, "user-jev");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const trace = latestRun().trace;
+    expect(trace.generationOutcome).toBe("completed");
+    expect(trace.finalReply).toBe("VISIBLE_REPLY_CANARY");
+    expect(trace.messageId).toBe("message-trace");
+    expect(trace.worldStateOutcome).toBe("saved");
+    expect(JSON.parse(trace.worldStateAfterJson).turn).toBe(1);
+  });
+
+  test("records a stopped visible reply and discards the staged scene state", async () => {
+    answerCleanTurn();
+    beginGeneration("chat-trace-stop", "gen-trace-stop");
+    await runJevTurn("chat-trace-stop");
+    emitEvent("GENERATION_STOPPED", {
+      generationId: "gen-trace-stop", chatId: "chat-trace-stop", content: "PARTIAL_REPLY_CANARY",
+    }, "user-jev");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const trace = latestRun().trace;
+    expect(trace.generationOutcome).toBe("stopped");
+    expect(trace.finalReply).toBe("PARTIAL_REPLY_CANARY");
+    expect(trace.worldStateOutcome).toBe("discarded");
+    expect(stored.has("chats/chat-trace-stop/world.json")).toBe(false);
+  });
+
+  test("records a failed visible reply without committing scene state", async () => {
+    answerCleanTurn();
+    beginGeneration("chat-trace-fail", "gen-trace-fail");
+    await runJevTurn("chat-trace-fail");
+    emitEvent("GENERATION_ENDED", {
+      generationId: "gen-trace-fail", chatId: "chat-trace-fail", error: "VISIBLE_REPLY_FAILED",
+    }, "user-jev");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const trace = latestRun().trace;
+    expect(trace.generationOutcome).toBe("failed");
+    expect(trace.generationError).toBe("VISIBLE_REPLY_FAILED");
+    expect(trace.finalReply).toBeNull();
+    expect(trace.worldStateOutcome).toBe("discarded");
+    expect(stored.has("chats/chat-trace-fail/world.json")).toBe(false);
   });
 
   test("a late end from an older generation cannot commit the newer turn", async () => {

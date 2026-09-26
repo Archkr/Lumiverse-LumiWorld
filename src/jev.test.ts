@@ -250,6 +250,8 @@ describe("jev transport", () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.requests).toBe(1);
     expect(outcome.response?.answers.ping).toEqual({ type: "noul", noul: 0.9 });
+    expect(outcome.attempts[0]?.status).toBe(200);
+    expect(outcome.attempts[0]?.body).toContain('"ping"');
   });
 
   test("retries once on a rate limit and honours retry-after", async () => {
@@ -271,6 +273,8 @@ describe("jev transport", () => {
     expect(attempts).toBe(2);
     expect(outcome.ok).toBe(true);
     expect(outcome.requests).toBe(2);
+    expect(outcome.attempts.map((attempt) => attempt.status)).toEqual([429, 200]);
+    expect(outcome.attempts[0]?.body).toBe("slow down");
   });
 
   test("does not retry when retries are disabled", async () => {

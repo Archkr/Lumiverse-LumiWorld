@@ -368,6 +368,72 @@ function normalizeJevGateRecord(value) {
     note: cleanNullableString(obj.note) ?? undefined
   };
 }
+function normalizeJevPhaseTrace(value) {
+  const obj = asRecord(value);
+  const stage = cleanString(obj.stage);
+  if (stage !== "before_director" && stage !== "verify_draft" && stage !== "verify_revision")
+    return null;
+  return {
+    stage,
+    questionCount: integerInRange(obj.questionCount, 0, 0, Number.MAX_SAFE_INTEGER),
+    requestCount: integerInRange(obj.requestCount, 0, 0, 16),
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    inputTokens: obj.inputTokens == null ? null : integerInRange(obj.inputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    outputTokens: obj.outputTokens == null ? null : integerInRange(obj.outputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    error: cleanNullableString(obj.error),
+    gates: (Array.isArray(obj.gates) ? obj.gates : []).map(normalizeJevGateRecord).filter((gate) => gate !== null),
+    requestJson: typeof obj.requestJson === "string" ? obj.requestJson : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null
+  };
+}
+function normalizeJevRevisionTrace(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const obj = asRecord(value);
+  const status = cleanString(obj.status);
+  if (status !== "revised" && status !== "failed")
+    return null;
+  return {
+    action: cleanString(obj.action),
+    reason: cleanString(obj.reason),
+    status,
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    error: cleanNullableString(obj.error),
+    initialDirectivePreview: cleanString(obj.initialDirectivePreview),
+    revisedDirectivePreview: cleanNullableString(obj.revisedDirectivePreview),
+    unresolved: obj.unresolved === true,
+    promptJson: typeof obj.promptJson === "string" ? obj.promptJson : null,
+    revisedDirective: typeof obj.revisedDirective === "string" ? obj.revisedDirective : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null
+  };
+}
+function normalizeTurnTrace(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const obj = asRecord(value);
+  return {
+    chatId: cleanNullableString(obj.chatId),
+    generationId: cleanNullableString(obj.generationId),
+    dryRun: obj.dryRun === true,
+    generationOutcome: ["preview", "pending", "completed", "failed", "stopped", "superseded", "unknown"].includes(cleanString(obj.generationOutcome)) ? cleanString(obj.generationOutcome) : "unknown",
+    generationError: cleanNullableString(obj.generationError),
+    messageId: cleanNullableString(obj.messageId),
+    finalReply: typeof obj.finalReply === "string" ? obj.finalReply : null,
+    worldStateOutcome: ["not_used", "pending", "saved", "discarded", "save_failed"].includes(cleanString(obj.worldStateOutcome)) ? cleanString(obj.worldStateOutcome) : "not_used",
+    worldStateBeforeJson: typeof obj.worldStateBeforeJson === "string" ? obj.worldStateBeforeJson : null,
+    worldStateAfterJson: typeof obj.worldStateAfterJson === "string" ? obj.worldStateAfterJson : null,
+    settingsJson: typeof obj.settingsJson === "string" ? obj.settingsJson : null,
+    incomingMessagesJson: typeof obj.incomingMessagesJson === "string" ? obj.incomingMessagesJson : null,
+    directorMessagesJson: typeof obj.directorMessagesJson === "string" ? obj.directorMessagesJson : null,
+    initialDirective: typeof obj.initialDirective === "string" ? obj.initialDirective : null,
+    finalDirective: typeof obj.finalDirective === "string" ? obj.finalDirective : null,
+    initialResponseJson: typeof obj.initialResponseJson === "string" ? obj.initialResponseJson : null
+  };
+}
 function normalizeJevTurnDiagnostics(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return null;
@@ -402,7 +468,9 @@ function normalizeJevTurnDiagnostics(value) {
     escalatedCount: integerInRange(obj.escalatedCount, gates.filter((gate) => gate.escalated).length, 0, Number.MAX_SAFE_INTEGER),
     stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
     stateCompacted: obj.stateCompacted === true,
-    gates
+    gates,
+    phases: (Array.isArray(obj.phases) ? obj.phases : []).map(normalizeJevPhaseTrace).filter((phase) => phase !== null),
+    revision: normalizeJevRevisionTrace(obj.revision)
   };
 }
 function makeJevDiagnostics(patch = {}) {
@@ -426,6 +494,8 @@ function makeJevDiagnostics(patch = {}) {
     stateChars: 0,
     stateCompacted: false,
     gates: [],
+    phases: [],
+    revision: null,
     ...patch
   };
 }
@@ -512,6 +582,7 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
       action: cleanNullableString(obj.action),
       generationType: cleanNullableString(obj.generationType),
       durationMs: obj.durationMs == null ? null : numberInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+      directorDurationMs: obj.directorDurationMs == null ? null : numberInRange(obj.directorDurationMs, 0, 0, Number.MAX_SAFE_INTEGER),
       connectionId: cleanNullableString(obj.connectionId),
       connectionName: cleanNullableString(obj.connectionName),
       model: cleanNullableString(obj.model),
@@ -521,7 +592,8 @@ function normalizeRunLog(value, limit = DEFAULT_RUN_LOG_LIMIT) {
       worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
       worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
-      jev: normalizeJevTurnDiagnostics(obj.jev)
+      jev: normalizeJevTurnDiagnostics(obj.jev),
+      trace: normalizeTurnTrace(obj.trace)
     };
   }).filter((item) => !!item).sort((left, right) => right.timestamp - left.timestamp);
   return normalized.slice(0, Math.max(0, limit));
@@ -1858,8 +1930,11 @@ async function callJev(options) {
   const timeoutMs = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
   const request = buildJevRequest(options.config, options.state, options.questions);
   let requests = 0;
+  const attempts = [];
   const attempt = async () => {
     requests += 1;
+    const attemptStartedAt = Date.now();
+    let recordedResponse = false;
     const budget = remainingBudgetMs(startedAt, options.budgetMs);
     const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
     try {
@@ -1869,6 +1944,8 @@ async function callJev(options) {
         body: request.body
       }), effective, () => new JevTimeoutError(effective));
       const result = readCorsResult(raw);
+      attempts.push({ status: result.status, body: result.body, error: null, durationMs: Date.now() - attemptStartedAt });
+      recordedResponse = true;
       if (result.status === 429 || result.status >= 500) {
         return {
           retryAfterMs: parseRetryAfterMs(result.headers),
@@ -1880,6 +1957,13 @@ async function callJev(options) {
       }
       return { response: normalizeJevResponse(parseJevBody(result.body)) };
     } catch (error) {
+      if (!recordedResponse)
+        attempts.push({
+          status: null,
+          body: null,
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - attemptStartedAt
+        });
       if (error instanceof JevError || error instanceof JevTimeoutError)
         throw error;
       if (error instanceof Error && error.name === "AbortError") {
@@ -1901,7 +1985,8 @@ async function callJev(options) {
         timedOut: error instanceof JevTimeoutError,
         requests,
         durationMs: Date.now() - startedAt,
-        request
+        request,
+        attempts
       };
     }
     if ("error" in outcome) {
@@ -1917,7 +2002,8 @@ async function callJev(options) {
           timedOut: false,
           requests,
           durationMs: Date.now() - startedAt,
-          request
+          request,
+          attempts
         };
       }
       await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -1931,10 +2017,11 @@ async function callJev(options) {
             timedOut: false,
             requests,
             durationMs: Date.now() - startedAt,
-            request
+            request,
+            attempts
           };
         }
-        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
       } catch (error) {
         return {
           ok: false,
@@ -1943,11 +2030,12 @@ async function callJev(options) {
           timedOut: error instanceof JevTimeoutError,
           requests,
           durationMs: Date.now() - startedAt,
-          request
+          request,
+          attempts
         };
       }
     }
-    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request };
+    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
   } catch (error) {
     return {
       ok: false,
@@ -1956,7 +2044,8 @@ async function callJev(options) {
       timedOut: error instanceof JevTimeoutError,
       requests,
       durationMs: Date.now() - startedAt,
-      request
+      request,
+      attempts
     };
   }
 }
@@ -2402,6 +2491,7 @@ var runLogWrites = new Map;
 var interceptorRegistered = false;
 var activeGenerationIds = new Map;
 var pendingCommits = new Map;
+var generationRunIds = new Map;
 function generationChatKey(userId, chatId) {
   return JSON.stringify([userId, chatId]);
 }
@@ -2417,9 +2507,11 @@ class ControllerTimeoutError extends Error {
 }
 
 class EmptyControllerDirectiveError extends Error {
+  responseJson;
   constructor(response) {
     super(describeEmptyControllerResponse(response));
     this.name = "EmptyControllerDirectiveError";
+    this.responseJson = jsonText(response);
   }
 }
 function storageApi() {
@@ -2613,7 +2705,8 @@ async function recordRun(entry, userId, settings) {
       const raw = Array.isArray(stored) ? stored : [];
       const existing = normalizeRunLog(raw, Number.MAX_SAFE_INTEGER);
       const legacy = raw.filter((run) => !!run && typeof run === "object" && !Array.isArray(run) && run.channel === "world_agent");
-      const director = appendRunLog(existing.filter((run) => run.channel !== "world_agent"), entry, resolvedSettings.runLogLimit);
+      const priorDirector = existing.filter((run) => run.channel !== "world_agent");
+      const director = appendRunLog(entry.status.startsWith("test_") || entry.generationType === "test" ? priorDirector : priorDirector.map(stripFullTurnText), entry, resolvedSettings.runLogLimit);
       const next = [...director, ...legacy].sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
       await storageApi().setJson(RUNS_PATH, next, { indent: 2, userId: userId ?? undefined });
       send({ type: "run_logged", run: entry }, userId ?? undefined);
@@ -2625,6 +2718,65 @@ async function recordRun(entry, userId, settings) {
   await write;
   if (runLogWrites.get(key) === write)
     runLogWrites.delete(key);
+}
+async function recordTurnRun(entry, userId, settings) {
+  const trace = entry.trace;
+  if (userId && trace?.generationOutcome === "pending" && trace.chatId && trace.generationId && activeGenerationIds.get(generationChatKey(userId, trace.chatId)) !== trace.generationId) {
+    trace.generationOutcome = "unknown";
+    if (trace.worldStateOutcome === "pending")
+      trace.worldStateOutcome = "discarded";
+  }
+  await recordRun(entry, userId, settings);
+  if (userId && trace?.generationOutcome === "pending" && trace.chatId && trace.generationId) {
+    generationRunIds.set(generationCommitKey(userId, trace.chatId, trace.generationId), entry.id);
+  }
+}
+async function patchRunTrace(userId, runId, patch) {
+  const previous = runLogWrites.get(userId) ?? Promise.resolve();
+  const write = previous.catch(() => {}).then(async () => {
+    try {
+      const stored = await storageApi().getJson(RUNS_PATH, { fallback: [], userId });
+      if (!Array.isArray(stored))
+        return;
+      const index = stored.findIndex((value) => value && typeof value === "object" && value.id === runId);
+      if (index < 0)
+        return;
+      const current = stored[index];
+      if (!current.trace)
+        return;
+      const updated = { ...current, trace: { ...current.trace, ...patch } };
+      const next = [...stored];
+      next[index] = updated;
+      await storageApi().setJson(RUNS_PATH, next, { indent: 2, userId });
+      send({ type: "run_logged", run: updated }, userId);
+    } catch (error) {
+      spindle.log.warn(`LumiWorld could not update turn trace: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  runLogWrites.set(userId, write);
+  await write;
+  if (runLogWrites.get(userId) === write)
+    runLogWrites.delete(userId);
+}
+function stripFullTurnText(run) {
+  if (!run.trace && !run.jev?.phases?.length && !run.jev?.revision)
+    return run;
+  return {
+    ...run,
+    trace: null,
+    jev: run.jev ? {
+      ...run.jev,
+      phases: run.jev.phases.map((phase) => ({ ...phase, requestJson: null, responseJson: null })),
+      revision: run.jev.revision ? { ...run.jev.revision, promptJson: null, revisedDirective: null, responseJson: null } : null
+    } : null
+  };
+}
+function jsonText(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
 }
 async function listConnections(userId) {
   if (!permissionHas("generation")) {
@@ -2815,6 +2967,8 @@ async function runGatePhase(phase, options) {
   const { jevRun, settings } = options;
   const plan = planGates(phase, settings.jev, options.turnContext, options.questionOverrides ?? {});
   const projection = buildJevState({ ...options.stateContext, draftDirective: options.directive ?? options.stateContext.draftDirective }, options.worldStateContext);
+  const questions = questionsFromPlan(plan);
+  const requestJson = jsonText({ state: projection.state, questions });
   const empty = (error) => ({
     plan,
     records: resolveGateAnswers(plan, {}, settings.jev.minConfidence),
@@ -2827,13 +2981,14 @@ async function runGatePhase(phase, options) {
     resolvedModel: null,
     requests: 0,
     durationMs: 0,
-    error
+    error,
+    requestJson,
+    responseJson: null
   });
   if (plan.gates.length === 0)
     return empty(null);
   if (!jevRun.enabled || !jevRun.config || !jevRun.cors)
     return empty(jevRun.error);
-  const questions = questionsFromPlan(plan);
   if (exceedsJevTokenBudget(projection.state, questions)) {
     return empty("The assembled Jev state exceeds the model's 32k token allowance.");
   }
@@ -2850,7 +3005,9 @@ async function runGatePhase(phase, options) {
     return {
       ...empty(outcome.error ?? "Jev request failed."),
       requests: outcome.requests,
-      durationMs: outcome.durationMs
+      durationMs: outcome.durationMs,
+      requestJson: outcome.request?.body ?? requestJson,
+      responseJson: jsonText(outcome.attempts)
     };
   }
   const answers = recoverAnswers(outcome.response.answers);
@@ -2866,7 +3023,9 @@ async function runGatePhase(phase, options) {
     resolvedModel: outcome.response.model,
     requests: outcome.requests,
     durationMs: outcome.durationMs,
-    error: null
+    error: null,
+    requestJson: outcome.request?.body ?? requestJson,
+    responseJson: jsonText(outcome.attempts)
   };
 }
 function summaryOfMessages(messages, maxChars) {
@@ -2890,7 +3049,7 @@ function serializeContent(content) {
   return content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join(`
 `);
 }
-function mergeJevDiagnostics(current, phase, phaseName) {
+function mergeJevDiagnostics(current, phase, stage) {
   const flags = countJevFlags(phase.records);
   const phaseFailed = !!phase.error;
   const status = current.error || phaseFailed ? "degraded" : current.status === "degraded" ? "degraded" : "ok";
@@ -2902,14 +3061,30 @@ function mergeJevDiagnostics(current, phase, phaseName) {
     inputTokens: sumNullable(current.inputTokens, phase.inputTokens),
     outputTokens: sumNullable(current.outputTokens, phase.outputTokens),
     costUsd: sumNullable(current.costUsd, phase.costUsd),
-    gatePhaseMs: phaseName === "gate" ? phase.durationMs : current.gatePhaseMs,
-    verifyPhaseMs: phaseName === "verify" ? phase.durationMs : current.verifyPhaseMs,
+    gatePhaseMs: stage === "before_director" ? phase.durationMs : current.gatePhaseMs,
+    verifyPhaseMs: stage !== "before_director" ? (current.verifyPhaseMs ?? 0) + phase.durationMs : current.verifyPhaseMs,
     resolvedModel: phase.resolvedModel ?? current.resolvedModel,
     gateCount: current.gateCount + phase.records.length,
     fallbackCount: current.fallbackCount + flags.fallback,
     escalatedCount: current.escalatedCount + flags.escalated,
     stateChars: phase.stateChars || current.stateChars,
-    stateCompacted: phase.stateCompacted || current.stateCompacted
+    stateCompacted: phase.stateCompacted || current.stateCompacted,
+    phases: [...current.phases, {
+      stage,
+      questionCount: phase.plan.gates.length,
+      requestCount: phase.requests,
+      durationMs: phase.durationMs,
+      inputTokens: phase.inputTokens,
+      outputTokens: phase.outputTokens,
+      costUsd: phase.costUsd,
+      resolvedModel: phase.resolvedModel,
+      stateChars: phase.stateChars,
+      stateCompacted: phase.stateCompacted,
+      error: phase.error,
+      gates: phase.records,
+      requestJson: phase.requestJson,
+      responseJson: phase.responseJson
+    }]
   };
 }
 function sumNullable(left, right) {
@@ -3093,7 +3268,7 @@ async function callController(userId, settings, target, messages) {
     if (!directive) {
       throw new EmptyControllerDirectiveError(response);
     }
-    return { directive, durationMs: Date.now() - startedAt };
+    return { directive, durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
   } catch (error) {
     if (timedOut || error instanceof Error && error.name === "AbortError") {
       throw new ControllerTimeoutError(settings.timeoutMs);
@@ -3131,20 +3306,40 @@ async function handleInterceptor(messages, context) {
   const settings = await loadSettings(userId);
   if (!shouldInterceptGeneration(settings, generationType).intercept)
     return messages;
+  const turnTrace = {
+    chatId,
+    generationId: generationId ?? null,
+    dryRun,
+    settingsJson: jsonText(settings),
+    generationOutcome: dryRun ? "preview" : userId && chatId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
+    generationError: null,
+    messageId: null,
+    finalReply: null,
+    worldStateOutcome: "not_used",
+    worldStateBeforeJson: null,
+    worldStateAfterJson: null,
+    incomingMessagesJson: jsonText(messages),
+    directorMessagesJson: null,
+    initialDirective: null,
+    finalDirective: null,
+    initialResponseJson: null
+  };
   if (!permissionHas("generation")) {
-    await recordRun(makeRunBase("skipped", startedAt, {
+    await recordTurnRun(makeRunBase("skipped", startedAt, {
       channel: "director",
       generationType,
-      error: "Generation permission is not granted."
+      error: "Generation permission is not granted.",
+      trace: turnTrace
     }), userId, settings);
     return messages;
   }
   const busyKey = directorBusyKey(userId, chatId);
   if (!directorBusy.acquire(busyKey)) {
-    await recordRun(makeRunBase("skipped", startedAt, {
+    await recordTurnRun(makeRunBase("skipped", startedAt, {
       channel: "director",
       generationType,
-      error: "Another LumiWorld controller call is already running."
+      error: "Another LumiWorld controller call is already running.",
+      trace: turnTrace
     }), userId, settings);
     return messages;
   }
@@ -3164,6 +3359,7 @@ async function handleInterceptor(messages, context) {
     const jevRun = await prepareJev(settings, userId);
     prepared = await prepareController(settings, messages, context, chatId, userId, generationType, jevRun.enabled && settings.jev.includeWorldInfoEntries);
     worldState = prepared.worldState;
+    turnTrace.worldStateBeforeJson = jsonText(worldState);
     worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
@@ -3176,18 +3372,19 @@ async function handleInterceptor(messages, context) {
         turnContext: prepared.turnContext,
         diagnostics: jevDiagnostics
       });
-      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "gate"));
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "before_director"));
       gateRecords = phase.records;
       const decision = shouldRunDirector(gateRecords);
       if (!decision.run) {
         const skipped = { ...jevDiagnostics, status: "skipped", used: true };
         const records = withConfidenceGate(withDegradationGate(gateRecords, { status: "ok", error: null }), settings.jev.minConfidence);
-        await recordRun(makeRunBase("skipped", startedAt, {
+        await recordTurnRun(makeRunBase("skipped", startedAt, {
           channel: "director",
           generationType,
           error: decision.reason ?? "Jev skipped this turn.",
           ...runLogWorldInfoPatch(worldInfoDiagnostics),
-          jev: { ...skipped, gates: records, gateCount: records.length }
+          jev: { ...skipped, gates: records, gateCount: records.length },
+          trace: turnTrace
         }), userId, settings);
         return messages;
       }
@@ -3213,20 +3410,24 @@ async function handleInterceptor(messages, context) {
     const gateGuidance = directorGuidanceFromGates(gateRecords);
     if (gateGuidance)
       prepared.controllerMessages.splice(1, 0, { role: "system", content: gateGuidance });
+    turnTrace.directorMessagesJson = jsonText(prepared.controllerMessages);
     target = await resolveTurnTarget(settings, gateRecords, userId);
     if (!target) {
-      await recordRun(makeRunBase("skipped", startedAt, {
+      await recordTurnRun(makeRunBase("skipped", startedAt, {
         channel: "director",
         generationType,
         connectionId: settings.connectionId,
         error: "Choose a LumiWorld controller connection first.",
         ...runLogWorldInfoPatch(worldInfoDiagnostics),
-        jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: gateRecords } : null
+        jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: gateRecords } : null,
+        trace: turnTrace
       }), userId, settings);
       return messages;
     }
     const first = await callController(userId, settings, target, prepared.controllerMessages);
     let directive = first.directive;
+    turnTrace.initialDirective = directive;
+    turnTrace.initialResponseJson = first.responseJson;
     if (jevRun.enabled) {
       const phase = await runGatePhase("verify", {
         jevRun,
@@ -3237,13 +3438,26 @@ async function handleInterceptor(messages, context) {
         directive,
         diagnostics: jevDiagnostics
       });
-      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify"));
+      Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify_draft"));
       verifyRecords = phase.records;
       const repair = decideRepair(verifyRecords);
       if (repair) {
         const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
-        if (repaired) {
-          directive = repaired;
+        jevDiagnostics.revision = {
+          action: repair.action,
+          reason: repair.reason,
+          status: repaired.directive ? "revised" : "failed",
+          durationMs: repaired.durationMs,
+          error: repaired.error,
+          initialDirectivePreview: makeDirectivePreview(directive) ?? "",
+          revisedDirectivePreview: makeDirectivePreview(repaired.directive),
+          unresolved: false,
+          promptJson: repaired.promptJson,
+          revisedDirective: repaired.directive,
+          responseJson: repaired.responseJson
+        };
+        if (repaired.directive) {
+          directive = repaired.directive;
           const recheck = await runGatePhase("verify", {
             jevRun,
             settings,
@@ -3253,9 +3467,10 @@ async function handleInterceptor(messages, context) {
             directive,
             diagnostics: jevDiagnostics
           });
-          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify"));
+          Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify_revision"));
           verifyRecords = recheck.records;
           const unresolved = decideRepair(verifyRecords);
+          jevDiagnostics.revision.unresolved = !!unresolved;
           if (unresolved) {
             spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
           }
@@ -3267,35 +3482,42 @@ async function handleInterceptor(messages, context) {
     if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
       worldState = committed;
+      turnTrace.worldStateAfterJson = jsonText(committed);
       if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
         pendingCommits.set(generationCommitKey(userId, chatId, generationId), { userId, chatId, state: committed });
+        turnTrace.worldStateOutcome = "pending";
       } else {
         spindle.log.warn("LumiWorld skipped a scene-state commit because its generation could not be matched.");
+        turnTrace.worldStateOutcome = "discarded";
       }
     }
-    const allRecords = withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
+    const allRecords = withConfidenceGate(withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
+    turnTrace.finalDirective = directive;
     const injected = { role: "system", content: buildInjectedDirective(directive) };
-    await recordRun(makeRunBase("success", startedAt, {
+    await recordTurnRun(makeRunBase("success", startedAt, {
       channel: "director",
       generationType,
-      durationMs: first.durationMs,
+      directorDurationMs: first.durationMs,
       connectionId: target.connectionId,
       connectionName: target.connectionName,
       model: target.model,
       directivePreview: makeDirectivePreview(directive),
       ...runLogWorldInfoPatch(worldInfoDiagnostics),
-      jev: settings.jev.enabled || jevDiagnostics.used ? { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length } : null
+      jev: settings.jev.enabled || jevDiagnostics.used ? { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length } : null,
+      trace: turnTrace
     }), userId, settings);
     return { messages: [injected, ...messages], breakdown: [{ messageIndex: 0, name: BREAKDOWN_NAME }] };
   } catch (error) {
     const isTimeout = error instanceof ControllerTimeoutError;
     const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
-    const recordedGates = jevDiagnostics.used ? withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], {
+    if (error instanceof EmptyControllerDirectiveError)
+      turnTrace.initialResponseJson = error.responseJson;
+    const recordedGates = jevDiagnostics.used ? withConfidenceGate(withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), {
       status: jevDiagnostics.status,
       error: jevDiagnostics.error
     }), settings.jev.minConfidence) : [];
-    await recordRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
+    await recordTurnRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
       channel: "director",
       generationType,
       connectionId: target?.connectionId ?? settings.connectionId,
@@ -3303,7 +3525,8 @@ async function handleInterceptor(messages, context) {
       model: target?.model,
       error: message,
       ...runLogWorldInfoPatch(worldInfoDiagnostics),
-      jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: recordedGates, gateCount: recordedGates.length } : null
+      jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: recordedGates, gateCount: recordedGates.length } : null,
+      trace: turnTrace
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;
@@ -3332,12 +3555,21 @@ ${violated}` : "",
 `)
     }
   ];
+  const promptJson = jsonText(repairMessages);
+  const startedAt = Date.now();
   try {
     const repaired = await callController(userId, settings, target, repairMessages);
-    return repaired.directive;
+    return { directive: repaired.directive, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
   } catch (error) {
-    spindle.log.warn(`LumiWorld repair attempt failed: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    const message = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWorld repair attempt failed: ${message}`);
+    return {
+      directive: null,
+      durationMs: Date.now() - startedAt,
+      error: message,
+      promptJson,
+      responseJson: error instanceof EmptyControllerDirectiveError ? error.responseJson : null
+    };
   }
 }
 async function runJevTest(userId, patch, draftKey) {
@@ -3413,14 +3645,14 @@ async function runControllerTest(userId, patch) {
   const startedAt = Date.now();
   if (!permissionHas("generation")) {
     const error = "Generation permission is not granted.";
-    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", error }), userId, settings);
+    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", generationType: "test", error }), userId, settings);
     send({ type: "test_result", ok: false, error }, userId ?? undefined);
     return;
   }
   const connection = await getConnection(settings.connectionId, userId);
   const target = resolveControllerTarget(settings, connection);
   if (!target.ok) {
-    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", connectionId: settings.connectionId, error: target.reason }), userId, settings);
+    await recordRun(makeRunBase("test_error", startedAt, { channel: "director", generationType: "test", connectionId: settings.connectionId, error: target.reason }), userId, settings);
     send({ type: "test_result", ok: false, error: target.reason }, userId ?? undefined);
     return;
   }
@@ -3437,6 +3669,7 @@ async function runControllerTest(userId, patch) {
     const { directive, durationMs } = await callController(userId, settings, target, controllerMessages);
     await recordRun(makeRunBase("test_success", startedAt, {
       channel: "director",
+      generationType: "test",
       durationMs,
       connectionId: target.connectionId,
       connectionName: target.connectionName,
@@ -3455,6 +3688,7 @@ async function runControllerTest(userId, patch) {
     const message = error instanceof Error ? error.message : String(error);
     await recordRun(makeRunBase(error instanceof ControllerTimeoutError ? "timeout" : "test_error", startedAt, {
       channel: "director",
+      generationType: "test",
       connectionId: target.connectionId,
       connectionName: target.connectionName,
       model: target.model,
@@ -3477,7 +3711,15 @@ spindle.on?.("GENERATION_STARTED", (payload, eventUserId) => {
   const chatKey = generationChatKey(eventUserId, chatId);
   const previous = activeGenerationIds.get(chatKey);
   if (previous && previous !== generationId) {
-    pendingCommits.delete(generationCommitKey(eventUserId, chatId, previous));
+    const previousKey = generationCommitKey(eventUserId, chatId, previous);
+    const hadPendingState = pendingCommits.delete(previousKey);
+    const previousRunId = generationRunIds.get(previousKey);
+    generationRunIds.delete(previousKey);
+    if (previousRunId)
+      patchRunTrace(eventUserId, previousRunId, {
+        generationOutcome: "superseded",
+        worldStateOutcome: hadPendingState ? "discarded" : "not_used"
+      });
   }
   activeGenerationIds.set(chatKey, generationId);
 });
@@ -3491,13 +3733,31 @@ spindle.on?.("GENERATION_ENDED", (payload, eventUserId) => {
     activeGenerationIds.delete(chatKey);
   const commitKey = generationCommitKey(eventUserId, chatId, generationId);
   const pending = pendingCommits.get(commitKey);
-  if (!pending)
-    return;
   pendingCommits.delete(commitKey);
-  const failed = !!(payload && typeof payload === "object" && payload.error);
-  if (failed)
+  const runId = generationRunIds.get(commitKey);
+  generationRunIds.delete(commitKey);
+  const event = payload;
+  const failed = !!event.error;
+  const patch = {
+    generationOutcome: failed ? "failed" : "completed",
+    generationError: failed ? String(event.error) : null,
+    finalReply: typeof event.content === "string" ? event.content : null,
+    messageId: typeof event.messageId === "string" ? event.messageId : null,
+    worldStateOutcome: pending ? failed ? "discarded" : "saved" : "not_used"
+  };
+  if (failed || !pending) {
+    if (runId)
+      patchRunTrace(eventUserId, runId, patch);
     return;
-  saveWorldState(storageApi(), pending.chatId, pending.state, pending.userId).catch((error) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
+  }
+  saveWorldState(storageApi(), pending.chatId, pending.state, pending.userId).then(() => {
+    if (runId)
+      return patchRunTrace(eventUserId, runId, patch);
+  }).catch((error) => {
+    spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`);
+    if (runId)
+      patchRunTrace(eventUserId, runId, { ...patch, worldStateOutcome: "save_failed" });
+  });
 });
 spindle.on?.("GENERATION_STOPPED", (payload, eventUserId) => {
   const chatId = extractChatId(payload);
@@ -3507,7 +3767,16 @@ spindle.on?.("GENERATION_STOPPED", (payload, eventUserId) => {
   const chatKey = generationChatKey(eventUserId, chatId);
   if (activeGenerationIds.get(chatKey) === generationId)
     activeGenerationIds.delete(chatKey);
-  pendingCommits.delete(generationCommitKey(eventUserId, chatId, generationId));
+  const commitKey = generationCommitKey(eventUserId, chatId, generationId);
+  const hadPendingState = pendingCommits.delete(commitKey);
+  const runId = generationRunIds.get(commitKey);
+  generationRunIds.delete(commitKey);
+  if (runId)
+    patchRunTrace(eventUserId, runId, {
+      generationOutcome: "stopped",
+      finalReply: typeof payload.content === "string" ? payload.content : null,
+      worldStateOutcome: hadPendingState ? "discarded" : "not_used"
+    });
 });
 spindle.on?.("CHAT_SWITCHED", (payload, eventUserId) => {
   const userId = eventUserId || lastFrontendUserId;
