@@ -1005,6 +1005,27 @@ describe("Jev diagnostics panel", () => {
     harness.destroy();
   });
 
+  test("shows a withheld note as inconclusive without presenting it as the final directive", () => {
+    const harness = mount(makeState({ runs: [{
+      id: "withheld-turn", timestamp: 10, status: "skipped", channel: "director",
+      error: "Director note withheld: Player agency was inconclusive.",
+      trace: { chatId: "chat-1", generationId: null, dryRun: false,
+        generationOutcome: "completed", generationError: null, messageId: null,
+        finalReply: "Visible reply", worldStateOutcome: "not_used",
+        directiveDisposition: "withheld", verificationVerdict: "inconclusive",
+        verificationReason: "Player agency was inconclusive.",
+        worldStateBeforeJson: null, worldStateAfterJson: null, settingsJson: null,
+        incomingMessagesJson: "[]", directorMessagesJson: "[]",
+        initialDirective: "Rejected draft", finalDirective: null, initialResponseJson: null },
+    }] }));
+    const text = harness.root.querySelector(".lw-diag")?.textContent ?? "";
+    expect(text).toContain("note withheld");
+    expect(text).toContain("verification inconclusive");
+    expect(text).toContain("Rejected draft");
+    expect(text).toContain("Visible reply");
+    harness.destroy();
+  });
+
   test("does not replace the last reply with a Director connection test", () => {
     const harness = mount(makeState({ runs: [
       { id: "test-timeout", timestamp: 11, status: "timeout", channel: "director", generationType: "test" },

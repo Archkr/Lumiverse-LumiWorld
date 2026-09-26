@@ -510,6 +510,7 @@ export interface JevStateContext {
   generationType: string;
   chatId: string;
   history: LlmMessageLike[];
+  latestPlayerAction?: string | null;
   personaSummary?: string | null;
   characterSummary?: string | null;
   worldInfoSummary?: string | null;
@@ -576,11 +577,12 @@ function renderHistory(history: LlmMessageLike[], limit: number, budget: number)
  * whatever remains.
  */
 const STATE_FIELD_SHARES: ReadonlyArray<{ key: string; share: number; min: number }> = [
-  { key: "character", share: 0.20, min: 200 },
-  { key: "world_info", share: 0.25, min: 200 },
-  { key: "user_persona", share: 0.10, min: 120 },
-  { key: "scene_state", share: 0.15, min: 120 },
-  { key: "director_notes", share: 0.08, min: 80 },
+  { key: "latest_player_action", share: 0.12, min: 120 },
+  { key: "character", share: 0.18, min: 200 },
+  { key: "world_info", share: 0.20, min: 200 },
+  { key: "user_persona", share: 0.08, min: 120 },
+  { key: "scene_state", share: 0.12, min: 120 },
+  { key: "director_notes", share: 0.06, min: 80 },
   { key: "draft_directive", share: 0.12, min: 120 },
 ];
 
@@ -608,6 +610,7 @@ export function buildJevState(context: JevStateContext, worldStateContext?: stri
     if (text) optional[key] = text;
   };
   addOptional("character", context.characterSummary);
+  addOptional("latest_player_action", context.latestPlayerAction);
   addOptional("world_info", context.worldInfoSummary);
   addOptional("user_persona", context.personaSummary);
   addOptional("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined);
@@ -662,7 +665,7 @@ export function buildJevState(context: JevStateContext, worldStateContext?: stri
     chars = JSON.stringify(state).length;
   }
   if (chars > cap) {
-    for (const key of ["draft_directive", "director_notes", "scene_state", "user_persona", "world_info", "character"]) {
+    for (const key of ["director_notes", "scene_state", "user_persona", "world_info", "character", "draft_directive", "latest_player_action"]) {
       if (chars <= cap) break;
       if (!(key in state)) continue;
       delete state[key];

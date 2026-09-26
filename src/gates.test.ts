@@ -4,6 +4,7 @@ import {
   GATE_CATALOG,
   GATE_CATEGORY_LABELS,
   GATE_BY_ID,
+  assessVerification,
   contextFilterDecision,
   coreGateIds,
   decideRepair,
@@ -302,6 +303,21 @@ describe("decision helpers", () => {
     expect(decideRepair([
       record({ gateId: "player_agency", value: true, usedFallback: true }),
     ])).toBeNull();
+  });
+
+  test("distinguishes clean, inconclusive, and blocking key verification", () => {
+    const safe = [
+      record({ gateId: "player_agency", label: "Player agency", value: false, phase: "verify" }),
+      record({ gateId: "continuity_guard", label: "Continuity", value: "consistent", phase: "verify" }),
+      record({ gateId: "duplicate_suppression", label: "Repetition", value: "new", phase: "verify" }),
+      record({ gateId: "intensity_boundary", label: "Boundary", value: "within_range", phase: "verify" }),
+    ];
+    expect(assessVerification(safe).verdict).toBe("clean");
+    expect(assessVerification([{ ...safe[0]!, value: true, usedFallback: true }]).verdict).toBe("inconclusive");
+    expect(assessVerification([{ ...safe[0]!, value: true }]).verdict).toBe("violation");
+    expect(assessVerification([{ ...safe[1]!, value: "uncertain" }]).verdict).toBe("inconclusive");
+    expect(assessVerification(safe, "Jev timed out").verdict).toBe("unverified");
+    expect(assessVerification([...safe, record({ gateId: "director_verification", value: "clean", usedFallback: true })]).verdict).toBe("clean");
   });
 });
 

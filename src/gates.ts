@@ -441,7 +441,7 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Director verification",
     "guardrails",
     "verify",
-    "Read `draft_directive` against `chat_history` and `scene_state`. Does it contain a contradiction, a repetition of something already committed, or a premature resolution of an open thread?",
+    "Read `draft_directive` against `latest_player_action`, `chat_history`, and `scene_state`. Does it change the actor or target of the player's completed action, repeat that action as a new event, contradict a committed fact, or prematurely resolve an open thread?",
     "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.",
     {
       clean: "The directive is free of contradictions, repetition, and premature resolution",
@@ -487,7 +487,7 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Duplicate suppression",
     "guardrails",
     "verify",
-    "Compared with the recent exchange in `chat_history`, does `draft_directive` develop something genuinely new or repeat a development that has already been committed?",
+    "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay a completed player action or an already committed development? NPC reactions to that action are new, but repeating the action itself is not.",
     "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.",
     {
       new: "The development has not happened yet in the recent exchange",
@@ -503,7 +503,7 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Continuity guard",
     "guardrails",
     "verify",
-    "Does `draft_directive` contradict established facts in `chat_history`, `scene_state`, or `world_info`?",
+    "Does `draft_directive` contradict `latest_player_action`, `chat_history`, `scene_state`, or `world_info`? Check the actor and target of the player's completed action exactly; do not silently switch who or what they acted on.",
     "Prevents the Director from breaking facts the story has already committed to.",
     {
       consistent: "Nothing in the directive contradicts established facts",
@@ -1130,6 +1130,43 @@ export function decideRepair(records: JevGateRecord[]): RepairDecision | null {
     return { action: chosen && chosen !== "accept" ? chosen : "full_retry", reason: "Jev's overall verification flagged the draft directive." };
   }
   return null;
+}
+
+export type VerificationVerdict = "clean" | "inconclusive" | "violation" | "unverified";
+
+/** Only guardrails that can damage the visible scene block a Director note. */
+export function assessVerification(records: JevGateRecord[], phaseError: string | null = null): {
+  verdict: VerificationVerdict; reason: string | null; repair: RepairDecision | null;
+} {
+  if (phaseError) return { verdict: "unverified", reason: phaseError, repair: null };
+  const checks: Array<{ id: string; clean: unknown; blocking: unknown[]; action: RepairAction }> = [
+    { id: "player_agency", clean: false, blocking: [true], action: "patch" },
+    { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
+    { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
+    { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" },
+  ];
+  let firstInconclusive: { reason: string; action: RepairAction } | null = null;
+  let found = false;
+  for (const check of checks) {
+    const record = gateRecordById(records, check.id);
+    if (!record) continue; // Disabled or inapplicable gates do not block.
+    found = true;
+    if (record.usedFallback || record.value === null || record.value !== check.clean && !check.blocking.includes(record.value)) {
+      firstInconclusive ??= { reason: `${record.label} was inconclusive.`, action: check.action };
+    } else if (check.blocking.includes(record.value)) {
+      const reason = `${record.label} found a problem${record.usedFallback ? " with low confidence" : ""}.`;
+      if (record.usedFallback) firstInconclusive ??= { reason, action: check.action };
+      else return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: check.action, reason } };
+    }
+  }
+  const overall = gateRecordById(records, "director_verification");
+  if (overall?.value === "violation" && !overall.usedFallback) {
+    const reason = "Overall Director verification found a problem.";
+    return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: "full_retry", reason } };
+  }
+  if (firstInconclusive) return { verdict: "inconclusive", reason: firstInconclusive.reason,
+    repair: { action: firstInconclusive.action, reason: firstInconclusive.reason } };
+  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null };
 }
 
 export function countJevFlags(records: JevGateRecord[]): { fallback: number; escalated: number } {

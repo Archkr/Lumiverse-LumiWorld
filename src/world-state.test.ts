@@ -8,6 +8,7 @@ import {
   normalizeWorldState,
   projectWorldState,
   saveWorldState,
+  validateThreadLabel,
   worldStatePath,
   type WorldStateStore,
 } from "./world-state";
@@ -67,6 +68,15 @@ describe("world state normalization", () => {
     expect(state.hooks.length).toBeLessThanOrEqual(12);
     expect(state.threads.length).toBeLessThanOrEqual(12);
     expect(state.characters.length).toBeLessThanOrEqual(16);
+  });
+
+  test("removes obvious legacy directive prose without deleting named threads", () => {
+    const state = normalizeWorldState({ threads: [
+      { label: "Nia's suspicion of Woodman", status: "open" },
+      { label: "Let the intrusion land, and have Karen take control before anyone else", status: "open" },
+      { label: "Let the intrusion land and let someone else own the room's reaction. Have Karen", status: "open" },
+    ] });
+    expect(state.threads.map((thread) => thread.label)).toEqual(["Nia's suspicion of Woodman"]);
   });
 });
 
@@ -136,12 +146,23 @@ describe("committing gate decisions", () => {
     expect(committed.turn).toBe(1);
   });
 
-  test("records a thread lifecycle from the chosen strategy", () => {
+  test("creates only a named open thread and updates an existing thread lifecycle", () => {
+    const open = commitWorldState(defaultWorldState(), [
+      record({ gateId: "scene_state_tracking", value: true }),
+      record({ gateId: "thread_lifecycle", value: "continue", primitive: "choice" }),
+    ], "The debt to Ada");
+    expect(open.threads[0]!.label).toBe("The debt to Ada");
     const committed = commitWorldState(defaultWorldState(), [
       record({ gateId: "scene_state_tracking", value: true }),
       record({ gateId: "thread_lifecycle", value: "resolve", primitive: "choice" }),
-    ], "The debt is settled.");
-    expect(committed.threads[0]!.status).toBe("resolved");
+    ], "The debt to Ada");
+    expect(committed.threads).toHaveLength(0);
+    const resolved = commitWorldState(open, [
+      record({ gateId: "scene_state_tracking", value: true }),
+      record({ gateId: "thread_lifecycle", value: "resolve", primitive: "choice" }),
+    ], "The debt to Ada");
+    expect(resolved.threads[0]!.status).toBe("resolved");
+    expect(validateThreadLabel("Have the shutters close, while everyone waits for the alarm")).toBeNull();
   });
 
   test("still advances the turn with no records at all", () => {

@@ -182,11 +182,12 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
-  '{"director_note":"..."}',
+  '{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}',
   "",
-  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
+var PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = DEFAULT_SYSTEM_TEMPLATE.replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}').replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.", "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
 var PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
@@ -423,6 +424,9 @@ function normalizeTurnTrace(value) {
     generationError: cleanNullableString(obj.generationError),
     messageId: cleanNullableString(obj.messageId),
     finalReply: typeof obj.finalReply === "string" ? obj.finalReply : null,
+    directiveDisposition: ["injected", "withheld"].includes(cleanString(obj.directiveDisposition)) ? cleanString(obj.directiveDisposition) : null,
+    verificationVerdict: ["clean", "inconclusive", "violation", "unverified"].includes(cleanString(obj.verificationVerdict)) ? cleanString(obj.verificationVerdict) : null,
+    verificationReason: cleanNullableString(obj.verificationReason),
     worldStateOutcome: ["not_used", "pending", "saved", "discarded", "save_failed"].includes(cleanString(obj.worldStateOutcome)) ? cleanString(obj.worldStateOutcome) : "not_used",
     worldStateBeforeJson: typeof obj.worldStateBeforeJson === "string" ? obj.worldStateBeforeJson : null,
     worldStateAfterJson: typeof obj.worldStateAfterJson === "string" ? obj.worldStateAfterJson : null,
@@ -506,7 +510,7 @@ function normalizeSettings(value) {
   const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
   const legacyUserTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   const promptPresets = [];
   const seenPresetIds = new Set;
@@ -814,6 +818,36 @@ function selectChatHistoryMessagesForController(messages, limit) {
     return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
+function selectCurrentUserNotes(messages) {
+  return messages.filter((message) => message.role === "user" && !isChatHistoryMessage(message) && !isWorldInfoEntryMessage(message) && serializeMessageContent(message.content).trim().length > 0);
+}
+function latestPlayerChatMessage(messages) {
+  return messages.filter((message) => message.role === "user" && isChatHistoryMessage(message)).at(-1) ?? null;
+}
+function currentUserContextMessages(messages, maxChars) {
+  const latest = latestPlayerChatMessage(messages);
+  const notes = selectCurrentUserNotes(messages);
+  const actionCap = Math.max(500, Math.min(40000, Math.floor(maxChars * 0.35)));
+  const notesCap = Math.max(500, Math.min(1e4, Math.floor(maxChars * 0.1)));
+  const lastAction = latest ? serializeMessageContent(latest.content).trim() : "";
+  const noteText = notes.map((note) => serializeMessageContent(note.content).trim()).join(`
+
+`);
+  const out = [];
+  if (lastAction) {
+    const marker = `
+[... middle of long player message omitted ...]
+`;
+    const action = lastAction.length <= actionCap ? lastAction : `${lastAction.slice(0, Math.floor((actionCap - marker.length) * 0.6))}${marker}${lastAction.slice(-Math.floor((actionCap - marker.length) * 0.4))}`;
+    out.push({ role: "user", content: `Latest completed player chat action (preserve its actor, target, and events exactly):
+${action}` });
+  }
+  if (noteText)
+    out.push({ role: "user", content: `Current Lumiverse author notes (follow these as user instructions):
+${noteText.length <= notesCap ? noteText : `[... older author notes omitted ...]
+${noteText.slice(-notesCap)}`}` });
+  return out;
+}
 function selectControllerMessagesForController(messages, settings, contextMessages = []) {
   const selected = [...contextMessages];
   selected.push(...selectChatHistoryMessagesForController(messages, settings.historyMessageLimit));
@@ -980,6 +1014,8 @@ function parseControllerDirective(raw, maxChars = MAX_DIRECTIVE_CHARS) {
       if (typeof obj[key] === "string")
         return normalizeDirectiveText(obj[key], maxChars);
     }
+    if ("thread_label" in obj)
+      return null;
     const firstString = Object.values(obj).find((value) => typeof value === "string" && value.trim().length > 0);
     if (firstString)
       return normalizeDirectiveText(firstString, maxChars);
@@ -1113,6 +1149,16 @@ function describeEmptyControllerResponse(response) {
 }
 function parseControllerDirectiveFromResponse(response, maxChars = MAX_DIRECTIVE_CHARS) {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
+}
+function parseControllerThreadLabelFromResponse(response) {
+  const raw = extractControllerResponseText(response);
+  if (!raw)
+    return null;
+  const parsed = findJsonObject(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
+  const label = parsed.thread_label;
+  return typeof label === "string" ? label : null;
 }
 function buildInjectedDirective(directive) {
   return [
@@ -1303,7 +1349,7 @@ var GATE_CATALOG = withCore([
     thread: "Another thread is affected by it",
     broad: "Several of the above react at once"
   }, "run", "contained", "broad"),
-  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `chat_history` and `scene_state`. Does it contain a contradiction, a repetition of something already committed, or a premature resolution of an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
+  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `latest_player_action`, `chat_history`, and `scene_state`. Does it change the actor or target of the player's completed action, repeat that action as a new event, contradict a committed fact, or prematurely resolve an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
     clean: "The directive is free of contradictions, repetition, and premature resolution",
     violation: "The directive contains at least one of those problems",
     uncertain: "Something looks off, but it is not clear enough to call a violation"
@@ -1318,12 +1364,12 @@ var GATE_CATALOG = withCore([
     blends: "The directive satisfies both, weighting the instruction",
     not_applicable: "There is no explicit out-of-character instruction to reconcile"
   }, "accept", "not_applicable", "follows_world"),
-  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compared with the recent exchange in `chat_history`, does `draft_directive` develop something genuinely new or repeat a development that has already been committed?", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
+  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay a completed player action or an already committed development? NPC reactions to that action are new, but repeating the action itself is not.", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
     new: "The development has not happened yet in the recent exchange",
     repeats: "The directive repeats a development that already happened",
     near_duplicate: "The directive is a thin variation on something that already happened"
   }, "retry", "new", "repeats"),
-  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict established facts in `chat_history`, `scene_state`, or `world_info`?", "Prevents the Director from breaking facts the story has already committed to.", {
+  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict `latest_player_action`, `chat_history`, `scene_state`, or `world_info`? Check the actor and target of the player's completed action exactly; do not silently switch who or what they acted on.", "Prevents the Director from breaking facts the story has already committed to.", {
     consistent: "Nothing in the directive contradicts established facts",
     violation: "The directive contradicts an established fact",
     uncertain: "The directive may contradict an established fact, but it is not clear"
@@ -1682,6 +1728,45 @@ function decideRepair(records) {
     return { action: chosen && chosen !== "accept" ? chosen : "full_retry", reason: "Jev's overall verification flagged the draft directive." };
   }
   return null;
+}
+function assessVerification(records, phaseError = null) {
+  if (phaseError)
+    return { verdict: "unverified", reason: phaseError, repair: null };
+  const checks = [
+    { id: "player_agency", clean: false, blocking: [true], action: "patch" },
+    { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
+    { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
+    { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" }
+  ];
+  let firstInconclusive = null;
+  let found = false;
+  for (const check of checks) {
+    const record = gateRecordById(records, check.id);
+    if (!record)
+      continue;
+    found = true;
+    if (record.usedFallback || record.value === null || record.value !== check.clean && !check.blocking.includes(record.value)) {
+      firstInconclusive ??= { reason: `${record.label} was inconclusive.`, action: check.action };
+    } else if (check.blocking.includes(record.value)) {
+      const reason = `${record.label} found a problem${record.usedFallback ? " with low confidence" : ""}.`;
+      if (record.usedFallback)
+        firstInconclusive ??= { reason, action: check.action };
+      else
+        return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: check.action, reason } };
+    }
+  }
+  const overall = gateRecordById(records, "director_verification");
+  if (overall?.value === "violation" && !overall.usedFallback) {
+    const reason = "Overall Director verification found a problem.";
+    return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: "full_retry", reason } };
+  }
+  if (firstInconclusive)
+    return {
+      verdict: "inconclusive",
+      reason: firstInconclusive.reason,
+      repair: { action: firstInconclusive.action, reason: firstInconclusive.reason }
+    };
+  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null };
 }
 function countJevFlags(records) {
   return {
@@ -2088,11 +2173,12 @@ function renderHistory(history, limit, budget) {
   return kept;
 }
 var STATE_FIELD_SHARES = [
-  { key: "character", share: 0.2, min: 200 },
-  { key: "world_info", share: 0.25, min: 200 },
-  { key: "user_persona", share: 0.1, min: 120 },
-  { key: "scene_state", share: 0.15, min: 120 },
-  { key: "director_notes", share: 0.08, min: 80 },
+  { key: "latest_player_action", share: 0.12, min: 120 },
+  { key: "character", share: 0.18, min: 200 },
+  { key: "world_info", share: 0.2, min: 200 },
+  { key: "user_persona", share: 0.08, min: 120 },
+  { key: "scene_state", share: 0.12, min: 120 },
+  { key: "director_notes", share: 0.06, min: 80 },
   { key: "draft_directive", share: 0.12, min: 120 }
 ];
 function fieldCost(key, value) {
@@ -2108,6 +2194,7 @@ function buildJevState(context, worldStateContext) {
       optional[key] = text;
   };
   addOptional("character", context.characterSummary);
+  addOptional("latest_player_action", context.latestPlayerAction);
   addOptional("world_info", context.worldInfoSummary);
   addOptional("user_persona", context.personaSummary);
   addOptional("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined);
@@ -2155,7 +2242,7 @@ function buildJevState(context, worldStateContext) {
     chars = JSON.stringify(state).length;
   }
   if (chars > cap) {
-    for (const key of ["draft_directive", "director_notes", "scene_state", "user_persona", "world_info", "character"]) {
+    for (const key of ["director_notes", "scene_state", "user_persona", "world_info", "character", "draft_directive", "latest_player_action"]) {
       if (chars <= cap)
         break;
       if (!(key in state))
@@ -2223,6 +2310,18 @@ function cleanLabel(value) {
     return "";
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
 }
+var DIRECTIVE_PREFIX = /^(?:Have|Let|Keep|Make|Cut|Plant|Pressure|Treat|Escalate|Move|Give|Show|Leave|Withhold)\b/i;
+function looksLikeDirectiveProse(label) {
+  return label.length >= 50 && DIRECTIVE_PREFIX.test(label) && /[.,;:]/.test(label);
+}
+function validateThreadLabel(value) {
+  if (typeof value !== "string")
+    return null;
+  const label = value.replace(/\s+/g, " ").trim();
+  if (label.length < 3 || label.length > 80 || /[.!?;\n]/.test(label) || DIRECTIVE_PREFIX.test(label))
+    return null;
+  return label;
+}
 function normalizeStringList(value, limit) {
   if (!Array.isArray(value))
     return [];
@@ -2267,7 +2366,7 @@ function normalizeThreads(value) {
   for (const item of value) {
     const obj = asRecord3(item);
     const label = cleanLabel(obj.label);
-    if (!label)
+    if (!label || looksLikeDirectiveProse(label))
       continue;
     const status = cleanLabel(obj.status);
     out.push({
@@ -2401,7 +2500,7 @@ var THREAD_STATUS = {
   dormant: "dormant",
   abandoned: "abandoned"
 };
-function commitWorldState(state, records, directive) {
+function commitWorldState(state, records, threadLabel) {
   const turn = state.turn + 1;
   const patch = {};
   const sceneChanged = records.find((record) => record.gateId === "scene_state_tracking");
@@ -2421,8 +2520,9 @@ function commitWorldState(state, records, directive) {
       patch.hook = { label: "A new character has entered the scene", stale: false };
     const lifecycle = readChoice(records, "thread_lifecycle");
     const status = lifecycle ? THREAD_STATUS[lifecycle] : undefined;
-    if (status && directive) {
-      patch.thread = { label: directive.slice(0, 80), status };
+    const label = validateThreadLabel(threadLabel);
+    if (status && label && (status === "open" || state.threads.some((thread) => thread.label.toLowerCase() === label.toLowerCase()))) {
+      patch.thread = { label, status };
     }
   }
   if (Object.keys(patch).length === 0) {
@@ -3127,7 +3227,9 @@ async function prepareController(settings, messages, context, chatId, userId, ge
     identity
   });
   const selected = selectControllerMessagesForController(messages, settings, [...contextMessages, ...includeDirectorWorldInfo ? worldInfoContext.messages : []]);
-  const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
+  const currentUserMessages = currentUserContextMessages(messages, settings.maxInputChars);
+  const currentChars = currentUserMessages.reduce((sum, message) => sum + serializeContent(message.content).length, 0);
+  const promptSnapshot = formatPromptForController(selected, Math.max(1000, settings.maxInputChars - currentChars));
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType,
     chatId: chatId || "",
@@ -3135,10 +3237,13 @@ async function prepareController(settings, messages, context, chatId, userId, ge
     user: identity.userName || "User",
     char: identity.characterName || "Character"
   });
+  controllerMessages.splice(-1, 0, ...currentUserMessages);
+  const latestPlayerAction = latestPlayerChatMessage(messages);
   const worldStateText = projectWorldState(worldState);
   const jevHistory = selectChatHistoryMessagesForController(messages, settings.jev.historyMessageLimit);
   return {
     controllerMessages,
+    currentUserMessages,
     promptSnapshot,
     contextMessages: [...contextMessages, ...includeDirectorWorldInfo ? worldInfoContext.messages : []],
     worldState,
@@ -3158,6 +3263,7 @@ async function prepareController(settings, messages, context, chatId, userId, ge
       generationType,
       chatId: chatId ?? "",
       history: jevHistory,
+      latestPlayerAction: latestPlayerAction ? serializeContent(latestPlayerAction.content).trim() : null,
       personaSummary: contextMessageSummary(jevContextMessages, "User Persona"),
       characterSummary: contextMessageSummary(jevContextMessages, "Character"),
       worldInfoSummary: includeJevWorldInfo ? summaryOfMessages(worldInfoContext.messages, 6000) : null,
@@ -3180,12 +3286,14 @@ function applyContextFilter(base, settings, messages, context, generationType, d
     return decision.keepWorldInfo;
   });
   const history = decision.keepHistory ? selectChatHistoryMessagesForController(messages, settings.historyMessageLimit) : [];
-  const promptSnapshot = formatPromptForController([...contextMessages, ...history], settings.maxInputChars);
+  const currentChars = base.currentUserMessages.reduce((sum, message) => sum + serializeContent(message.content).length, 0);
+  const promptSnapshot = formatPromptForController([...contextMessages, ...history], Math.max(1000, settings.maxInputChars - currentChars));
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType,
     chatId: base.stateContext.chatId,
     connectionId: extractConnectionId(context)
   });
+  controllerMessages.splice(-1, 0, ...base.currentUserMessages);
   return {
     ...base,
     controllerMessages,
@@ -3268,7 +3376,7 @@ async function callController(userId, settings, target, messages) {
     if (!directive) {
       throw new EmptyControllerDirectiveError(response);
     }
-    return { directive, durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
+    return { directive, threadLabel: parseControllerThreadLabelFromResponse(response), durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
   } catch (error) {
     if (timedOut || error instanceof Error && error.name === "AbortError") {
       throw new ControllerTimeoutError(settings.timeoutMs);
@@ -3316,6 +3424,9 @@ async function handleInterceptor(messages, context) {
     messageId: null,
     finalReply: null,
     worldStateOutcome: "not_used",
+    directiveDisposition: null,
+    verificationVerdict: null,
+    verificationReason: null,
     worldStateBeforeJson: null,
     worldStateAfterJson: null,
     incomingMessagesJson: jsonText(messages),
@@ -3426,6 +3537,8 @@ async function handleInterceptor(messages, context) {
     }
     const first = await callController(userId, settings, target, prepared.controllerMessages);
     let directive = first.directive;
+    let threadLabel = first.threadLabel;
+    let withheldReason = null;
     turnTrace.initialDirective = directive;
     turnTrace.initialResponseJson = first.responseJson;
     if (jevRun.enabled) {
@@ -3440,24 +3553,27 @@ async function handleInterceptor(messages, context) {
       });
       Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify_draft"));
       verifyRecords = phase.records;
-      const repair = decideRepair(verifyRecords);
-      if (repair) {
-        const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
+      let assessment = assessVerification(verifyRecords, phase.error);
+      turnTrace.verificationVerdict = assessment.verdict;
+      turnTrace.verificationReason = assessment.reason;
+      if (assessment.repair) {
+        const repaired = await regenerateDirective(userId, settings, target, prepared, directive, assessment.repair, verifyRecords);
         jevDiagnostics.revision = {
-          action: repair.action,
-          reason: repair.reason,
+          action: assessment.repair.action,
+          reason: assessment.repair.reason,
           status: repaired.directive ? "revised" : "failed",
           durationMs: repaired.durationMs,
           error: repaired.error,
           initialDirectivePreview: makeDirectivePreview(directive) ?? "",
           revisedDirectivePreview: makeDirectivePreview(repaired.directive),
-          unresolved: false,
+          unresolved: true,
           promptJson: repaired.promptJson,
           revisedDirective: repaired.directive,
           responseJson: repaired.responseJson
         };
         if (repaired.directive) {
           directive = repaired.directive;
+          threadLabel = repaired.threadLabel;
           const recheck = await runGatePhase("verify", {
             jevRun,
             settings,
@@ -3469,18 +3585,42 @@ async function handleInterceptor(messages, context) {
           });
           Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify_revision"));
           verifyRecords = recheck.records;
-          const unresolved = decideRepair(verifyRecords);
-          jevDiagnostics.revision.unresolved = !!unresolved;
-          if (unresolved) {
-            spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
-          }
+          assessment = assessVerification(verifyRecords, recheck.error);
+          turnTrace.verificationVerdict = assessment.verdict;
+          turnTrace.verificationReason = assessment.reason;
+          jevDiagnostics.revision.unresolved = assessment.verdict !== "clean";
+          if (assessment.verdict !== "clean")
+            withheldReason = assessment.reason ?? "The revised note could not be verified.";
         } else {
-          spindle.log.warn(`LumiWorld kept the original directive after a failed ${repair.action} repair.`);
+          withheldReason = repaired.error ?? "The Director could not repair the note.";
+          turnTrace.verificationVerdict = "inconclusive";
+          turnTrace.verificationReason = withheldReason;
         }
       }
+    } else {
+      turnTrace.verificationVerdict = "unverified";
+      turnTrace.verificationReason = jevRun.error ?? "Jev was disabled for this turn.";
     }
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
-      const committed = commitWorldState(worldState, verifyRecords, directive);
+    if (withheldReason) {
+      turnTrace.directiveDisposition = "withheld";
+      turnTrace.finalDirective = null;
+      const allRecords = withConfidenceGate(withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
+      await recordTurnRun(makeRunBase("skipped", startedAt, {
+        channel: "director",
+        generationType,
+        directorDurationMs: first.durationMs,
+        connectionId: target.connectionId,
+        connectionName: target.connectionName,
+        model: target.model,
+        error: `Director note withheld: ${withheldReason}`,
+        ...runLogWorldInfoPatch(worldInfoDiagnostics),
+        jev: { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length },
+        trace: turnTrace
+      }), userId, settings);
+      return messages;
+    }
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId && !dryRun) {
+      const committed = commitWorldState(worldState, verifyRecords, threadLabel);
       worldState = committed;
       turnTrace.worldStateAfterJson = jsonText(committed);
       if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
@@ -3493,6 +3633,7 @@ async function handleInterceptor(messages, context) {
     }
     const allRecords = withConfidenceGate(withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
     turnTrace.finalDirective = directive;
+    turnTrace.directiveDisposition = "injected";
     const injected = { role: "system", content: buildInjectedDirective(directive) };
     await recordTurnRun(makeRunBase("success", startedAt, {
       channel: "director",
@@ -3538,19 +3679,21 @@ function resolveJevModelForDiagnostics(settings) {
   const provider = resolveJevProvider(settings.jev);
   return settings.jev.model.trim() || provider.defaultModel;
 }
-async function regenerateDirective(userId, settings, target, prepared, repair, records) {
-  const violated = records.filter((record) => !record.usedFallback && ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value)).map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`).join(`
+async function regenerateDirective(userId, settings, target, prepared, originalDirective, repair, records) {
+  const violated = records.filter((record) => ["player_agency", "continuity_guard", "duplicate_suppression", "intensity_boundary", "director_verification"].includes(record.gateId) && (record.usedFallback || ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value))).map((record) => `- ${record.label}: ${String(record.value)}${record.usedFallback ? " (inconclusive)" : ""}`).join(`
 `);
   const repairMessages = [
     ...prepared.controllerMessages,
+    { role: "assistant", content: originalDirective },
     {
       role: "system",
       content: [
-        `LumiWorld verification found a problem with the direction you just produced. Repair it with this action: ${repair.action}.`,
+        `LumiWorld verification found a problem with the draft directive above. Repair it with this action: ${repair.action}.`,
         repair.reason,
-        violated ? `Flagged checks:
+        violated ? `Blocking or inconclusive checks:
 ${violated}` : "",
-        "Return a corrected directive only. Keep the same format and length limits."
+        "Preserve unaffected beats. Preserve the actor, target, and completed events in the latest player chat action exactly. Do not decide the player's next action.",
+        "Return a corrected directive only. Keep the same format and length limits. Include an optional thread_label only if it names a specific story thread."
       ].filter(Boolean).join(`
 `)
     }
@@ -3559,12 +3702,13 @@ ${violated}` : "",
   const startedAt = Date.now();
   try {
     const repaired = await callController(userId, settings, target, repairMessages);
-    return { directive: repaired.directive, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
+    return { directive: repaired.directive, threadLabel: repaired.threadLabel, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     spindle.log.warn(`LumiWorld repair attempt failed: ${message}`);
     return {
       directive: null,
+      threadLabel: null,
       durationMs: Date.now() - startedAt,
       error: message,
       promptJson,

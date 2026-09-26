@@ -89,6 +89,20 @@ function cleanLabel(value: unknown): string {
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
 }
 
+const DIRECTIVE_PREFIX = /^(?:Have|Let|Keep|Make|Cut|Plant|Pressure|Treat|Escalate|Move|Give|Show|Leave|Withhold)\b/i;
+
+/** Legacy v0.5 states used the first 80 characters of an imperative note as a thread. */
+function looksLikeDirectiveProse(label: string): boolean {
+  return label.length >= 50 && DIRECTIVE_PREFIX.test(label) && /[.,;:]/.test(label);
+}
+
+export function validateThreadLabel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const label = value.replace(/\s+/g, " ").trim();
+  if (label.length < 3 || label.length > 80 || /[.!?;\n]/.test(label) || DIRECTIVE_PREFIX.test(label)) return null;
+  return label;
+}
+
 function normalizeStringList(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -128,7 +142,7 @@ function normalizeThreads(value: unknown): SceneThread[] {
   for (const item of value) {
     const obj = asRecord(item);
     const label = cleanLabel(obj.label);
-    if (!label) continue;
+    if (!label || looksLikeDirectiveProse(label)) continue;
     const status = cleanLabel(obj.status) as SceneThread["status"];
     out.push({
       id: cleanLabel(obj.id) || `thread-${out.length + 1}`,
@@ -279,7 +293,7 @@ const THREAD_STATUS: Record<string, SceneThread["status"]> = {
  * Gates that did not answer, or whose answer was escalated to a fallback, are
  * ignored: an unconfident classification must not silently rewrite the world model.
  */
-export function commitWorldState(state: WorldState, records: JevGateRecord[], directive: string | null): WorldState {
+export function commitWorldState(state: WorldState, records: JevGateRecord[], threadLabel: string | null): WorldState {
   const turn = state.turn + 1;
   const patch: WorldStatePatch = {};
 
@@ -300,8 +314,9 @@ export function commitWorldState(state: WorldState, records: JevGateRecord[], di
     if (entry === "enter_new") patch.hook = { label: "A new character has entered the scene", stale: false };
     const lifecycle = readChoice(records, "thread_lifecycle");
     const status = lifecycle ? THREAD_STATUS[lifecycle] : undefined;
-    if (status && directive) {
-      patch.thread = { label: directive.slice(0, 80), status };
+    const label = validateThreadLabel(threadLabel);
+    if (status && label && (status === "open" || state.threads.some((thread) => thread.label.toLowerCase() === label.toLowerCase()))) {
+      patch.thread = { label, status };
     }
   }
 

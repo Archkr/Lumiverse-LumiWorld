@@ -508,6 +508,8 @@ describe("v0.5 Jev turn flow", () => {
     expect(first.jev.phases[0].requestJson).toContain("I open the observatory door.");
     expect(first.jev.phases[0].responseJson).toContain("answers");
     expect(first.jev.revision.promptJson).toContain("Repair it with this action");
+    expect(JSON.parse(first.jev.revision.promptJson).some((message: any) => message.role === "assistant" && message.content === first.trace.initialDirective)).toBe(true);
+    expect(first.jev.revision.promptJson).not.toContain("Claim extraction: true");
 
     await messageHandler!({ type: "test_controller" }, "user-jev");
     const afterTest = (stored.get("global/runs.json") as any[]).find((run) => run.id === first.id)!;
@@ -524,17 +526,58 @@ describe("v0.5 Jev turn flow", () => {
     expect(latestRun().trace.incomingMessagesJson).toContain("I open the observatory door.");
   });
 
-  test("never loops: a persistent violation stops after one repair", async () => {
+  test("withholds a persistent violation after one repair and still records the visible reply", async () => {
     answerCleanTurn();
     const clean = jevAnswerFor;
     jevAnswerFor = (gateId) => (gateId === "director_verification"
       ? { type: "choice", choice: "violation", probabilities: { violation: 0.99, clean: 0.01 }, confidence: 0.99 }
       : clean(gateId));
-    const result = await runJevTurn();
-    expect(directorRuns(result)).toBe(true);
+    beginGeneration("chat-withheld", "gen-withheld");
+    const result = await runJevTurn("chat-withheld");
+    expect(directorRuns(result)).toBe(false);
+    expect(result).toEqual(jevMessages);
     expect(generations).toBe(2);
     expect(jevRequests).toHaveLength(3);
-    expect(result.messages[0].content).toContain("[LumiWorld Director]");
+    expect(latestRun().status).toBe("skipped");
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().trace.finalDirective).toBeNull();
+    expect(latestRun().trace.worldStateOutcome).toBe("not_used");
+    expect(latestRun().jev.revision.unresolved).toBe(true);
+    emitEvent("GENERATION_ENDED", { chatId: "chat-withheld", generationId: "gen-withheld", content: "VISIBLE_REPLY_CANARY" }, "user-jev");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(latestRun().trace.finalReply).toBe("VISIBLE_REPLY_CANARY");
+    expect(stored.has("chats/chat-withheld/world.json")).toBe(false);
+  });
+
+  test("withholds a revised note when player agency remains a low-confidence concern", async () => {
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    let checks = 0;
+    jevAnswerFor = (gateId) => gateId === "player_agency"
+      ? { type: "noul", noul: ++checks === 1 ? 0.85 : 0.52 }
+      : clean(gateId);
+    const result = await runJevTurn();
+    expect(directorRuns(result)).toBe(false);
+    expect(generations).toBe(2);
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().trace.verificationVerdict).toBe("inconclusive");
+    expect(latestRun().jev.revision.unresolved).toBe(true);
+  });
+
+  test("sends unmarked user author notes only to the Director and protects the latest player action", async () => {
+    answerCleanTurn();
+    await messageHandler!({ type: "refresh_state", chatId: "chat-notes" }, "user-jev");
+    const messages = [
+      { role: "user", content: "I photograph Shido.", __isChatHistory: true },
+      { role: "user", content: "Author note: leave my next action to me." },
+    ];
+    await interceptor!(messages, { chatId: "chat-notes", generationType: "normal" });
+    const prompt = JSON.stringify(generatedMessages[0]);
+    expect(prompt).toContain("Author note: leave my next action to me.");
+    expect(prompt).toContain("Latest completed player chat action");
+    expect(prompt).toContain("I photograph Shido.");
+    expect(JSON.stringify(jevStates)).not.toContain("Author note: leave my next action to me.");
+    expect(JSON.stringify(jevStates)).toContain("latest_player_action");
   });
 
   test("records gate evidence including confidence and thresholds", async () => {

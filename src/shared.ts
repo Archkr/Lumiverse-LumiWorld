@@ -324,6 +324,9 @@ export interface TurnTrace {
   generationError: string | null;
   messageId: string | null;
   finalReply: string | null;
+  directiveDisposition?: "injected" | "withheld" | null;
+  verificationVerdict?: "clean" | "inconclusive" | "violation" | "unverified" | null;
+  verificationReason?: string | null;
   worldStateOutcome: "not_used" | "pending" | "saved" | "discarded" | "save_failed";
   worldStateBeforeJson: string | null;
   worldStateAfterJson: string | null;
@@ -594,10 +597,16 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
-  "{\"director_note\":\"...\"}",
+  "{\"director_note\":\"...\",\"thread_label\":\"optional short name of the specific story thread developed\"}",
   "",
-  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
 ].join("\n");
+
+/** Built-in template shipped before structured thread names were introduced. */
+const PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = DEFAULT_SYSTEM_TEMPLATE
+  .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
+  .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+    "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
 
 export const PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
@@ -840,6 +849,11 @@ function normalizeTurnTrace(value: unknown): TurnTrace | null {
     generationError: cleanNullableString(obj.generationError),
     messageId: cleanNullableString(obj.messageId),
     finalReply: typeof obj.finalReply === "string" ? obj.finalReply : null,
+    directiveDisposition: ["injected", "withheld"].includes(cleanString(obj.directiveDisposition))
+      ? cleanString(obj.directiveDisposition) as TurnTrace["directiveDisposition"] : null,
+    verificationVerdict: ["clean", "inconclusive", "violation", "unverified"].includes(cleanString(obj.verificationVerdict))
+      ? cleanString(obj.verificationVerdict) as TurnTrace["verificationVerdict"] : null,
+    verificationReason: cleanNullableString(obj.verificationReason),
     worldStateOutcome: ["not_used", "pending", "saved", "discarded", "save_failed"].includes(cleanString(obj.worldStateOutcome))
       ? cleanString(obj.worldStateOutcome) as TurnTrace["worldStateOutcome"] : "not_used",
     worldStateBeforeJson: typeof obj.worldStateBeforeJson === "string" ? obj.worldStateBeforeJson : null,
@@ -944,7 +958,8 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     !storedSystemTemplate ||
     storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ||
     storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ||
-    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE
+    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE
       ? DEFAULT_SYSTEM_TEMPLATE
       : storedSystemTemplate;
   const legacyUserTemplate =
@@ -1307,6 +1322,34 @@ export function selectChatHistoryMessagesForController(messages: LlmMessageLike[
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
 
+/** Lumiverse may place author notes in the assembled prompt as unmarked user messages. */
+export function selectCurrentUserNotes(messages: LlmMessageLike[]): LlmMessageLike[] {
+  return messages.filter((message) => message.role === "user" && !isChatHistoryMessage(message)
+    && !isWorldInfoEntryMessage(message) && serializeMessageContent(message.content).trim().length > 0);
+}
+
+export function latestPlayerChatMessage(messages: LlmMessageLike[]): LlmMessageLike | null {
+  return messages.filter((message) => message.role === "user" && isChatHistoryMessage(message)).at(-1) ?? null;
+}
+
+export function currentUserContextMessages(messages: LlmMessageLike[], maxChars: number): LlmMessageLike[] {
+  const latest = latestPlayerChatMessage(messages);
+  const notes = selectCurrentUserNotes(messages);
+  const actionCap = Math.max(500, Math.min(40000, Math.floor(maxChars * 0.35)));
+  const notesCap = Math.max(500, Math.min(10000, Math.floor(maxChars * 0.10)));
+  const lastAction = latest ? serializeMessageContent(latest.content).trim() : "";
+  const noteText = notes.map((note) => serializeMessageContent(note.content).trim()).join("\n\n");
+  const out: LlmMessageLike[] = [];
+  if (lastAction) {
+    const marker = "\n[... middle of long player message omitted ...]\n";
+    const action = lastAction.length <= actionCap ? lastAction
+      : `${lastAction.slice(0, Math.floor((actionCap - marker.length) * 0.6))}${marker}${lastAction.slice(-Math.floor((actionCap - marker.length) * 0.4))}`;
+    out.push({ role: "user", content: `Latest completed player chat action (preserve its actor, target, and events exactly):\n${action}` });
+  }
+  if (noteText) out.push({ role: "user", content: `Current Lumiverse author notes (follow these as user instructions):\n${noteText.length <= notesCap ? noteText : `[... older author notes omitted ...]\n${noteText.slice(-notesCap)}`}` });
+  return out;
+}
+
 export function selectControllerMessagesForController(
   messages: LlmMessageLike[],
   settings: LumiWorldSettings,
@@ -1482,6 +1525,7 @@ export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_
     for (const key of keys) {
       if (typeof obj[key] === "string") return normalizeDirectiveText(obj[key] as string, maxChars);
     }
+    if ("thread_label" in obj) return null;
     const firstString = Object.values(obj).find((value): value is string => typeof value === "string" && value.trim().length > 0);
     if (firstString) return normalizeDirectiveText(firstString, maxChars);
   }
@@ -1611,6 +1655,16 @@ export function describeEmptyControllerResponse(response: unknown): string {
 
 export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
   return parseControllerDirective(extractControllerResponseText(response), maxChars);
+}
+
+/** Optional structured thread name; plain-text Director replies do not create threads. */
+export function parseControllerThreadLabelFromResponse(response: unknown): string | null {
+  const raw = extractControllerResponseText(response);
+  if (!raw) return null;
+  const parsed = findJsonObject(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const label = (parsed as Record<string, unknown>).thread_label;
+  return typeof label === "string" ? label : null;
 }
 
 export function buildInjectedDirective(directive: string): string {

@@ -1088,13 +1088,15 @@ export function setup(ctx: SpindleFrontendContext) {
   function diagnosticsSection(): HTMLElement {
     const run = latestTurnRun();
     const generationOutcome = run?.trace?.generationOutcome;
-    const badge = !run ? undefined : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded"
+    const badge = !run ? undefined : run.trace?.directiveDisposition === "withheld" ? "note withheld"
+      : run.trace?.verificationVerdict === "unverified" && run.status === "success" ? "unverified"
+      : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded"
       ? generationOutcome : run.status === "success"
       ? run.jev?.status === "degraded" ? "degraded" : run.jev?.fallbackCount ? "partial" : "completed"
       : run.status;
     return collapsible({
       title: "Last turn", badge,
-      badgeTone: generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error"
+      badgeTone: run?.trace?.directiveDisposition === "withheld" || generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error"
         : run?.status === "success" ? run.jev?.status === "degraded" || run.jev?.fallbackCount ? "warning" : "success"
         : run?.status === "error" || run?.status === "timeout" ? "error" : "warning",
       expanded: diagnosticsOpen,
@@ -1212,7 +1214,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const skippedByJev = diagnostics?.status === "skipped";
     const wrap = el("div", "lw-diag");
     const generationOutcome = run.trace?.generationOutcome;
-    const outcome = generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn."
+    const outcome = run.trace?.directiveDisposition === "withheld" ? "LumiWorld withheld the Director note. The main reply used its original prompt."
+      : generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn."
       : generationOutcome === "stopped" ? "The visible reply was stopped after LumiWorld prepared this turn."
         : generationOutcome === "superseded" ? "A newer generation replaced this turn."
           : run.trace?.dryRun && run.status === "success" ? "Preview prepared a Director note; no live reply was changed."
@@ -1236,6 +1239,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const strip = el("div", "lw-diag-strip");
     if (run.generationType) strip.append(el("span", "lw-badge", run.generationType));
     if (run.trace?.dryRun) strip.append(el("span", "lw-badge", "preview"));
+    if (run.trace?.directiveDisposition) strip.append(el("span", "lw-badge", `note ${run.trace.directiveDisposition}`));
+    if (run.trace?.verificationVerdict) strip.append(el("span", "lw-badge", `verification ${run.trace.verificationVerdict}`));
     if (generationOutcome) strip.append(el("span", "lw-badge", `reply ${generationOutcome}`));
     if (run.trace?.worldStateOutcome && run.trace.worldStateOutcome !== "not_used") strip.append(el("span", "lw-badge", `scene state ${run.trace.worldStateOutcome}`));
     if (run.connectionName || run.connectionId || run.model) strip.append(el("span", "lw-badge", [run.connectionName ?? run.connectionId, run.model].filter(Boolean).join(" · ")));
@@ -1259,6 +1264,11 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     if (run.trace?.generationError) {
       const notice = el("div", "lw-notice", run.trace.generationError); notice.dataset.tone = "warning"; wrap.append(notice);
+    }
+    if (run.trace?.verificationReason) {
+      const notice = el("div", "lw-notice", run.trace.verificationReason);
+      notice.dataset.tone = run.trace.verificationVerdict === "clean" ? "success" : "warning";
+      wrap.append(notice);
     }
     if (diagnostics?.error && diagnostics.error !== run.error) {
       const notice = el("div", "lw-notice", diagnostics.error); notice.dataset.tone = "warning"; wrap.append(notice);
@@ -1301,7 +1311,7 @@ export function setup(ctx: SpindleFrontendContext) {
       step.append(el("p", "lw-hint", revision.reason));
       if (revision.error) step.append(el("div", "lw-notice", revision.error));
       if (revision.revisedDirective) step.append(el("div", "lw-diag-outcome", revision.revisedDirective));
-      if (revision.unresolved) step.append(el("p", "lw-hint", "The final check still found a problem after the one allowed revision."));
+      if (revision.unresolved) step.append(el("p", "lw-hint", "The final check did not confidently clear the key guardrails after the one allowed revision."));
       const prompt = rawTraceSection("Full revision prompt", revision.promptJson);
       const response = rawTraceSection("Raw revision response", revision.responseJson);
       if (prompt) step.append(prompt);
@@ -1313,7 +1323,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
     const final = traceStep("Final outcome", [run.status, generationOutcome ? `reply ${generationOutcome}` : null].filter(Boolean).join(" · "), true);
     if (run.trace?.finalDirective) final.append(el("div", "lw-diag-outcome", run.trace.finalDirective));
-    else if (run.directivePreview) final.append(el("div", "lw-diag-outcome", run.directivePreview));
+    else if (run.trace?.directiveDisposition !== "withheld" && run.directivePreview) final.append(el("div", "lw-diag-outcome", run.directivePreview));
     if (run.worldInfoActivatedCount !== null && run.worldInfoActivatedCount !== undefined) {
       final.append(el("p", "lw-hint", `World Info: ${run.worldInfoActivatedCount} activated, ${run.worldInfoFetchedCount ?? 0} fetched, ${run.worldInfoFallbackTaggedCount ?? 0} fallback tagged.`));
     }

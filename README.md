@@ -83,8 +83,8 @@ flowchart TD
 1. **A selected generation begins.** LumiWorld checks whether the Director is enabled for that reply type.
 2. **If Jev is available, it answers the pre-Director questions.** A confident “no” from Smart Director triggering skips the Director. Other accepted answers select context/model or become private guidance.
 3. **The Director receives its selected context and writes a directive.** The built-in prompt asks for concrete changes, NPC pressure, consequences, and what stays unresolved. The note is limited to 2,200 characters.
-4. **If Jev is available, it checks the draft.** Certain confident violations trigger one repair attempt and a recheck.
-5. **The chat model receives the note.** LumiWorld prepends a system block named **LumiWorld Director**. If no usable directive is returned, the original prompt passes through.
+4. **If Jev is available, it checks the draft.** A violation or inconclusive key guardrail triggers one repair attempt and a recheck.
+5. **The chat model receives only a cleared note.** LumiWorld prepends a system block named **LumiWorld Director**. If a key check remains unresolved after repair, the original prompt passes through without the note.
 
 No macro needs to be added to your character card or preset for the Director to work.
 
@@ -152,13 +152,14 @@ There are **36 entries in the Decisions list**: 34 possible Jev questions and 2 
 Jev receives recent chat turns up to its **History messages** limit, the derived scene state when available, and your Director notes. Its separate **Include in Jev state** switches control the active Character, User persona, and Activated World Info summaries. Jev does **not** receive the full assembled main-model prompt or your Director prompt preset. When verifying, it also receives the Director's draft note. The **State cap (chars)** may shorten any of these fields.
 
 The Director has separate context switches and a separate history limit. Turning a source off for Jev does not turn it off for the Director. When a Jev context switch is off, Jev's filter preserves that source for the Director rather than making a decision about unseen context.
+The latest marked player chat action is kept separately for the Director and Jev verification. Unmarked user messages in Lumiverse's assembled prompt, such as author notes, go to the Director as current instructions but are not sent to Jev.
 
 ### One turn, step by step
 
 1. **Before the Director:** LumiWorld sends the applicable enabled pre-Director questions in one batch. Smart triggering can skip the Director only on a confident **no**. Context filtering can trim the Director's input. Model routing can select a configured strong target. Other confident answers become a separate guidance message in the Director's prompt.
 2. **Director draft:** The Director writes one private note. A guidance answer describes a direction, such as “tighten the pace”; it does not force a specific NPC action or guarantee the model follows it.
-3. **After the Director:** If Jev is available, LumiWorld sends the applicable verification questions in another batch with the draft note. Certain confident violations trigger **one** Director rewrite and another Jev verification batch. A failed rewrite keeps the original note; an unresolved violation after a successful rewrite is logged, and that rewritten note can still be used.
-4. **Visible reply and state:** The final private note enters the chat model's prompt. Derived scene state is saved only after the visible generation successfully ends; previews, cancelled generations, and failed generations do not commit it.
+3. **After the Director:** If Jev is available, LumiWorld sends the applicable verification questions in another batch with the draft note. A key guardrail violation or inconclusive answer triggers **one** repair with the original draft included, followed by another Jev verification batch. If repair fails or a key check remains unresolved, the note is withheld.
+4. **Visible reply and state:** Only a cleared private note enters the chat model's prompt. Derived scene state is saved only after a verified visible generation successfully ends; previews, cancelled generations, failed generations, and withheld notes do not commit it.
 
 Usually that is **one Jev request if the Director is skipped, or two if it runs**. A repair adds a Jev recheck and another Director generation. A rate-limit or transient-error retry can add a network attempt. A failed or unconfigured Jev call falls back to the Director path.
 
@@ -172,7 +173,7 @@ Usually that is **one Jev request if the Director is skipped, or two if it runs*
 
 An answer is acted on only when its confidence reaches **both** the global floor and that decision's floor: the effective floor is the higher number. Defaults are `0.55` globally, `0.60` for yes/no questions, and `0.50` for Choice and Score. You can raise a decision's floor when you want to trust it less often. A missing answer also falls back. Low-confidence craft/world guidance is omitted from the Director prompt; it does not cause an extra Director call.
 
-For the three direct controls, an uncertain Smart trigger **runs the Director**, an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. An uncertain violation check cannot by itself trigger a repair. This is why a fallback badge is not an additional call or a command Jev successfully made.
+For the three direct controls, an uncertain Smart trigger **runs the Director**, an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. An uncertain key guardrail prompts one repair; if the recheck remains inconclusive, the note is withheld. Other uncertain answers remain advisory.
 
 **Confidence caveat:** Jev does not report confidence for yes/no answers, so LumiWorld derives it from the probability. If a Choice or Score response omits confidence, the current code treats it as `1.00`. The displayed answer and a **partial** turn badge do not mean every answer affected the result: check **Sent to Director**, **Decision ignored**, and the per-decision notes.
 
@@ -213,11 +214,11 @@ For example, Jev might return **Pacing control: tighten, confidence 0.82** and *
 | # | Decision | What Jev checks | Today | Default |
 |---:|---|---|---|---|
 | 17 | Director verification | Clean, violation, or uncertain: does the draft contradict, repeat, or prematurely resolve something? | **Repair** on confident violation. | On |
-| 18 | Player agency guard | Does the draft decide the player character's thoughts, words, or actions? **Yes means a problem.** | **Repair** on confident yes. | On |
+| 18 | Player agency guard | Does the draft decide the player character's thoughts, words, or actions? **Yes means a problem.** | **Repair** on yes or an inconclusive answer; withhold if the recheck is not clean. | On |
 | 19 | User-intent arbitration | Does the draft follow the player's instruction, world momentum, both, or is there no instruction? | **Record** only at present. | Off |
-| 20 | Duplicate suppression | New, repeated, or near-duplicate development? | **Repair** on confident repeat or near duplicate. | On |
-| 21 | Continuity guard | Consistent, violation, or uncertain against established facts? | **Repair** on confident violation. | On |
-| 22 | Intensity and boundary gating | Within range, borderline, or out of range? | **Repair** on confident out of range. | On |
+| 20 | Duplicate suppression | New, repeated, or near-duplicate development? | **Repair** on repeat or an inconclusive answer; withhold if unresolved. | On |
+| 21 | Continuity guard | Consistent, violation, or uncertain against established facts? | **Repair** on violation or an inconclusive answer; withhold if unresolved. | On |
+| 22 | Intensity and boundary gating | Within range, borderline, or out of range? | **Repair** on out of range or an inconclusive answer; withhold if unresolved. | On |
 
 #### State accuracy — 7 questions after the Director
 
@@ -229,7 +230,7 @@ For example, Jev might return **Pacing control: tighten, confidence 0.82** and *
 | 26 | Scene state tracking | Did the draft change something worth saving? Yes/no. | **State:** gates the derived update after the reply lands. | On |
 | 27 | Scene state diff | Five levels from tension falling sharply to rising sharply. | **State:** currently sets a stored tension level; despite its name, it is not applied as a delta. | Off |
 | 28 | Relationship deltas | Five levels from more hostile to more trusting. | **State:** stores a generic scene stance; it does not identify a named NPC. | Off |
-| 29 | Thread lifecycle | Continue, resolve, dormant, or abandon the developed thread. | **State:** can save a status using a snippet of the Director note as its label. | Off |
+| 29 | Thread lifecycle | Continue, resolve, dormant, or abandon the developed thread. | **State:** updates a validated `thread_label` from structured Director output; never uses note prose as a label. | Off |
 
 #### Narrative direction — 5 questions before the Director
 

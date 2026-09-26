@@ -4,8 +4,8 @@ import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessa
 import {
   BREAKDOWN_NAME, CONTROLLER_CONTEXT_LABEL_KEY, KeyedOperationLock, DEFAULT_SETTINGS, appendRunLog,
   buildControllerMessages, buildInjectedDirective, describeEmptyControllerResponse,
-  formatPromptForController, makeDirectivePreview, makeControllerContextMessage,
-  makeJevDiagnostics, normalizeRunLog, normalizeSettings, parseControllerDirectiveFromResponse,
+  currentUserContextMessages, formatPromptForController, latestPlayerChatMessage, makeDirectivePreview, makeControllerContextMessage,
+  makeJevDiagnostics, normalizeRunLog, normalizeSettings, parseControllerDirectiveFromResponse, parseControllerThreadLabelFromResponse,
   resolveControllerTarget, resolveIdentityMacros, resolveJevProvider, resolveWorldInfoContextMessages,
   selectChatHistoryMessagesForController, selectControllerMessagesForController, shouldInterceptGeneration,
   jevSecretKey,
@@ -15,7 +15,7 @@ import {
   type RunLogEntry, type TurnTrace, type WorldInfoContextDiagnostics,
 } from "./shared";
 import {
-  countJevFlags, contextFilterDecision, decideRepair, directorGuidanceFromGates, planGates, questionsFromPlan,
+  assessVerification, countJevFlags, contextFilterDecision, directorGuidanceFromGates, planGates, questionsFromPlan,
   resolveGateAnswers, shouldRunDirector, wantsStrongDirectorModel, withConfidenceGate, withDegradationGate,
 } from "./gates";
 import { buildJevState, buildJevSmokeRequest, callJev, exceedsJevTokenBudget, jevEndpoint, normalizeJevResponse, parseJevBody, readCorsResult, type JevAnswer, type JevQuestions } from "./jev";
@@ -785,6 +785,7 @@ const CONTROLLER_CONTEXT_LABEL = CONTROLLER_CONTEXT_LABEL_KEY;
 
 interface PreparedController {
   controllerMessages: LlmMessageLike[];
+  currentUserMessages: LlmMessageLike[];
   promptSnapshot: ReturnType<typeof formatPromptForController>;
   /** Persona, character, and World Info messages resolved for this turn. */
   contextMessages: LlmMessageLike[];
@@ -848,17 +849,22 @@ async function prepareController(
     messages as LlmMessageLike[], settings,
     [...contextMessages, ...(includeDirectorWorldInfo ? worldInfoContext.messages : [])],
   );
-  const promptSnapshot = formatPromptForController(selected, settings.maxInputChars);
+  const currentUserMessages = currentUserContextMessages(messages as LlmMessageLike[], settings.maxInputChars);
+  const currentChars = currentUserMessages.reduce((sum, message) => sum + serializeContent(message.content).length, 0);
+  const promptSnapshot = formatPromptForController(selected, Math.max(1000, settings.maxInputChars - currentChars));
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType, chatId: chatId || "", connectionId: extractConnectionId(context),
     user: identity.userName || "User",
     char: identity.characterName || "Character",
   });
+  controllerMessages.splice(-1, 0, ...currentUserMessages);
+  const latestPlayerAction = latestPlayerChatMessage(messages as LlmMessageLike[]);
 
   const worldStateText = projectWorldState(worldState);
   const jevHistory = selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.jev.historyMessageLimit);
   return {
     controllerMessages,
+    currentUserMessages,
     promptSnapshot,
     contextMessages: [...contextMessages, ...(includeDirectorWorldInfo ? worldInfoContext.messages : [])],
     worldState,
@@ -878,6 +884,7 @@ async function prepareController(
       generationType,
       chatId: chatId ?? "",
       history: jevHistory,
+      latestPlayerAction: latestPlayerAction ? serializeContent(latestPlayerAction.content).trim() : null,
       personaSummary: contextMessageSummary(jevContextMessages, "User Persona"),
       characterSummary: contextMessageSummary(jevContextMessages, "Character"),
       worldInfoSummary: includeJevWorldInfo ? summaryOfMessages(worldInfoContext.messages, 6000) : null,
@@ -922,10 +929,12 @@ function applyContextFilter(
   const history = decision.keepHistory
     ? selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.historyMessageLimit)
     : [];
-  const promptSnapshot = formatPromptForController([...contextMessages, ...history], settings.maxInputChars);
+  const currentChars = base.currentUserMessages.reduce((sum, message) => sum + serializeContent(message.content).length, 0);
+  const promptSnapshot = formatPromptForController([...contextMessages, ...history], Math.max(1000, settings.maxInputChars - currentChars));
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType, chatId: base.stateContext.chatId, connectionId: extractConnectionId(context),
   });
+  controllerMessages.splice(-1, 0, ...base.currentUserMessages);
   return {
     ...base,
     controllerMessages,
@@ -989,7 +998,7 @@ async function callController(
   settings: LumiWorldSettings,
   target: ControllerTarget,
   messages: LlmMessageLike[],
-): Promise<{ directive: string; durationMs: number; responseJson: string | null }> {
+): Promise<{ directive: string; threadLabel: string | null; durationMs: number; responseJson: string | null }> {
   if (!userId) {
     throw new Error("LumiWorld could not resolve the active Lumiverse user for the controller call.");
   }
@@ -1020,7 +1029,7 @@ async function callController(
     if (!directive) {
       throw new EmptyControllerDirectiveError(response);
     }
-    return { directive, durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
+    return { directive, threadLabel: parseControllerThreadLabelFromResponse(response), durationMs: Date.now() - startedAt, responseJson: jsonText(response) };
   } catch (error) {
     if (timedOut || (error instanceof Error && error.name === "AbortError")) {
       throw new ControllerTimeoutError(settings.timeoutMs);
@@ -1080,6 +1089,7 @@ async function handleInterceptor(
     generationOutcome: dryRun ? "preview" : userId && chatId && generationId
       && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
     generationError: null, messageId: null, finalReply: null, worldStateOutcome: "not_used",
+    directiveDisposition: null, verificationVerdict: null, verificationReason: null,
     worldStateBeforeJson: null, worldStateAfterJson: null,
     incomingMessagesJson: jsonText(messages), directorMessagesJson: null,
     initialDirective: null, finalDirective: null, initialResponseJson: null,
@@ -1194,6 +1204,8 @@ async function handleInterceptor(
 
     const first = await callController(userId, settings, target, prepared.controllerMessages);
     let directive = first.directive;
+    let threadLabel = first.threadLabel;
+    let withheldReason: string | null = null;
     turnTrace.initialDirective = directive;
     turnTrace.initialResponseJson = first.responseJson;
 
@@ -1209,23 +1221,25 @@ async function handleInterceptor(
       });
       Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, phase, "verify_draft"));
       verifyRecords = phase.records;
-
-      const repair = decideRepair(verifyRecords);
-      if (repair) {
-        // Exactly one bounded repair attempt. A second failure keeps the original
-        // directive rather than looping, and the unresolved violation is recorded.
-        const repaired = await regenerateDirective(userId, settings, target, prepared, repair, verifyRecords);
+      let assessment = assessVerification(verifyRecords, phase.error);
+      turnTrace.verificationVerdict = assessment.verdict;
+      turnTrace.verificationReason = assessment.reason;
+      if (assessment.repair) {
+        // Exactly one bounded repair attempt. A failed or unresolved repair
+        // withholds the note rather than sending the known problem downstream.
+        const repaired = await regenerateDirective(userId, settings, target, prepared, directive, assessment.repair, verifyRecords);
         jevDiagnostics.revision = {
-          action: repair.action, reason: repair.reason,
+          action: assessment.repair.action, reason: assessment.repair.reason,
           status: repaired.directive ? "revised" : "failed",
           durationMs: repaired.durationMs, error: repaired.error,
           initialDirectivePreview: makeDirectivePreview(directive) ?? "",
-          revisedDirectivePreview: makeDirectivePreview(repaired.directive), unresolved: false,
+          revisedDirectivePreview: makeDirectivePreview(repaired.directive), unresolved: true,
           promptJson: repaired.promptJson, revisedDirective: repaired.directive,
           responseJson: repaired.responseJson,
         };
         if (repaired.directive) {
           directive = repaired.directive;
+          threadLabel = repaired.threadLabel;
           const recheck = await runGatePhase("verify", {
             jevRun, settings,
             stateContext: prepared.stateContext,
@@ -1236,23 +1250,44 @@ async function handleInterceptor(
           });
           Object.assign(jevDiagnostics, mergeJevDiagnostics(jevDiagnostics, recheck, "verify_revision"));
           verifyRecords = recheck.records;
-          const unresolved = decideRepair(verifyRecords);
-          jevDiagnostics.revision.unresolved = !!unresolved;
-          if (unresolved) {
-            spindle.log.warn(`LumiWorld injected a directive with an unresolved ${unresolved.action} after one repair.`);
-          }
+          assessment = assessVerification(verifyRecords, recheck.error);
+          turnTrace.verificationVerdict = assessment.verdict;
+          turnTrace.verificationReason = assessment.reason;
+          jevDiagnostics.revision.unresolved = assessment.verdict !== "clean";
+          if (assessment.verdict !== "clean") withheldReason = assessment.reason ?? "The revised note could not be verified.";
         } else {
-          spindle.log.warn(`LumiWorld kept the original directive after a failed ${repair.action} repair.`);
+          withheldReason = repaired.error ?? "The Director could not repair the note.";
+          turnTrace.verificationVerdict = "inconclusive";
+          turnTrace.verificationReason = withheldReason;
         }
       }
+    } else {
+      turnTrace.verificationVerdict = "unverified";
+      turnTrace.verificationReason = jevRun.error ?? "Jev was disabled for this turn.";
+    }
+
+    if (withheldReason) {
+      turnTrace.directiveDisposition = "withheld";
+      turnTrace.finalDirective = null;
+      const allRecords = withConfidenceGate(
+        withDegradationGate(jevDiagnostics.phases.flatMap((phase) => phase.gates), { status: jevDiagnostics.status, error: jevDiagnostics.error }),
+        settings.jev.minConfidence,
+      );
+      await recordTurnRun(makeRunBase("skipped", startedAt, {
+        channel: "director", generationType, directorDurationMs: first.durationMs,
+        connectionId: target.connectionId, connectionName: target.connectionName, model: target.model,
+        error: `Director note withheld: ${withheldReason}`, ...runLogWorldInfoPatch(worldInfoDiagnostics),
+        jev: { ...jevDiagnostics, gates: allRecords, gateCount: allRecords.length }, trace: turnTrace,
+      }), userId, settings);
+      return messages;
     }
 
     /* ---------------- Commit derived state ---------------- */
     // The scene may only advance once a reply actually lands. A dry run never
     // counts, and a live turn defers its commit to GENERATION_ENDED so a
     // cancelled, failed, or superseded generation cannot move the world.
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
-      const committed = commitWorldState(worldState, verifyRecords, directive);
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId && !dryRun) {
+      const committed = commitWorldState(worldState, verifyRecords, threadLabel);
       worldState = committed;
       turnTrace.worldStateAfterJson = jsonText(committed);
       if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
@@ -1271,6 +1306,7 @@ async function handleInterceptor(
       settings.jev.minConfidence,
     );
     turnTrace.finalDirective = directive;
+    turnTrace.directiveDisposition = "injected";
     const injected: LlmMessageDTO = { role: "system", content: buildInjectedDirective(directive) };
     await recordTurnRun(makeRunBase("success", startedAt, {
       channel: "director", generationType, directorDurationMs: first.durationMs,
@@ -1325,22 +1361,26 @@ async function regenerateDirective(
   settings: LumiWorldSettings,
   target: ControllerTarget,
   prepared: PreparedController,
+  originalDirective: string,
   repair: { action: string; reason: string },
   records: JevGateRecord[],
-): Promise<{ directive: string | null; durationMs: number; error: string | null; promptJson: string | null; responseJson: string | null }> {
+): Promise<{ directive: string | null; threadLabel: string | null; durationMs: number; error: string | null; promptJson: string | null; responseJson: string | null }> {
   const violated = records
-    .filter((record) => !record.usedFallback && ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value as string | boolean))
-    .map((record) => `- ${record.label}: ${String(record.value)}${record.note ? ` (${record.note})` : ""}`)
+    .filter((record) => ["player_agency", "continuity_guard", "duplicate_suppression", "intensity_boundary", "director_verification"].includes(record.gateId)
+      && (record.usedFallback || ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value as string | boolean)))
+    .map((record) => `- ${record.label}: ${String(record.value)}${record.usedFallback ? " (inconclusive)" : ""}`)
     .join("\n");
   const repairMessages: LlmMessageLike[] = [
     ...prepared.controllerMessages,
+    { role: "assistant", content: originalDirective },
     {
       role: "system",
       content: [
-        `LumiWorld verification found a problem with the direction you just produced. Repair it with this action: ${repair.action}.`,
+        `LumiWorld verification found a problem with the draft directive above. Repair it with this action: ${repair.action}.`,
         repair.reason,
-        violated ? `Flagged checks:\n${violated}` : "",
-        "Return a corrected directive only. Keep the same format and length limits.",
+        violated ? `Blocking or inconclusive checks:\n${violated}` : "",
+        "Preserve unaffected beats. Preserve the actor, target, and completed events in the latest player chat action exactly. Do not decide the player's next action.",
+        "Return a corrected directive only. Keep the same format and length limits. Include an optional thread_label only if it names a specific story thread.",
       ].filter(Boolean).join("\n"),
     },
   ];
@@ -1348,11 +1388,11 @@ async function regenerateDirective(
   const startedAt = Date.now();
   try {
     const repaired = await callController(userId, settings, target, repairMessages);
-    return { directive: repaired.directive, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
+    return { directive: repaired.directive, threadLabel: repaired.threadLabel, durationMs: repaired.durationMs, error: null, promptJson, responseJson: repaired.responseJson };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     spindle.log.warn(`LumiWorld repair attempt failed: ${message}`);
-    return { directive: null, durationMs: Date.now() - startedAt, error: message, promptJson,
+    return { directive: null, threadLabel: null, durationMs: Date.now() - startedAt, error: message, promptJson,
       responseJson: error instanceof EmptyControllerDirectiveError ? error.responseJson : null };
   }
 }

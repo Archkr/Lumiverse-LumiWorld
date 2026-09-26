@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_SYSTEM_TEMPLATE,
   ENCLAVE_KEY_PATTERN,
   jevSecretKey,
   KeyedOperationLock,
@@ -11,6 +12,7 @@ import {
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
   appendRunLog,
   buildControllerMessages,
+  currentUserContextMessages,
   buildInjectedDirective,
   describeEmptyControllerResponse,
   extractControllerResponseText,
@@ -19,6 +21,7 @@ import {
   normalizeSettings,
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
+  parseControllerThreadLabelFromResponse,
   resolveControllerTarget,
   resolveWorldInfoContextMessages,
   extractActivatedWorldInfoEntries,
@@ -220,6 +223,16 @@ describe("settings normalization", () => {
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
   });
 
+  test("upgrades the previous built-in template to request structured thread names", () => {
+    const previous = DEFAULT_SYSTEM_TEMPLATE
+      .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
+      .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+        "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
+    const settings = normalizeSettings({ systemTemplate: previous });
+    expect(settings.activePromptPresetId).toBe("builtin");
+    expect(settings.systemTemplate).toBe(DEFAULT_SYSTEM_TEMPLATE);
+  });
+
   test("does not cap controller max tokens at legacy 4096", () => {
     expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
   });
@@ -349,6 +362,22 @@ describe("message serialization and prompt trimming", () => {
     const selected = selectChatHistoryMessagesForController(messages, 2);
     expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
+
+  test("keeps the latest player action and unmarked author notes outside trimmed history", () => {
+    const messages: LlmMessageLike[] = [
+      { role: "user", content: "I photograph Shido.", __isChatHistory: true },
+      { role: "assistant", content: "The room reacts.", __isChatHistory: true },
+      { role: "user", content: "Do not move my character for me." },
+      { role: "user", content: "World Info text", __isWorldInfoEntry: true },
+    ];
+    expect(selectChatHistoryMessagesForController(messages, 1)).toHaveLength(1);
+    const current = currentUserContextMessages(messages, 10000);
+    expect(current.map((message) => String(message.content))).toEqual([
+      expect.stringContaining("I photograph Shido."),
+      expect.stringContaining("Do not move my character for me."),
+    ]);
+    expect(JSON.stringify(current)).not.toContain("World Info text");
   });
 
   test("builds controller input from resolved context blocks and recent chat history", () => {
@@ -518,6 +547,9 @@ describe("controller prompt and directive parsing", () => {
     expect(parseControllerDirective('{"director_note":"The lights fail."}')).toBe("The lights fail.");
     expect(parseControllerDirective("```json\n{\"directive\":\"Fog rolls in.\"}\n```")).toBe("Fog rolls in.");
     expect(parseControllerDirective("Let the floorboards creak once.")).toBe("Let the floorboards creak once.");
+    expect(parseControllerDirective('{"thread_label":"Nia suspects Woodman"}')).toBeNull();
+    expect(parseControllerThreadLabelFromResponse({ content: '{"director_note":"Let Nia press her question.","thread_label":"Nia suspects Woodman"}' })).toBe("Nia suspects Woodman");
+    expect(parseControllerThreadLabelFromResponse({ content: "Let Nia press her question." })).toBeNull();
   });
 
   test("extracts controller text from common provider response shapes", () => {

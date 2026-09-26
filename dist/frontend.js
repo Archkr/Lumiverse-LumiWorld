@@ -141,11 +141,12 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
-  '{"director_note":"..."}',
+  '{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}',
   "",
-  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
+var PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = DEFAULT_SYSTEM_TEMPLATE.replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}').replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.", "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
 var PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
@@ -288,7 +289,7 @@ function normalizeSettings(value) {
   const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
   const legacyUserTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   const promptPresets = [];
   const seenPresetIds = new Set;
@@ -530,7 +531,7 @@ var GATE_CATALOG = withCore([
     thread: "Another thread is affected by it",
     broad: "Several of the above react at once"
   }, "run", "contained", "broad"),
-  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `chat_history` and `scene_state`. Does it contain a contradiction, a repetition of something already committed, or a premature resolution of an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
+  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `latest_player_action`, `chat_history`, and `scene_state`. Does it change the actor or target of the player's completed action, repeat that action as a new event, contradict a committed fact, or prematurely resolve an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
     clean: "The directive is free of contradictions, repetition, and premature resolution",
     violation: "The directive contains at least one of those problems",
     uncertain: "Something looks off, but it is not clear enough to call a violation"
@@ -545,12 +546,12 @@ var GATE_CATALOG = withCore([
     blends: "The directive satisfies both, weighting the instruction",
     not_applicable: "There is no explicit out-of-character instruction to reconcile"
   }, "accept", "not_applicable", "follows_world"),
-  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compared with the recent exchange in `chat_history`, does `draft_directive` develop something genuinely new or repeat a development that has already been committed?", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
+  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay a completed player action or an already committed development? NPC reactions to that action are new, but repeating the action itself is not.", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
     new: "The development has not happened yet in the recent exchange",
     repeats: "The directive repeats a development that already happened",
     near_duplicate: "The directive is a thin variation on something that already happened"
   }, "retry", "new", "repeats"),
-  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict established facts in `chat_history`, `scene_state`, or `world_info`?", "Prevents the Director from breaking facts the story has already committed to.", {
+  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict `latest_player_action`, `chat_history`, `scene_state`, or `world_info`? Check the actor and target of the player's completed action exactly; do not silently switch who or what they acted on.", "Prevents the Director from breaking facts the story has already committed to.", {
     consistent: "Nothing in the directive contradicts established facts",
     violation: "The directive contradicts an established fact",
     uncertain: "The directive may contradict an established fact, but it is not clear"
@@ -1700,11 +1701,11 @@ function setup(ctx) {
   function diagnosticsSection() {
     const run = latestTurnRun();
     const generationOutcome = run?.trace?.generationOutcome;
-    const badge = !run ? undefined : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? generationOutcome : run.status === "success" ? run.jev?.status === "degraded" ? "degraded" : run.jev?.fallbackCount ? "partial" : "completed" : run.status;
+    const badge = !run ? undefined : run.trace?.directiveDisposition === "withheld" ? "note withheld" : run.trace?.verificationVerdict === "unverified" && run.status === "success" ? "unverified" : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? generationOutcome : run.status === "success" ? run.jev?.status === "degraded" ? "degraded" : run.jev?.fallbackCount ? "partial" : "completed" : run.status;
     return collapsible({
       title: "Last turn",
       badge,
-      badgeTone: generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error" : run?.status === "success" ? run.jev?.status === "degraded" || run.jev?.fallbackCount ? "warning" : "success" : run?.status === "error" || run?.status === "timeout" ? "error" : "warning",
+      badgeTone: run?.trace?.directiveDisposition === "withheld" || generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error" : run?.status === "success" ? run.jev?.status === "degraded" || run.jev?.fallbackCount ? "warning" : "success" : run?.status === "error" || run?.status === "timeout" ? "error" : "warning",
       expanded: diagnosticsOpen,
       onToggle: (open) => {
         diagnosticsOpen = open;
@@ -1841,7 +1842,7 @@ function setup(ctx) {
     const skippedByJev = diagnostics?.status === "skipped";
     const wrap = el("div", "lw-diag");
     const generationOutcome = run.trace?.generationOutcome;
-    const outcome = generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn." : generationOutcome === "stopped" ? "The visible reply was stopped after LumiWorld prepared this turn." : generationOutcome === "superseded" ? "A newer generation replaced this turn." : run.trace?.dryRun && run.status === "success" ? "Preview prepared a Director note; no live reply was changed." : run.status === "success" ? "Director note added to the main prompt." : skippedByJev ? "Jev chose not to run the Director. No LumiWorld note was added to the main prompt." : run.status === "timeout" ? "The Director timed out. No LumiWorld note was added." : run.status === "error" ? "The Director failed. No LumiWorld note was added." : "No LumiWorld note was added to the main prompt.";
+    const outcome = run.trace?.directiveDisposition === "withheld" ? "LumiWorld withheld the Director note. The main reply used its original prompt." : generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn." : generationOutcome === "stopped" ? "The visible reply was stopped after LumiWorld prepared this turn." : generationOutcome === "superseded" ? "A newer generation replaced this turn." : run.trace?.dryRun && run.status === "success" ? "Preview prepared a Director note; no live reply was changed." : run.status === "success" ? "Director note added to the main prompt." : skippedByJev ? "Jev chose not to run the Director. No LumiWorld note was added to the main prompt." : run.status === "timeout" ? "The Director timed out. No LumiWorld note was added." : run.status === "error" ? "The Director failed. No LumiWorld note was added." : "No LumiWorld note was added to the main prompt.";
     wrap.append(el("div", "lw-diag-outcome", outcome));
     const toolbar = el("div", "lw-diag-toolbar");
     if (run.timestamp >= Date.UTC(2000, 0, 1))
@@ -1861,6 +1862,10 @@ function setup(ctx) {
       strip.append(el("span", "lw-badge", run.generationType));
     if (run.trace?.dryRun)
       strip.append(el("span", "lw-badge", "preview"));
+    if (run.trace?.directiveDisposition)
+      strip.append(el("span", "lw-badge", `note ${run.trace.directiveDisposition}`));
+    if (run.trace?.verificationVerdict)
+      strip.append(el("span", "lw-badge", `verification ${run.trace.verificationVerdict}`));
     if (generationOutcome)
       strip.append(el("span", "lw-badge", `reply ${generationOutcome}`));
     if (run.trace?.worldStateOutcome && run.trace.worldStateOutcome !== "not_used")
@@ -1901,6 +1906,11 @@ function setup(ctx) {
     if (run.trace?.generationError) {
       const notice = el("div", "lw-notice", run.trace.generationError);
       notice.dataset.tone = "warning";
+      wrap.append(notice);
+    }
+    if (run.trace?.verificationReason) {
+      const notice = el("div", "lw-notice", run.trace.verificationReason);
+      notice.dataset.tone = run.trace.verificationVerdict === "clean" ? "success" : "warning";
       wrap.append(notice);
     }
     if (diagnostics?.error && diagnostics.error !== run.error) {
@@ -1957,7 +1967,7 @@ function setup(ctx) {
       if (revision.revisedDirective)
         step.append(el("div", "lw-diag-outcome", revision.revisedDirective));
       if (revision.unresolved)
-        step.append(el("p", "lw-hint", "The final check still found a problem after the one allowed revision."));
+        step.append(el("p", "lw-hint", "The final check did not confidently clear the key guardrails after the one allowed revision."));
       const prompt = rawTraceSection("Full revision prompt", revision.promptJson);
       const response = rawTraceSection("Raw revision response", revision.responseJson);
       if (prompt)
@@ -1972,7 +1982,7 @@ function setup(ctx) {
     const final = traceStep("Final outcome", [run.status, generationOutcome ? `reply ${generationOutcome}` : null].filter(Boolean).join(" · "), true);
     if (run.trace?.finalDirective)
       final.append(el("div", "lw-diag-outcome", run.trace.finalDirective));
-    else if (run.directivePreview)
+    else if (run.trace?.directiveDisposition !== "withheld" && run.directivePreview)
       final.append(el("div", "lw-diag-outcome", run.directivePreview));
     if (run.worldInfoActivatedCount !== null && run.worldInfoActivatedCount !== undefined) {
       final.append(el("p", "lw-hint", `World Info: ${run.worldInfoActivatedCount} activated, ${run.worldInfoFetchedCount ?? 0} fetched, ${run.worldInfoFallbackTaggedCount ?? 0} fallback tagged.`));
