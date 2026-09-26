@@ -312,7 +312,6 @@ export interface CallJevOptions {
   questions: JevQuestions;
   /** Called when Jev answers at least one question. */
   cors: CorsFetch;
-  signal?: AbortSignal;
   /** Total wall clock available for this phase, including retries. */
   budgetMs?: number;
   timeoutMs?: number;
@@ -373,26 +372,17 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
 
   const attempt = async (): Promise<{ response: JevResponse } | { retryAfterMs: number | null; error: JevError }> => {
     requests += 1;
-    const local = new AbortController();
-    let timedOut = false;
-    const onAbort = () => local.abort();
-    options.signal?.addEventListener("abort", onAbort, { once: true });
     const budget = remainingBudgetMs(startedAt, options.budgetMs);
     const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
-    const timer = setTimeout(() => {
-      timedOut = true;
-      local.abort();
-    }, effective);
 
     try {
-      // Bound the wait ourselves: the proxy ignores the signal we pass, so racing
-      // the deadline is the only way to return on time rather than after it does.
+      // The proxy crosses a worker message boundary. Only cloneable request data
+      // may be sent; enforce the timeout locally because the proxy cannot abort.
       const raw = await withDeadline(
         options.cors(request.url, {
           method: "POST",
           headers: request.headers,
           body: request.body,
-          signal: local.signal,
         }),
         effective,
         () => new JevTimeoutError(effective),
@@ -409,14 +399,11 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
       }
       return { response: normalizeJevResponse(parseJevBody(result.body)) };
     } catch (error) {
-      if (error instanceof JevError) throw error;
-      if (timedOut || (error instanceof Error && error.name === "AbortError")) {
+      if (error instanceof JevError || error instanceof JevTimeoutError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
         throw new JevTimeoutError(effective);
       }
       throw new JevError(error instanceof Error ? error.message : String(error));
-    } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
     }
   };
 

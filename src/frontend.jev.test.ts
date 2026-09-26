@@ -395,6 +395,26 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
+  test("restores the master switches from saved settings after reload", () => {
+    const harness = mount(makeState({
+      settings: settings({ enabled: true, jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
+    }));
+    const director = labelled(harness.root, "Enable Director") as HTMLInputElement;
+    expect(director.checked).toBe(true);
+    tabs(harness.root)[1]!.click();
+    const jev = labelled(harness.root, "Enable Jev") as HTMLInputElement;
+    expect(jev.checked).toBe(true);
+    harness.destroy();
+  });
+
+  test("updates the mounted switch when backend settings change", () => {
+    const harness = mount(makeState());
+    expect((labelled(harness.root, "Enable Director") as HTMLInputElement).checked).toBe(false);
+    harness.push({ type: "state", state: makeState({ settings: settings({ enabled: true }) }) });
+    expect((labelled(harness.root, "Enable Director") as HTMLInputElement).checked).toBe(true);
+    harness.destroy();
+  });
+
   test("registers the header switch exactly once per view", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
     const headerSwitches = harness.root.querySelectorAll('.lw-header input[type="checkbox"]');

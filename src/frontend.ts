@@ -359,6 +359,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let headerToggleHandle: MountedHandle | null = null;
   /** Which view's setting the header switch currently drives. */
   let headerMountedTab: LumiTab | null = null;
+  let headerMountedEnabled: boolean | null = null;
   let diagnosticsOpen = false;
   let nextFieldId = 0;
 
@@ -1194,9 +1195,10 @@ export function setup(ctx: SpindleFrontendContext) {
 
     headerTitle.textContent = jev ? "Jev" : "Director";
 
-    // Rebuilding the switch is only necessary when the header changes which
-    // setting it targets; a re-render keeps the live control in place.
-    if (headerMountedTab !== activeTab) {
+    // Saved settings arrive after the header is first built. Rebuild if their
+    // switch value differs from the control mounted with the initial defaults.
+    const enabled = jev ? draft.jev.enabled : draft.enabled;
+    if (headerMountedTab !== activeTab || headerMountedEnabled !== enabled) {
       if (headerToggleHandle) {
         const index = handles.indexOf(headerToggleHandle);
         if (index !== -1) handles.splice(index, 1);
@@ -1205,10 +1207,9 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       headerToggleSlot.replaceChildren();
 
-      const enabled = jev ? draft.jev.enabled : draft.enabled;
       const onChange = jev
-        ? (next: boolean) => mutateJev({ enabled: next }, true)
-        : (next: boolean) => mutate({ enabled: next });
+        ? (next: boolean) => { headerMountedEnabled = next; mutateJev({ enabled: next }, true); }
+        : (next: boolean) => { headerMountedEnabled = next; mutate({ enabled: next }); };
       const slot = headerToggleSlot;
       const fallback = () => {
         const input = el("input");
@@ -1236,7 +1237,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (!mounted) fallback();
       // The switch outlives individual renders, so it is deliberately kept out of
       // the per-render handle list and destroyed only when it is replaced.
-      headerMountedTab = activeTab;      headerMountedTab = activeTab;
+      headerMountedTab = activeTab;
+      headerMountedEnabled = enabled;
     }
 
     updateHeaderStatus();

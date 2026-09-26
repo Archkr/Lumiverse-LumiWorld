@@ -964,6 +964,7 @@ function setup(ctx) {
   let headerToggleSlot = null;
   let headerToggleHandle = null;
   let headerMountedTab = null;
+  let headerMountedEnabled = null;
   let diagnosticsOpen = false;
   let nextFieldId = 0;
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -1740,7 +1741,8 @@ function setup(ctx) {
       return;
     const jev = activeTab === "jev";
     headerTitle.textContent = jev ? "Jev" : "Director";
-    if (headerMountedTab !== activeTab) {
+    const enabled = jev ? draft.jev.enabled : draft.enabled;
+    if (headerMountedTab !== activeTab || headerMountedEnabled !== enabled) {
       if (headerToggleHandle) {
         const index = handles.indexOf(headerToggleHandle);
         if (index !== -1)
@@ -1751,8 +1753,13 @@ function setup(ctx) {
         headerToggleHandle = null;
       }
       headerToggleSlot.replaceChildren();
-      const enabled = jev ? draft.jev.enabled : draft.enabled;
-      const onChange = jev ? (next) => mutateJev({ enabled: next }, true) : (next) => mutate({ enabled: next });
+      const onChange = jev ? (next) => {
+        headerMountedEnabled = next;
+        mutateJev({ enabled: next }, true);
+      } : (next) => {
+        headerMountedEnabled = next;
+        mutate({ enabled: next });
+      };
       const slot = headerToggleSlot;
       const fallback = () => {
         const input = el("input");
@@ -1779,7 +1786,7 @@ function setup(ctx) {
       if (!mounted)
         fallback();
       headerMountedTab = activeTab;
-      headerMountedTab = activeTab;
+      headerMountedEnabled = enabled;
     }
     updateHeaderStatus();
   }

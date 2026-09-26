@@ -639,6 +639,10 @@ describe("v0.5 Jev drawer protocol", () => {
       throw new Error("expected a successful Jev test");
     }
     expect(enclave.get("jev-api-key.typesafe")).toBe("fresh-key");
+    sent.length = 0;
+    await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
+    const reloaded = sent.find((message) => message.type === "state");
+    expect(reloaded?.type === "state" && reloaded.state.hasJevKey).toBe(true);
   });
 
   test("does not store a key the provider rejected", async () => {

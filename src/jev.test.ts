@@ -226,6 +226,20 @@ describe("jev state projection", () => {
 });
 
 describe("jev transport", () => {
+  test("sends only cloneable options across the host proxy", async () => {
+    const outcome = await callJev({
+      config: { ...settings(), apiKey: "k" },
+      state: "s",
+      questions: { ping: { type: "noul", instructions: "?" } },
+      cors: async (_url, options) => {
+        const forwarded = structuredClone(options) as Record<string, unknown>;
+        expect(Object.keys(forwarded).sort()).toEqual(["body", "headers", "method"]);
+        return { status: 200, statusText: "OK", headers: {}, body: JSON.stringify({ answers: { ping: { type: "noul", noul: 0.9 } } }) };
+      },
+    });
+    expect(outcome.ok).toBe(true);
+  });
+
   test("returns a normalized response on success", async () => {
     const outcome = await callJev({
       config: { ...settings(), apiKey: "k" },
@@ -311,10 +325,7 @@ describe("jev transport", () => {
       timeoutMs: 1000,
       budgetMs: 1000,
       retryOnRateLimit: false,
-      cors: (_url, options) => new Promise((_resolve, reject) => {
-        const signal = (options as { signal?: AbortSignal } | undefined)?.signal;
-        signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
-      }),
+      cors: () => new Promise(() => {}),
     });
     expect(outcome.ok).toBe(false);
     expect(outcome.timedOut).toBe(true);

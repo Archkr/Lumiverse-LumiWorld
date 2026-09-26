@@ -1793,22 +1793,13 @@ async function callJev(options) {
   let requests = 0;
   const attempt = async () => {
     requests += 1;
-    const local = new AbortController;
-    let timedOut = false;
-    const onAbort = () => local.abort();
-    options.signal?.addEventListener("abort", onAbort, { once: true });
     const budget = remainingBudgetMs(startedAt, options.budgetMs);
     const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
-    const timer = setTimeout(() => {
-      timedOut = true;
-      local.abort();
-    }, effective);
     try {
       const raw = await withDeadline(options.cors(request.url, {
         method: "POST",
         headers: request.headers,
-        body: request.body,
-        signal: local.signal
+        body: request.body
       }), effective, () => new JevTimeoutError(effective));
       const result = readCorsResult(raw);
       if (result.status === 429 || result.status >= 500) {
@@ -1822,15 +1813,12 @@ async function callJev(options) {
       }
       return { response: normalizeJevResponse(parseJevBody(result.body)) };
     } catch (error) {
-      if (error instanceof JevError)
+      if (error instanceof JevError || error instanceof JevTimeoutError)
         throw error;
-      if (timedOut || error instanceof Error && error.name === "AbortError") {
+      if (error instanceof Error && error.name === "AbortError") {
         throw new JevTimeoutError(effective);
       }
       throw new JevError(error instanceof Error ? error.message : String(error));
-    } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
     }
   };
   const retryable = options.retryOnRateLimit ?? options.config.retryOnRateLimit ?? true;
