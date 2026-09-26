@@ -1791,12 +1791,16 @@ async function callJev(options) {
       local.abort();
     }, effective);
     try {
+      const attemptedAt = Date.now();
       const raw = await options.cors(request.url, {
         method: "POST",
         headers: request.headers,
         body: request.body,
         signal: local.signal
       });
+      if (timedOut || Date.now() - attemptedAt >= effective) {
+        throw new JevTimeoutError(effective);
+      }
       const result = readCorsResult(raw);
       if (result.status === 429 || result.status >= 500) {
         return {
@@ -1839,7 +1843,8 @@ async function callJev(options) {
     if ("error" in outcome) {
       const waitMs = outcome.retryAfterMs ?? 750;
       const budgetLeft = remainingBudgetMs(startedAt, options.budgetMs);
-      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < timeoutMs * 2;
+      const deadlineLeft = timeoutMs - (Date.now() - startedAt);
+      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < deadlineLeft;
       if (!canRetry) {
         return {
           ok: false,
@@ -1897,8 +1902,9 @@ function truncate(value, budget) {
     return "";
   if (text.length <= budget)
     return text;
-  return `${text.slice(0, Math.max(0, budget - 24)).trimEnd()}
+  const notice = `
 [... truncated ...]`;
+  return `${text.slice(0, Math.max(0, budget - notice.length)).trimEnd()}${notice}`;
 }
 function renderHistory(history, limit, budget) {
   if (limit <= 0 || budget <= 0)
@@ -1913,61 +1919,97 @@ function renderHistory(history, limit, budget) {
   let used = 0;
   for (let index = lines.length - 1;index >= 0; index -= 1) {
     const line = lines[index];
-    if (used + line.length > budget && kept.length > 0)
+    const room = budget - used;
+    if (room <= 0)
       break;
+    if (line.length > room) {
+      if (line.length < 40)
+        break;
+      kept.unshift(`${line.slice(0, Math.max(0, room - 16)).trimEnd()}
+[... cut ...]`);
+      break;
+    }
     kept.unshift(line);
     used += line.length + 1;
   }
   return kept;
 }
+var STATE_FIELD_SHARES = [
+  { key: "character", share: 0.2, min: 200 },
+  { key: "world_info", share: 0.25, min: 200 },
+  { key: "user_persona", share: 0.1, min: 120 },
+  { key: "scene_state", share: 0.15, min: 120 },
+  { key: "director_notes", share: 0.08, min: 80 },
+  { key: "draft_directive", share: 0.12, min: 120 }
+];
+function fieldCost(key, value) {
+  return JSON.stringify(key).length + 2 + JSON.stringify(value).length + 1;
+}
 function buildJevState(context, worldStateContext) {
   const cap = Math.max(500, context.settings.maxStateChars || DEFAULT_JEV_STATE_CHARS);
   const historyLimit = Math.max(0, Math.min(context.settings.historyMessageLimit, MAX_JEV_HISTORY_MESSAGES));
-  const fixed = {
-    generation_type: context.generationType || "normal"
-  };
-  const structured = {};
-  const addStructured = (key, value, budget) => {
+  const optional = {};
+  const addOptional = (key, value) => {
     const text = typeof value === "string" ? value.trim() : "";
-    if (!text)
-      return;
-    structured[key] = truncate(text, budget);
+    if (text)
+      optional[key] = text;
   };
-  addStructured("character", context.characterSummary, 4000);
-  addStructured("user_persona", context.personaSummary, 2000);
-  addStructured("world_info", context.worldInfoSummary, 6000);
-  addStructured("director_notes", context.directorNotes, 1200);
-  addStructured("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined, 3000);
-  addStructured("draft_directive", context.draftDirective, 2500);
-  let state = { ...fixed, ...structured };
-  let history = renderHistory(context.history, historyLimit, Math.max(1000, Math.floor(cap * 0.5)));
-  if (history.length)
-    state.chat_history = history;
-  let chars = JSON.stringify(state).length;
+  addOptional("character", context.characterSummary);
+  addOptional("world_info", context.worldInfoSummary);
+  addOptional("user_persona", context.personaSummary);
+  addOptional("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined);
+  addOptional("director_notes", context.directorNotes);
+  addOptional("draft_directive", context.draftDirective);
   let compacted = false;
-  while (chars > cap && (history.length > 1 || structured.world_info || structured.character)) {
-    compacted = true;
-    if (history.length > 1) {
-      history = history.slice(Math.ceil(history.length / 4));
-      state.chat_history = history;
-    } else if (structured.world_info) {
-      delete structured.world_info;
-    } else if (structured.character) {
-      delete structured.character;
-    } else {
-      break;
+  const build = (shrink) => {
+    const state = { generation_type: context.generationType || "normal" };
+    let used = JSON.stringify(state).length;
+    let truncatedAny = false;
+    for (const { key, share, min } of STATE_FIELD_SHARES) {
+      const text = optional[key];
+      if (!text)
+        continue;
+      const allowance = Math.min(Math.max(min, Math.floor(cap * share * shrink)), Math.max(min, cap - 200));
+      const trimmed = truncate(text, allowance);
+      if (trimmed.length < text.length)
+        truncatedAny = true;
+      const cost = fieldCost(key, trimmed);
+      if (used + cost > cap) {
+        truncatedAny = true;
+        continue;
+      }
+      state[key] = trimmed;
+      used += cost;
     }
-    state = { ...fixed, ...structured };
-    if (history.length)
-      state.chat_history = history;
+    if (historyLimit > 0 && context.history.length > 0) {
+      const available = Math.max(0, cap - used - 18);
+      const lines = renderHistory(context.history, historyLimit, available);
+      if (lines.length < Math.min(context.history.length, historyLimit))
+        truncatedAny = true;
+      if (lines.length)
+        state.chat_history = lines;
+    }
+    if (truncatedAny)
+      compacted = true;
+    return state;
+  };
+  let shrink = 1;
+  let state = build(shrink);
+  let chars = JSON.stringify(state).length;
+  while (chars > cap && shrink > 0.05) {
+    shrink = shrink > 0.5 ? 0.35 : shrink > 0.15 ? 0.1 : 0.02;
+    state = build(shrink);
     chars = JSON.stringify(state).length;
   }
   if (chars > cap) {
-    compacted = true;
-    if (history.length) {
-      state.chat_history = renderHistory(context.history, 2, Math.max(500, Math.floor(cap * 0.3)));
+    for (const key of ["draft_directive", "director_notes", "scene_state", "user_persona", "world_info", "character"]) {
+      if (chars <= cap)
+        break;
+      if (!(key in state))
+        continue;
+      delete state[key];
+      chars = JSON.stringify(state).length;
     }
-    chars = JSON.stringify(state).length;
   }
   return { state, chars, compacted };
 }
@@ -2294,6 +2336,7 @@ var chatUserIds = new Map;
 var directorBusy = new KeyedOperationLock;
 var runLogWrites = new Map;
 var interceptorRegistered = false;
+var pendingCommits = new Map;
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs) {
@@ -2374,13 +2417,27 @@ function rememberChatUser(chatId, userId) {
     return;
   chatUserIds.set(chatId, userId);
 }
-function resolveUserId(chatId) {
+function resolveUserId(chatId, contextUserId) {
+  if (typeof contextUserId === "string" && contextUserId.trim())
+    return contextUserId.trim();
   if (chatId) {
     const mapped = chatUserIds.get(chatId);
     if (mapped)
       return mapped;
   }
   return lastFrontendUserId;
+}
+function extractContextUserId(value) {
+  if (!value || typeof value !== "object")
+    return null;
+  const raw = value.userId ?? value.user_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+function extractDryRun(value) {
+  if (!value || typeof value !== "object")
+    return false;
+  const raw = value.dryRun ?? value.dry_run;
+  return raw === true;
 }
 function extractChatId(value) {
   if (!value || typeof value !== "object")
@@ -2822,6 +2879,7 @@ async function prepareController(settings, messages, context, chatId, userId, ge
   return {
     controllerMessages,
     promptSnapshot,
+    contextMessages: [...contextMessages, ...worldInfoContext.messages],
     worldState,
     worldInfoDiagnostics: worldInfoContext.diagnostics,
     turnContext: {
@@ -2849,13 +2907,16 @@ async function prepareController(settings, messages, context, chatId, userId, ge
 function applyContextFilter(base, settings, messages, context, generationType, decision) {
   if (!decision)
     return base;
-  const contextMessages = [];
-  if (decision.keepPersona && base.stateContext.personaSummary) {
-    contextMessages.push(makeControllerContextMessage("User Persona", base.stateContext.personaSummary));
-  }
-  if (decision.keepCharacter && base.stateContext.characterSummary) {
-    contextMessages.push(makeControllerContextMessage("Character", base.stateContext.characterSummary));
-  }
+  const keepLabel = {
+    "User Persona": decision.keepPersona,
+    Character: decision.keepCharacter
+  };
+  const contextMessages = base.contextMessages.filter((message) => {
+    const label = typeof message[CONTROLLER_CONTEXT_LABEL_KEY] === "string" ? message[CONTROLLER_CONTEXT_LABEL_KEY] : "";
+    if (label in keepLabel)
+      return keepLabel[label];
+    return decision.keepWorldInfo;
+  });
   const history = decision.keepHistory ? selectChatHistoryMessagesForController(messages, settings.historyMessageLimit) : [];
   const promptSnapshot = formatPromptForController([...contextMessages, ...history], settings.maxInputChars);
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
@@ -2863,6 +2924,7 @@ function applyContextFilter(base, settings, messages, context, generationType, d
     chatId: base.stateContext.chatId,
     connectionId: extractConnectionId(context)
   });
+  const worldInfoKept = decision.keepWorldInfo && contextMessages.some((message) => message[CONTROLLER_CONTEXT_LABEL_KEY] !== undefined && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "User Persona" && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "Character");
   return {
     ...base,
     controllerMessages,
@@ -2872,7 +2934,7 @@ function applyContextFilter(base, settings, messages, context, generationType, d
       hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
       hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
       hasPersona: decision.keepPersona && base.turnContext.hasPersona,
-      hasWorldInfo: false
+      hasWorldInfo: worldInfoKept
     }
   };
 }
@@ -2974,8 +3036,9 @@ async function resolveTurnTarget(settings, records, userId) {
 }
 async function handleInterceptor(messages, context) {
   const chatId = extractChatId(context);
-  const userId = resolveUserId(chatId);
+  const userId = resolveUserId(chatId, extractContextUserId(context));
   const generationType = extractGenerationType(context);
+  const dryRun = extractDryRun(context);
   const startedAt = Date.now();
   rememberChatUser(chatId, userId);
   const settings = await loadSettings(userId);
@@ -3103,10 +3166,14 @@ async function handleInterceptor(messages, context) {
         }
       }
     }
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId) {
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
-      await saveWorldState(storageApi(), chatId, committed, userId);
       worldState = committed;
+      if (userId) {
+        pendingCommits.set(chatId, { userId, state: committed });
+      } else {
+        spindle.log.warn("LumiWorld skipped a scene-state commit because no user could be resolved.");
+      }
     }
     const allRecords = withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
     const injected = { role: "system", content: buildInjectedDirective(directive) };
@@ -3299,6 +3366,24 @@ permissionsApi()?.onChanged?.(({ permission, granted }) => {
   if (permission === "interceptor" && granted)
     tryRegisterInterceptor();
   pushState(lastFrontendUserId);
+});
+spindle.on?.("GENERATION_ENDED", (payload, eventUserId) => {
+  const chatId = extractChatId(payload);
+  if (!chatId)
+    return;
+  const pending = pendingCommits.get(chatId);
+  if (!pending)
+    return;
+  pendingCommits.delete(chatId);
+  const failed = !!(payload && typeof payload === "object" && payload.error);
+  if (failed)
+    return;
+  saveWorldState(storageApi(), chatId, pending.state, pending.userId).catch((error) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
+});
+spindle.on?.("GENERATION_STOPPED", (payload) => {
+  const chatId = extractChatId(payload);
+  if (chatId)
+    pendingCommits.delete(chatId);
 });
 spindle.on?.("CHAT_SWITCHED", (payload, eventUserId) => {
   const userId = eventUserId || lastFrontendUserId;

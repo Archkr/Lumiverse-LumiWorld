@@ -360,12 +360,19 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
     }, effective);
 
     try {
+      const attemptedAt = Date.now();
       const raw = await options.cors(request.url, {
         method: "POST",
         headers: request.headers,
         body: request.body,
         signal: local.signal,
       });
+      // The host's CORS proxy carries its own 30s budget and ignores the signal we
+      // pass, so a slow request can resolve well after our timeout. Enforce the
+      // deadline by elapsed time instead of trusting the abort to have worked.
+      if (timedOut || Date.now() - attemptedAt >= effective) {
+        throw new JevTimeoutError(effective);
+      }
       const result = readCorsResult(raw);
       if (result.status === 429 || result.status >= 500) {
         return {
@@ -409,7 +416,10 @@ export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
     if ("error" in outcome) {
       const waitMs = outcome.retryAfterMs ?? 750;
       const budgetLeft = remainingBudgetMs(startedAt, options.budgetMs);
-      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < timeoutMs * 2;
+      // The retry shares the caller's deadline, so it cannot extend the wait past
+      // the configured timeout.
+      const deadlineLeft = timeoutMs - (Date.now() - startedAt);
+      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < deadlineLeft;
       if (!canRetry) {
         return {
           ok: false,
@@ -488,11 +498,13 @@ export interface JevStateProjection {
   compacted: boolean;
 }
 
+/** Truncates to the budget, including the notice, so the result never exceeds it. */
 function truncate(value: string, budget: number): string {
   const text = value.trim();
   if (budget <= 0) return "";
   if (text.length <= budget) return text;
-  return `${text.slice(0, Math.max(0, budget - 24)).trimEnd()}\n[... truncated ...]`;
+  const notice = "\n[... truncated ...]";
+  return `${text.slice(0, Math.max(0, budget - notice.length)).trimEnd()}${notice}`;
 }
 
 function renderHistory(history: LlmMessageLike[], limit: number, budget: number): string[] {
@@ -508,7 +520,16 @@ function renderHistory(history: LlmMessageLike[], limit: number, budget: number)
   let used = 0;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]!;
-    if (used + line.length > budget && kept.length > 0) break;
+    const room = budget - used;
+    if (room <= 0) break;
+    // A single turn larger than the whole budget is truncated rather than kept
+    // whole, which is what previously let one message blow past the cap.
+    if (line.length > room) {
+      if (line.length < 40) break;
+      kept.unshift(`${line.slice(0, Math.max(0, room - 16)).trimEnd()}
+[... cut ...]`);
+      break;
+    }
     kept.unshift(line);
     used += line.length + 1;
   }
@@ -520,59 +541,106 @@ function renderHistory(history: LlmMessageLike[], limit: number, budget: number)
  * instructions can point at named fields, and every textual field is truncated to
  * respect the provider's 32k-token `state` allowance and the user's character cap.
  */
+/**
+ * Share of the state cap each optional field may use.
+ *
+ * Allocating up front is what makes the cap enforceable: dropping fields when the
+ * budget runs out leaves no single field able to blow past it. History takes
+ * whatever remains.
+ */
+const STATE_FIELD_SHARES: ReadonlyArray<{ key: string; share: number; min: number }> = [
+  { key: "character", share: 0.20, min: 200 },
+  { key: "world_info", share: 0.25, min: 200 },
+  { key: "user_persona", share: 0.10, min: 120 },
+  { key: "scene_state", share: 0.15, min: 120 },
+  { key: "director_notes", share: 0.08, min: 80 },
+  { key: "draft_directive", share: 0.12, min: 120 },
+];
+
+/** Models the serialized cost of one field: `"key":"value"` plus a comma. */
+function fieldCost(key: string, value: string): number {
+  return JSON.stringify(key).length + 2 + JSON.stringify(value).length + 1;
+}
+
+/**
+ * Builds the state object Jev evaluates.
+ *
+ * `state` is a structured object so decision instructions can point at named
+ * fields. The result is guaranteed to serialize within `maxStateChars`: optional
+ * fields are filled from a per-field allocation, history takes the remainder, and
+ * if the assembled object still overshoots (key overhead, escaping) it is trimmed
+ * progressively until it fits.
+ */
 export function buildJevState(context: JevStateContext, worldStateContext?: string | null): JevStateProjection {
   const cap = Math.max(500, context.settings.maxStateChars || DEFAULT_JEV_STATE_CHARS);
   const historyLimit = Math.max(0, Math.min(context.settings.historyMessageLimit, MAX_JEV_HISTORY_MESSAGES));
 
-  const fixed: Record<string, unknown> = {
-    generation_type: context.generationType || "normal",
-  };
-  const structured: Record<string, unknown> = {};
-  const addStructured = (key: string, value: string | null | undefined, budget: number): void => {
+  const optional: Record<string, string> = {};
+  const addOptional = (key: string, value: string | null | undefined): void => {
     const text = typeof value === "string" ? value.trim() : "";
-    if (!text) return;
-    structured[key] = truncate(text, budget);
+    if (text) optional[key] = text;
   };
+  addOptional("character", context.characterSummary);
+  addOptional("world_info", context.worldInfoSummary);
+  addOptional("user_persona", context.personaSummary);
+  addOptional("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined);
+  addOptional("director_notes", context.directorNotes);
+  addOptional("draft_directive", context.draftDirective);
 
-  addStructured("character", context.characterSummary, 4000);
-  addStructured("user_persona", context.personaSummary, 2000);
-  addStructured("world_info", context.worldInfoSummary, 6000);
-  addStructured("director_notes", context.directorNotes, 1200);
-  addStructured("scene_state", typeof worldStateContext === "string" ? worldStateContext : undefined, 3000);
-  addStructured("draft_directive", context.draftDirective, 2500);
-
-  let state: Record<string, unknown> = { ...fixed, ...structured };
-  let history = renderHistory(context.history, historyLimit, Math.max(1000, Math.floor(cap * 0.5)));
-  if (history.length) state.chat_history = history;
-
-  let chars = JSON.stringify(state).length;
   let compacted = false;
 
-  // Compact oldest context first: history budget, then the long summaries.
-  while (chars > cap && (history.length > 1 || structured.world_info || structured.character)) {
-    compacted = true;
-    if (history.length > 1) {
-      history = history.slice(Math.ceil(history.length / 4));
-      state.chat_history = history;
-    } else if (structured.world_info) {
-      delete structured.world_info;
-    } else if (structured.character) {
-      delete structured.character;
-    } else {
-      break;
+  const build = (shrink: number): Record<string, unknown> => {
+    const state: Record<string, unknown> = { generation_type: context.generationType || "normal" };
+    let used = JSON.stringify(state).length;
+    let truncatedAny = false;
+
+    for (const { key, share, min } of STATE_FIELD_SHARES) {
+      const text = optional[key];
+      if (!text) continue;
+      const allowance = Math.min(Math.max(min, Math.floor(cap * share * shrink)), Math.max(min, cap - 200));
+      const trimmed = truncate(text, allowance);
+      if (trimmed.length < text.length) truncatedAny = true;
+      const cost = fieldCost(key, trimmed);
+      // A field that cannot fit its own keys is dropped rather than left to push
+      // the object past the cap.
+      if (used + cost > cap) {
+        truncatedAny = true;
+        continue;
+      }
+      state[key] = trimmed;
+      used += cost;
     }
-    state = { ...fixed, ...structured };
-    if (history.length) state.chat_history = history;
+
+    if (historyLimit > 0 && context.history.length > 0) {
+      // Reserve the bytes `"chat_history":[]` itself costs.
+      const available = Math.max(0, cap - used - 18);
+      const lines = renderHistory(context.history, historyLimit, available);
+      // Losing a turn to the budget counts as compaction too.
+      if (lines.length < Math.min(context.history.length, historyLimit)) truncatedAny = true;
+      if (lines.length) state.chat_history = lines;
+    }
+    if (truncatedAny) compacted = true;
+    return state;
+  };
+
+  let shrink = 1;
+  let state = build(shrink);
+  let chars = JSON.stringify(state).length;
+
+  // Escaping and key overhead can still push a few characters over. Shrink the
+  // optional allowances, then drop them entirely, before touching history.
+  while (chars > cap && shrink > 0.05) {
+    shrink = shrink > 0.5 ? 0.35 : shrink > 0.15 ? 0.1 : 0.02;
+    state = build(shrink);
     chars = JSON.stringify(state).length;
   }
-
   if (chars > cap) {
-    compacted = true;
-    // Last resort: hard-truncate the serialized history, the largest remaining field.
-    if (history.length) {
-      state.chat_history = renderHistory(context.history, 2, Math.max(500, Math.floor(cap * 0.3)));
+    for (const key of ["draft_directive", "director_notes", "scene_state", "user_persona", "world_info", "character"]) {
+      if (chars <= cap) break;
+      if (!(key in state)) continue;
+      delete state[key];
+      chars = JSON.stringify(state).length;
     }
-    chars = JSON.stringify(state).length;
   }
 
   return { state, chars, compacted };

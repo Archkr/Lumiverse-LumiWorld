@@ -338,3 +338,60 @@ describe("jev transport", () => {
     expect(smoke.request.url).toBe("https://api.typesafe.ai/v1/systemone");
   });
 });
+
+describe("state cap enforcement", () => {
+  test("never exceeds the configured cap, even with large optional fields", () => {
+    const huge = "y".repeat(20000);
+    for (const cap of [2000, 4000, 30000]) {
+      const projection = buildJevState({
+        settings: { historyMessageLimit: 6, maxStateChars: cap },
+        generationType: "normal",
+        chatId: "c",
+        history: Array.from({ length: 6 }, (_, i) => ({ role: "user" as const, content: `turn ${i} ${"h".repeat(400)}` })),
+        characterSummary: huge,
+        personaSummary: huge,
+        worldInfoSummary: huge,
+        directorNotes: huge,
+      });
+      expect(projection.chars).toBeLessThanOrEqual(cap);
+    }
+  });
+
+  test("keeps the small required fields when trimming to the bone", () => {
+    const projection = buildJevState({
+      settings: { historyMessageLimit: 6, maxStateChars: 2000 },
+      generationType: "regenerate",
+      chatId: "c",
+      history: [{ role: "user" as const, content: "h".repeat(9000) }],
+      characterSummary: "c".repeat(9000),
+      personaSummary: "p".repeat(9000),
+      worldInfoSummary: "w".repeat(9000),
+      directorNotes: "n".repeat(9000),
+      draftDirective: "d".repeat(9000),
+    });
+    expect(projection.chars).toBeLessThanOrEqual(2000);
+    expect((projection.state as Record<string, unknown>).generation_type).toBe("regenerate");
+  });
+});
+
+describe("timeout honesty", () => {
+  test("does not report success for a response that outlives the timeout", async () => {
+    // The host CORS proxy uses its own 30s budget and ignores the abort signal, so
+    // a slow request can resolve after the configured timeout has already fired.
+    const outcome = await callJev({
+      config: { ...settings(), apiKey: "k" },
+      state: "s",
+      questions: { ping: { type: "noul", instructions: "?" } },
+      timeoutMs: 1000,
+      budgetMs: 5000,
+      retryOnRateLimit: false,
+      cors: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        return { status: 200, statusText: "OK", headers: {}, body: JSON.stringify({ answers: { ping: { type: "noul", noul: 0.9 } } }) };
+      },
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.timedOut).toBe(true);
+    expect(outcome.response).toBeNull();
+  });
+});

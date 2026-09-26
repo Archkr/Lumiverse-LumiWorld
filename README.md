@@ -244,6 +244,24 @@ are listed last, since they describe the turn rather than decide it.
 > unconfigured or switched off to keep everything local to your Lumiverse
 > connections.
 
+### When the scene state advances
+
+The derived scene state only moves after a reply actually lands. A turn stages its
+update during interception and commits it when the host reports the generation
+ended without error, so:
+
+- **Prompt previews and dry runs never change the scene.** They are treated as
+  side-effect-free, even though they run the full decision path.
+- **A cancelled generation discards its staged update.** Generation stop is not a
+  reply, so the world does not move.
+- **Forcing a stop is not a failed generation.** An errored generation drops its
+  staged update rather than advancing the world on a reply that was never shown.
+- **A swipe is just another turn.** Each one stages and commits independently, so
+  the state follows the reply you keep.
+
+With **World state** on, the state lives in `chats/<chatId>/world.json` under
+LumiWorld's extension storage.
+
 There is also an optional **strong** Director target. When Jev's model-routing
 gate asks for a stronger Director, LumiWorld promotes the turn to that connection
 or model. With nothing configured, the normal target is used.
@@ -393,7 +411,10 @@ The drawer warns when a required permission is missing. Character, persona, and 
 
 ## Privacy and storage
 
-LumiWorld uses Lumiverse’s connection profiles and does not read or store your connection credentials. The optional Jev API key is the one exception, and it is held in Lumiverse’s encrypted at-rest secret storage rather than in LumiWorld settings.
+LumiWorld resolves everything against the user the host attributes to each
+generation, so a globally installed copy cannot read another user’s settings or
+Jev key. It uses Lumiverse’s connection profiles and does not read or store your
+connection credentials. The optional Jev API key is the one exception, and it is held in Lumiverse’s encrypted at-rest secret storage rather than in LumiWorld settings.
 
 - **Sent to the Director provider:** the selected history and context, prompt templates, and your Director notes.
 - **Sent to the Jev provider, when Jev is enabled:** the projected scene state (recent turns plus enabled context summaries), and in the verify phase the draft Director note. Nothing is sent when Jev is switched off, and the projection is capped by **State cap (chars)**.

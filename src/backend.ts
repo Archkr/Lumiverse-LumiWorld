@@ -39,6 +39,13 @@ const chatUserIds = new Map<string, string>();
 const directorBusy = new KeyedOperationLock();
 const runLogWrites = new Map<string, Promise<void>>();
 let interceptorRegistered = false;
+/**
+ * Scene-state commits awaiting a successful generation, keyed by chat.
+ *
+ * A turn stages its commit during interception and only writes it when the host
+ * reports the generation ended without error.
+ */
+const pendingCommits = new Map<string, { userId: string; state: WorldState }>();
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -133,12 +140,33 @@ function rememberChatUser(chatId: string | null | undefined, userId: string | nu
   chatUserIds.set(chatId, userId);
 }
 
-function resolveUserId(chatId?: string | null): string | null {
+/**
+ * Resolves the user a generation belongs to.
+ *
+ * The host supplies `context.userId` per generation and it is authoritative: for a
+ * globally installed extension, falling back to the most recent frontend user
+ * would let a generation run against another user's settings and Jev key.
+ */
+function resolveUserId(chatId?: string | null, contextUserId?: string | null): string | null {
+  if (typeof contextUserId === "string" && contextUserId.trim()) return contextUserId.trim();
   if (chatId) {
     const mapped = chatUserIds.get(chatId);
     if (mapped) return mapped;
   }
   return lastFrontendUserId;
+}
+
+function extractContextUserId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = (value as { userId?: unknown; user_id?: unknown }).userId ?? (value as { user_id?: unknown }).user_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+/** The host marks prompt previews and tokenize-only assemblies as dry runs. */
+function extractDryRun(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const raw = (value as { dryRun?: unknown; dry_run?: unknown }).dryRun ?? (value as { dry_run?: unknown }).dry_run;
+  return raw === true;
 }
 
 function extractChatId(value: unknown): string | null {
@@ -669,6 +697,8 @@ const CONTROLLER_CONTEXT_LABEL = CONTROLLER_CONTEXT_LABEL_KEY;
 interface PreparedController {
   controllerMessages: LlmMessageLike[];
   promptSnapshot: ReturnType<typeof formatPromptForController>;
+  /** Persona, character, and World Info messages resolved for this turn. */
+  contextMessages: LlmMessageLike[];
   worldState: WorldState;
   worldInfoDiagnostics: WorldInfoContextDiagnostics;
   turnContext: {
@@ -741,6 +771,7 @@ async function prepareController(
   return {
     controllerMessages,
     promptSnapshot,
+    contextMessages: [...contextMessages, ...worldInfoContext.messages],
     worldState,
     worldInfoDiagnostics: worldInfoContext.diagnostics,
     turnContext: {
@@ -782,13 +813,22 @@ function applyContextFilter(
 ): PreparedController {
   if (!decision) return base;
 
-  const contextMessages: LlmMessageLike[] = [];
-  if (decision.keepPersona && base.stateContext.personaSummary) {
-    contextMessages.push(makeControllerContextMessage("User Persona", base.stateContext.personaSummary)!);
-  }
-  if (decision.keepCharacter && base.stateContext.characterSummary) {
-    contextMessages.push(makeControllerContextMessage("Character", base.stateContext.characterSummary)!);
-  }
+  // Rebuild from the already-resolved context messages so a kept source cannot be
+  // dropped. Reconstructing from the summaries instead would silently discard
+  // World Info, whose entries are not recoverable from a summary string.
+  const keepLabel: Record<string, boolean> = {
+    "User Persona": decision.keepPersona,
+    "Character": decision.keepCharacter,
+  };
+  const contextMessages = base.contextMessages.filter((message) => {
+    const label = typeof message[CONTROLLER_CONTEXT_LABEL_KEY] === "string"
+      ? message[CONTROLLER_CONTEXT_LABEL_KEY] as string
+      : "";
+    if (label in keepLabel) return keepLabel[label]!;
+    // Everything else in the context set is World Info.
+    return decision.keepWorldInfo;
+  });
+
   const history = decision.keepHistory
     ? selectChatHistoryMessagesForController(messages as LlmMessageLike[], settings.historyMessageLimit)
     : [];
@@ -796,6 +836,11 @@ function applyContextFilter(
   const controllerMessages = buildControllerMessages(settings, promptSnapshot, {
     generationType, chatId: base.stateContext.chatId, connectionId: extractConnectionId(context),
   });
+  const worldInfoKept = decision.keepWorldInfo
+    && contextMessages.some((message) => message[CONTROLLER_CONTEXT_LABEL_KEY] !== undefined
+      && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "User Persona"
+      && message[CONTROLLER_CONTEXT_LABEL_KEY] !== "Character");
+
   return {
     ...base,
     controllerMessages,
@@ -805,7 +850,7 @@ function applyContextFilter(
       hasHistory: decision.keepHistory && !!promptSnapshot.prompt.trim(),
       hasCharacter: decision.keepCharacter && base.turnContext.hasCharacter,
       hasPersona: decision.keepPersona && base.turnContext.hasPersona,
-      hasWorldInfo: false,
+      hasWorldInfo: worldInfoKept,
     },
   };
 }
@@ -936,8 +981,10 @@ async function handleInterceptor(
   messages: LlmMessageDTO[], context: unknown,
 ): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
   const chatId = extractChatId(context);
-  const userId = resolveUserId(chatId);
+  const userId = resolveUserId(chatId, extractContextUserId(context));
   const generationType = extractGenerationType(context);
+  // A dry run is a preview: it must be side-effect free.
+  const dryRun = extractDryRun(context);
   const startedAt = Date.now();
   rememberChatUser(chatId, userId);
   const settings = await loadSettings(userId);
@@ -1080,10 +1127,18 @@ async function handleInterceptor(
     }
 
     /* ---------------- Commit derived state ---------------- */
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId) {
+    // The scene may only advance once a reply actually lands. A dry run never
+    // counts, and a live turn defers its commit to GENERATION_ENDED so a
+    // cancelled, failed, or superseded generation cannot move the world.
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
-      await saveWorldState(storageApi(), chatId, committed, userId);
       worldState = committed;
+      if (userId) {
+        pendingCommits.set(chatId, { userId, state: committed });
+      } else {
+        // Without a resolvable user the commit would be unownable; skip it.
+        spindle.log.warn("LumiWorld skipped a scene-state commit because no user could be resolved.");
+      }
     }
 
     const allRecords = withConfidenceGate(
@@ -1322,6 +1377,30 @@ tryRegisterInterceptor();
 permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; granted: boolean }) => {
   if (permission === "interceptor" && granted) tryRegisterInterceptor();
   void pushState(lastFrontendUserId);
+});
+
+/**
+ * Flushes a staged scene-state commit once the reply has actually landed.
+ *
+ * `GENERATION_ENDED` carries an `error` field when the generation failed, so a
+ * failed turn is dropped rather than advancing the world.
+ */
+(spindle as any).on?.("GENERATION_ENDED", (payload: unknown, eventUserId?: string) => {
+  const chatId = extractChatId(payload);
+  if (!chatId) return;
+  const pending = pendingCommits.get(chatId);
+  if (!pending) return;
+  pendingCommits.delete(chatId);
+  const failed = !!(payload && typeof payload === "object" && (payload as { error?: unknown }).error);
+  if (failed) return;
+  void saveWorldState(storageApi(), chatId, pending.state, pending.userId)
+    .catch((error: unknown) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
+});
+
+/** A stopped generation never produced a reply, so its staged commit is discarded. */
+(spindle as any).on?.("GENERATION_STOPPED", (payload: unknown) => {
+  const chatId = extractChatId(payload);
+  if (chatId) pendingCommits.delete(chatId);
 });
 
 (spindle as any).on?.("CHAT_SWITCHED", (payload: unknown, eventUserId?: string) => {

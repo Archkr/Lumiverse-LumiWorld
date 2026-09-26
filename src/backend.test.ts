@@ -46,6 +46,14 @@ const jevRequests: Array<Record<string, { type: string }>> = [];
 let jevAnswerFor: (gateId: string) => unknown | undefined = () => undefined;
 let corsShouldThrow = false;
 let worldInfoFetches = 0;
+/** What each host call was scoped to, for verifying the resolved user. */
+let enclaveGetUsers: Array<string | undefined> = [];
+let generateUsers: Array<string | undefined> = [];
+/** Host lifecycle events the extension subscribed to. */
+const eventHandlers = new Map<string, (payload: unknown, userId?: string) => void>();
+function emitEvent(name: string, payload: unknown, userId?: string): void {
+  eventHandlers.get(name)?.(payload, userId);
+}
 let worldInfoEntryFetches = 0;
 
 function jevAnswerBody(questions: Record<string, { type: string }>): string {
@@ -108,7 +116,7 @@ function latestRun(): any {
   enclave: {
     // Mirrors the host's key validation. Without it the mock accepts anything and
     // an invalid key format passes every test while failing in Lumiverse.
-    get: async (key: string) => { assertEnclaveKey(key); return enclave.get(key) ?? null; },
+    get: async (key: string, userId?: string) => { assertEnclaveKey(key); enclaveGetUsers.push(userId); return enclave.get(key) ?? null; },
     put: async (key: string, value: string) => { assertEnclaveKey(key); enclave.set(key, value); },
     delete: async (key: string) => { assertEnclaveKey(key); return enclave.delete(key); },
     has: async (key: string) => { assertEnclaveKey(key); return enclave.has(key); },
@@ -141,11 +149,21 @@ function latestRun(): any {
     jevRequests.push(payload.questions);
     return { status: 200, statusText: "OK", headers: {}, body: jevAnswerBody(payload.questions) };
   },
-  generate: { raw: async () => { generations++; return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] }; } },
+  generate: {
+    raw: async (input: any) => {
+      generations += 1;
+      generateUsers.push(input?.userId);
+      return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] };
+    },
+  },
   rpcPool: { sync: () => { rpcPublications++; } },
   log: { info: () => {}, warn: () => {}, error: () => {} },
   sendToFrontend: (message: BackendToFrontend) => { sent.push(message); },
   registerInterceptor: (handler: Interceptor) => { interceptor = handler; },
+  on: (name: string, handler: (payload: unknown, userId?: string) => void) => {
+    eventHandlers.set(name, handler);
+    return () => eventHandlers.delete(name);
+  },
   onFrontendMessage: (handler: MessageHandler) => { messageHandler = handler; },
 };
 
@@ -347,7 +365,7 @@ describe("v0.5 Jev turn flow", () => {
     expect(run.jev.gates.some((gate: any) => gate.gateId === "confidence_escalation")).toBe(true);
   });
 
-  test("persists derived scene state per chat", async () => {
+  test("stages scene state during interception and commits it after the reply lands", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
@@ -355,10 +373,112 @@ describe("v0.5 Jev turn flow", () => {
     answerCleanTurn();
     await runJevTurn("chat-state");
     const path = "chats/chat-state/world.json";
+
+    // Interception alone must not move the world: the reply has not landed yet.
+    expect(stored.has(path)).toBe(false);
+
+    emitEvent("GENERATION_ENDED", { generationId: "g1", chatId: "chat-state", messageId: "m1", content: "ok" });
     expect(stored.has(path)).toBe(true);
     const state = stored.get(path) as any;
     expect(state.turn).toBe(1);
     expect(state.tension).toBe(3);
+  });
+
+  test("a dry run never stages scene state", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await messageHandler!({ type: "refresh_state", chatId: "chat-dry" }, "user-jev");
+    await interceptor!(jevMessages, { chatId: "chat-dry", generationType: "normal", dryRun: true });
+
+    expect(stored.has("chats/chat-dry/world.json")).toBe(false);
+    // Even after the host reports an end, nothing was staged to write.
+    emitEvent("GENERATION_ENDED", { generationId: "g2", chatId: "chat-dry", messageId: "m2", content: "preview" });
+    expect(stored.has("chats/chat-dry/world.json")).toBe(false);
+  });
+
+  test("a failed generation discards its staged scene state", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await runJevTurn("chat-fail");
+    expect(stored.has("chats/chat-fail/world.json")).toBe(false);
+
+    emitEvent("GENERATION_ENDED", { generationId: "g3", chatId: "chat-fail", error: "provider exploded" });
+    expect(stored.has("chats/chat-fail/world.json")).toBe(false);
+  });
+
+  test("a stopped generation discards its staged scene state", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await runJevTurn("chat-stop");
+    emitEvent("GENERATION_STOPPED", { generationId: "g4", chatId: "chat-stop" });
+    emitEvent("GENERATION_ENDED", { generationId: "g4", chatId: "chat-stop", messageId: "m4", content: "partial" });
+    expect(stored.has("chats/chat-stop/world.json")).toBe(false);
+  });
+
+  test("uses the host's per-generation user, not the last frontend user", async () => {
+    answerCleanTurn();
+    // The drawer identified user-A, then a generation arrives for user-B.
+    await messageHandler!({ type: "refresh_state", chatId: "chat-a" }, "user-a");
+    enclaveGetUsers = [];
+    generateUsers = [];
+    await interceptor!(jevMessages, {
+      chatId: "chat-b", generationType: "normal", userId: "user-b",
+    });
+
+    // The Jev key must be read for the generation's own user...
+    expect(enclaveGetUsers).toContain("user-b");
+    expect(enclaveGetUsers).not.toContain("user-a");
+    // ...and the Director must be called for that user too.
+    expect(generateUsers).toContain("user-b");
+    expect(generateUsers).not.toContain("user-a");
+  });
+
+  test("delivers World Info to the Director when the filter keeps it", async () => {
+    stored.set("global/settings.json", { ...baseSettings, includeWorldInfoEntries: true, jev: jevSettings() });
+    answerCleanTurn();
+    let seen: any[] = [];
+    // Capture the prompt the Director is actually handed.
+    const originalRaw = (globalThis as any).spindle.generate.raw;
+    (globalThis as any).spindle.generate.raw = async (input: any) => {
+      seen = input.messages;
+      return originalRaw(input);
+    };
+    await runJevTurn();
+    (globalThis as any).spindle.generate.raw = originalRaw;
+
+    const prompt = seen.map((m: any) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    // The entry text must reach the Director, not merely be fetched.
+    expect(prompt).toContain("sealed with salt and iron");
+    expect(prompt).toContain("The sealed hatch");
+  });
+
+  test("omits World Info from the Director prompt when the filter discards it", async () => {
+    stored.set("global/settings.json", { ...baseSettings, includeWorldInfoEntries: true, jev: jevSettings() });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => (gateId === "context_filter"
+      ? { type: "choice", choice: "history_only", probabilities: { history_only: 0.9 }, confidence: 0.9 }
+      : clean(gateId));
+    let seen: any[] = [];
+    const originalRaw = (globalThis as any).spindle.generate.raw;
+    (globalThis as any).spindle.generate.raw = async (input: any) => {
+      seen = input.messages;
+      return originalRaw(input);
+    };
+    await runJevTurn();
+    (globalThis as any).spindle.generate.raw = originalRaw;
+
+    const prompt = seen.map((m: any) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    expect(prompt).not.toContain("sealed with salt and iron");
   });
 
   test("skips the World Info fetch when the filter gate discards lore", async () => {
