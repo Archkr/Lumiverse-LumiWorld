@@ -1137,6 +1137,9 @@ export function setup(ctx: SpindleFrontendContext) {
       notice.dataset.tone = "warning";
       wrap.append(notice);
     }
+    if (diagnostics.gateCount > 0 && diagnostics.gates.length === 0) {
+      wrap.append(el("p", "lw-hint", "Decision details were not saved for this turn."));
+    }
 
     // A skipped turn has one acting decision. Other answers were returned in the
     // same batch, but their fallback actions never affected the main prompt.

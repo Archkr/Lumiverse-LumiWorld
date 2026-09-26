@@ -1743,6 +1743,9 @@ function setup(ctx) {
       notice.dataset.tone = "warning";
       wrap.append(notice);
     }
+    if (diagnostics.gateCount > 0 && diagnostics.gates.length === 0) {
+      wrap.append(el("p", "lw-hint", "Decision details were not saved for this turn."));
+    }
     const decided = diagnostics.gates.filter((record) => record.gateId !== "confidence_escalation" && record.gateId !== "budget_degradation");
     const computed = diagnostics.gates.filter((record) => record.gateId === "confidence_escalation" || record.gateId === "budget_degradation");
     if (skipped) {

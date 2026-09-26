@@ -3158,12 +3158,13 @@ async function handleInterceptor(messages, context) {
   };
   let prepared = null;
   const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
+  let gateRecords = [];
+  let verifyRecords = [];
   try {
     const jevRun = await prepareJev(settings, userId);
     prepared = await prepareController(settings, messages, context, chatId, userId, generationType, jevRun.enabled && settings.jev.includeWorldInfoEntries);
     worldState = prepared.worldState;
     worldInfoDiagnostics = prepared.worldInfoDiagnostics;
-    let gateRecords = [];
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
       jevDiagnostics.model = resolveJevModelForDiagnostics(settings);
@@ -3226,7 +3227,6 @@ async function handleInterceptor(messages, context) {
     }
     const first = await callController(userId, settings, target, prepared.controllerMessages);
     let directive = first.directive;
-    let verifyRecords = [];
     if (jevRun.enabled) {
       const phase = await runGatePhase("verify", {
         jevRun,
@@ -3291,6 +3291,10 @@ async function handleInterceptor(messages, context) {
     const isTimeout = error instanceof ControllerTimeoutError;
     const isEmptyDirective = error instanceof EmptyControllerDirectiveError;
     const message = error instanceof Error ? error.message : String(error);
+    const recordedGates = jevDiagnostics.used ? withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], {
+      status: jevDiagnostics.status,
+      error: jevDiagnostics.error
+    }), settings.jev.minConfidence) : [];
     await recordRun(makeRunBase(isTimeout ? "timeout" : isEmptyDirective ? "skipped" : "error", startedAt, {
       channel: "director",
       generationType,
@@ -3299,7 +3303,7 @@ async function handleInterceptor(messages, context) {
       model: target?.model,
       error: message,
       ...runLogWorldInfoPatch(worldInfoDiagnostics),
-      jev: jevDiagnostics.used ? jevDiagnostics : null
+      jev: jevDiagnostics.used ? { ...jevDiagnostics, gates: recordedGates, gateCount: recordedGates.length } : null
     }), userId, settings);
     spindle.log.warn(`LumiWorld interceptor skipped injection: ${message}`);
     return messages;

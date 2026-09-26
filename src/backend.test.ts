@@ -39,6 +39,7 @@ const sent: BackendToFrontend[] = [];
 let interceptor: Interceptor | null = null;
 let messageHandler: MessageHandler | null = null;
 let generations = 0;
+let failNextDirectorCall = false;
 let rpcPublications = 0;
 let failNextSettingsSave = false;
 /** Every Jev question map the extension sent, one entry per request. */
@@ -165,6 +166,10 @@ function latestRun(): any {
       generateUsers.push(input?.userId);
       generatedModels.push(input?.model);
       generatedMessages.push(input?.messages);
+      if (failNextDirectorCall) {
+        failNextDirectorCall = false;
+        throw new Error("Director unavailable");
+      }
       return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] };
     },
   },
@@ -393,6 +398,23 @@ describe("v0.5 Jev turn flow", () => {
     const degradation = run.jev.gates.find((gate: any) => gate.gateId === "budget_degradation");
     expect(degradation.usedFallback).toBe(true);
     expect(degradation.fallback).toBe("run");
+  });
+
+  test("keeps Jev decisions visible when the Director fails after the gate request", async () => {
+    answerCleanTurn();
+    failNextDirectorCall = true;
+
+    const result = await runJevTurn();
+
+    expect(result).toBe(jevMessages);
+    expect(jevRequests).toHaveLength(1);
+    const run = latestRun();
+    expect(run.status).toBe("error");
+    expect(run.error).toContain("Director unavailable");
+    expect(run.jev.requestCount).toBe(1);
+    expect(run.jev.gates.some((gate: any) => gate.gateId === "smart_trigger")).toBe(true);
+    expect(run.jev.gates.some((gate: any) => gate.gateId === "context_filter")).toBe(true);
+    expect(run.jev.gates.some((gate: any) => gate.gateId === "director_verification")).toBe(false);
   });
 
   test("runs the Director ungated when no Jev key is stored", async () => {

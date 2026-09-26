@@ -897,6 +897,15 @@ describe("Jev diagnostics panel", () => {
     harness.destroy();
   });
 
+  test("explains a recorded turn whose individual decisions are missing", () => {
+    const harness = mount(makeState({
+      runs: [{ id: "run-missing-gates", timestamp: 2, status: "error", channel: "director",
+        jev: { ...jevRun, requestCount: 1, gates: [] } }],
+    }));
+    expect(harness.root.textContent).toContain("Decision details were not saved for this turn.");
+    harness.destroy();
+  });
+
   test("labels older Jev diagnostics as the last recorded Jev turn", () => {
     const harness = mount(makeState({
       runs: [
