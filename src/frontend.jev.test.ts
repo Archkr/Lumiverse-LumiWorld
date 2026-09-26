@@ -322,6 +322,62 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
+  test("leaves the Director tab unmarked when nothing needs action", () => {
+    const directorDot = (root: HTMLElement) => root.querySelector("#lw-tab-director .lw-tab-dot");
+
+    // Director disabled is a choice, not a problem.
+    const idle = mount(makeState());
+    expect(directorDot(idle.root)).toBeNull();
+    // Jev is still marked, because its state appears nowhere else on screen.
+    expect(idle.root.querySelector("#lw-tab-jev .lw-tab-dot")).not.toBeNull();
+    idle.destroy();
+
+    // Enabled and fully configured needs no badge either.
+    const ready = mount(makeState({
+      settings: settings({ enabled: true, connectionId: "conn-1", modelOverride: "m" }),
+    }));
+    expect(directorDot(ready.root)).toBeNull();
+    ready.destroy();
+
+    // Enabled with the interceptor granted but no reply types selected.
+    const noTypes = mount(makeState({
+      settings: settings({ enabled: true, connectionId: "conn-1", modelOverride: "m", generationTypes: [] }),
+    }));
+    expect(directorDot(noTypes.root)?.getAttribute("title")).toMatch(/reply types/i);
+    noTypes.destroy();
+  });
+
+  test("always marks the Jev tab, including while it is off", () => {
+    // Jev's state is stated nowhere else, so the marker must be there at rest.
+    const off = mount(makeState());
+    const offDot = off.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot");
+    expect(offDot).not.toBeNull();
+    expect(offDot!.getAttribute("title")).toBe("Jev is off");
+    off.destroy();
+  });
+
+  test("flags an enabled Director that cannot run", () => {
+    const harness = mount(makeState({ settings: settings({ enabled: true, connectionId: null }) }));
+    const dot = harness.root.querySelector<HTMLElement>("#lw-tab-director .lw-tab-dot");
+    expect(dot).not.toBeNull();
+    expect(dot!.getAttribute("title")).toMatch(/connection and model/i);
+    expect(dot!.getAttribute("aria-hidden")).toBe("true");
+    harness.destroy();
+  });
+
+  test("flags a Jev that is on but unkeyed, and clears once keyed", () => {
+    const unkeyed = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    expect(unkeyed.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot")?.getAttribute("title")).toMatch(/api key/i);
+    unkeyed.destroy();
+
+    const keyed = mount(makeState({
+      hasJevKey: true,
+      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
+    }));
+    expect(keyed.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot")?.getAttribute("title")).toBe("Jev is active");
+    keyed.destroy();
+  });
+
   test("re-targets the master toggle when the view changes", () => {
     const harness = mount(makeState({
       settings: settings({ enabled: true, jev: { ...DEFAULT_SETTINGS.jev, enabled: false } }),
