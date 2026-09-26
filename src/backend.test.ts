@@ -54,6 +54,9 @@ const eventHandlers = new Map<string, (payload: unknown, userId?: string) => voi
 function emitEvent(name: string, payload: unknown, userId?: string): void {
   eventHandlers.get(name)?.(payload, userId);
 }
+function beginGeneration(chatId: string, generationId: string, userId = "user-jev"): void {
+  emitEvent("GENERATION_STARTED", { chatId, generationId }, userId);
+}
 let worldInfoEntryFetches = 0;
 
 function jevAnswerBody(questions: Record<string, { type: string }>): string {
@@ -371,38 +374,53 @@ describe("v0.5 Jev turn flow", () => {
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
+    beginGeneration("chat-state", "g1");
     await runJevTurn("chat-state");
     const path = "chats/chat-state/world.json";
 
     // Interception alone must not move the world: the reply has not landed yet.
     expect(stored.has(path)).toBe(false);
 
-    emitEvent("GENERATION_ENDED", { generationId: "g1", chatId: "chat-state", messageId: "m1", content: "ok" });
+    emitEvent("GENERATION_ENDED", { generationId: "g1", chatId: "chat-state", messageId: "m1", content: "ok" }, "user-jev");
     expect(stored.has(path)).toBe(true);
     const state = stored.get(path) as any;
     expect(state.turn).toBe(1);
     expect(state.tension).toBe(3);
   });
 
-  test("a late event cannot double-apply a turn", async () => {
-    // The interceptor context carries no generation id, so a staged commit cannot
-    // be tied to the generation that produced it. What is enforceable is that a
-    // turn is never applied twice: an event arriving after the stage it was
-    // waiting for has already been flushed commits nothing.
+  test("a late end from an older generation cannot commit the newer turn", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
 
+    beginGeneration("chat-race", "gen-a");
     await runJevTurn("chat-race");
-    emitEvent("GENERATION_ENDED", { generationId: "gen-a", chatId: "chat-race", messageId: "m-a", content: "a" });
-    const afterFirst = (stored.get("chats/chat-race/world.json") as any).turn;
+    beginGeneration("chat-race", "gen-b");
+    await runJevTurn("chat-race");
 
-    // A late duplicate arriving with no stage pending must not advance the world.
-    emitEvent("GENERATION_ENDED", { generationId: "gen-b", chatId: "chat-race", messageId: "m-b", content: "b" });
-    expect((stored.get("chats/chat-race/world.json") as any).turn).toBe(afterFirst);
-    expect(afterFirst).toBe(1);
+    emitEvent("GENERATION_ENDED", { generationId: "gen-a", chatId: "chat-race", messageId: "m-a", content: "a" }, "user-jev");
+    expect(stored.has("chats/chat-race/world.json")).toBe(false);
+
+    emitEvent("GENERATION_ENDED", { generationId: "gen-b", chatId: "chat-race", messageId: "m-b", content: "b" }, "user-jev");
+    expect((stored.get("chats/chat-race/world.json") as any).turn).toBe(1);
+  });
+
+  test("a late stop from an older generation cannot discard the newer turn", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    beginGeneration("chat-stop-race", "gen-a");
+    await runJevTurn("chat-stop-race");
+    beginGeneration("chat-stop-race", "gen-b");
+    await runJevTurn("chat-stop-race");
+
+    emitEvent("GENERATION_STOPPED", { generationId: "gen-a", chatId: "chat-stop-race" }, "user-jev");
+    emitEvent("GENERATION_ENDED", { generationId: "gen-b", chatId: "chat-stop-race", messageId: "m-b", content: "b" }, "user-jev");
+    expect((stored.get("chats/chat-stop-race/world.json") as any).turn).toBe(1);
   });
 
   test("a duplicated end event for one generation commits once", async () => {
@@ -411,11 +429,12 @@ describe("v0.5 Jev turn flow", () => {
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
+    beginGeneration("chat-dup", "gen-dup");
     await runJevTurn("chat-dup");
-    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" });
+    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" }, "user-jev");
     const first = (stored.get("chats/chat-dup/world.json") as any).turn;
     // A second report for the same generation must not advance the world again.
-    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" });
+    emitEvent("GENERATION_ENDED", { generationId: "gen-dup", chatId: "chat-dup", messageId: "m1", content: "ok" }, "user-jev");
     expect((stored.get("chats/chat-dup/world.json") as any).turn).toBe(first);
   });
 
@@ -434,16 +453,30 @@ describe("v0.5 Jev turn flow", () => {
     expect(stored.has("chats/chat-dry/world.json")).toBe(false);
   });
 
+  test("does not commit scene state without a matching start event", async () => {
+    stored.set("global/settings.json", {
+      ...baseSettings,
+      jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
+    });
+    answerCleanTurn();
+    await runJevTurn("chat-unmatched");
+    emitEvent("GENERATION_ENDED", {
+      generationId: "unmatched", chatId: "chat-unmatched", messageId: "m-unmatched", content: "ok",
+    }, "user-jev");
+    expect(stored.has("chats/chat-unmatched/world.json")).toBe(false);
+  });
+
   test("a failed generation discards its staged scene state", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
+    beginGeneration("chat-fail", "g3");
     await runJevTurn("chat-fail");
     expect(stored.has("chats/chat-fail/world.json")).toBe(false);
 
-    emitEvent("GENERATION_ENDED", { generationId: "g3", chatId: "chat-fail", error: "provider exploded" });
+    emitEvent("GENERATION_ENDED", { generationId: "g3", chatId: "chat-fail", error: "provider exploded" }, "user-jev");
     expect(stored.has("chats/chat-fail/world.json")).toBe(false);
   });
 
@@ -453,9 +486,10 @@ describe("v0.5 Jev turn flow", () => {
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
+    beginGeneration("chat-stop", "g4");
     await runJevTurn("chat-stop");
-    emitEvent("GENERATION_STOPPED", { generationId: "g4", chatId: "chat-stop" });
-    emitEvent("GENERATION_ENDED", { generationId: "g4", chatId: "chat-stop", messageId: "m4", content: "partial" });
+    emitEvent("GENERATION_STOPPED", { generationId: "g4", chatId: "chat-stop" }, "user-jev");
+    emitEvent("GENERATION_ENDED", { generationId: "g4", chatId: "chat-stop", messageId: "m4", content: "partial" }, "user-jev");
     expect(stored.has("chats/chat-stop/world.json")).toBe(false);
   });
 

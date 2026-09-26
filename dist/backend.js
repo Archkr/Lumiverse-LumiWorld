@@ -2345,7 +2345,14 @@ var chatUserIds = new Map;
 var directorBusy = new KeyedOperationLock;
 var runLogWrites = new Map;
 var interceptorRegistered = false;
+var activeGenerationIds = new Map;
 var pendingCommits = new Map;
+function generationChatKey(userId, chatId) {
+  return JSON.stringify([userId, chatId]);
+}
+function generationCommitKey(userId, chatId, generationId) {
+  return JSON.stringify([userId, chatId, generationId]);
+}
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs) {
@@ -2453,6 +2460,12 @@ function extractChatId(value) {
     return null;
   const raw = value.chatId ?? value.chat_id;
   return typeof raw === "string" && raw.trim() ? raw : null;
+}
+function extractGenerationId(value) {
+  if (!value || typeof value !== "object")
+    return null;
+  const raw = value.generationId ?? value.generation_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 function extractGenerationType(value) {
   if (!value || typeof value !== "object")
@@ -3046,6 +3059,7 @@ async function resolveTurnTarget(settings, records, userId) {
 async function handleInterceptor(messages, context) {
   const chatId = extractChatId(context);
   const userId = resolveUserId(chatId, extractContextUserId(context));
+  const generationId = chatId && userId ? activeGenerationIds.get(generationChatKey(userId, chatId)) : undefined;
   const generationType = extractGenerationType(context);
   const dryRun = extractDryRun(context);
   const startedAt = Date.now();
@@ -3178,10 +3192,10 @@ async function handleInterceptor(messages, context) {
     if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
       worldState = committed;
-      if (userId) {
-        pendingCommits.set(chatId, { userId, state: committed });
+      if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
+        pendingCommits.set(generationCommitKey(userId, chatId, generationId), { userId, chatId, state: committed });
       } else {
-        spindle.log.warn("LumiWorld skipped a scene-state commit because no user could be resolved.");
+        spindle.log.warn("LumiWorld skipped a scene-state commit because its generation could not be matched.");
       }
     }
     const allRecords = withConfidenceGate(withDegradationGate([...gateRecords, ...verifyRecords], { status: jevDiagnostics.status, error: jevDiagnostics.error }), settings.jev.minConfidence);
@@ -3376,23 +3390,45 @@ permissionsApi()?.onChanged?.(({ permission, granted }) => {
     tryRegisterInterceptor();
   pushState(lastFrontendUserId);
 });
+spindle.on?.("GENERATION_STARTED", (payload, eventUserId) => {
+  const chatId = extractChatId(payload);
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId)
+    return;
+  const chatKey = generationChatKey(eventUserId, chatId);
+  const previous = activeGenerationIds.get(chatKey);
+  if (previous && previous !== generationId) {
+    pendingCommits.delete(generationCommitKey(eventUserId, chatId, previous));
+  }
+  activeGenerationIds.set(chatKey, generationId);
+});
 spindle.on?.("GENERATION_ENDED", (payload, eventUserId) => {
   const chatId = extractChatId(payload);
-  if (!chatId)
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId)
     return;
-  const pending = pendingCommits.get(chatId);
+  const chatKey = generationChatKey(eventUserId, chatId);
+  if (activeGenerationIds.get(chatKey) === generationId)
+    activeGenerationIds.delete(chatKey);
+  const commitKey = generationCommitKey(eventUserId, chatId, generationId);
+  const pending = pendingCommits.get(commitKey);
   if (!pending)
     return;
-  pendingCommits.delete(chatId);
+  pendingCommits.delete(commitKey);
   const failed = !!(payload && typeof payload === "object" && payload.error);
   if (failed)
     return;
-  saveWorldState(storageApi(), chatId, pending.state, pending.userId).catch((error) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
+  saveWorldState(storageApi(), pending.chatId, pending.state, pending.userId).catch((error) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
 });
-spindle.on?.("GENERATION_STOPPED", (payload) => {
+spindle.on?.("GENERATION_STOPPED", (payload, eventUserId) => {
   const chatId = extractChatId(payload);
-  if (chatId)
-    pendingCommits.delete(chatId);
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId)
+    return;
+  const chatKey = generationChatKey(eventUserId, chatId);
+  if (activeGenerationIds.get(chatKey) === generationId)
+    activeGenerationIds.delete(chatKey);
+  pendingCommits.delete(generationCommitKey(eventUserId, chatId, generationId));
 });
 spindle.on?.("CHAT_SWITCHED", (payload, eventUserId) => {
   const userId = eventUserId || lastFrontendUserId;

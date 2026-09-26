@@ -39,22 +39,17 @@ const chatUserIds = new Map<string, string>();
 const directorBusy = new KeyedOperationLock();
 const runLogWrites = new Map<string, Promise<void>>();
 let interceptorRegistered = false;
-/**
- * Scene-state commits awaiting a successful generation, keyed by chat.
- *
- * The interceptor context carries no generation id — `SpindleContext` is
- * `{chatId, connectionId, personaId, generationType, dryRun, userId}` — so a stage
- * cannot be tied to the generation that produced it, and the key is the chat.
- *
- * Consuming the stage on the first end event is what makes application
- * once-only: a duplicate or late event finds nothing pending and commits nothing.
- * The accepted limitation is that only one stage can be outstanding per chat, so
- * if a second generation stages before the first reports ending, the earlier
- * staged state is replaced. The alternative — queueing stages — has no reliable
- * key to match them against their events, and would risk applying a reply's state
- * to the wrong turn.
- */
-const pendingCommits = new Map<string, { userId: string; state: WorldState }>();
+/** GENERATION_STARTED arrives before prompt assembly and supplies the ID absent from interceptor context. */
+const activeGenerationIds = new Map<string, string>();
+const pendingCommits = new Map<string, { userId: string; chatId: string; state: WorldState }>();
+
+function generationChatKey(userId: string, chatId: string): string {
+  return JSON.stringify([userId, chatId]);
+}
+
+function generationCommitKey(userId: string, chatId: string, generationId: string): string {
+  return JSON.stringify([userId, chatId, generationId]);
+}
 
 class ControllerTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -182,6 +177,13 @@ function extractChatId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const raw = (value as { chatId?: unknown; chat_id?: unknown }).chatId ?? (value as { chat_id?: unknown }).chat_id;
   return typeof raw === "string" && raw.trim() ? raw : null;
+}
+
+function extractGenerationId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = (value as { generationId?: unknown; generation_id?: unknown }).generationId ??
+    (value as { generation_id?: unknown }).generation_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
 function extractGenerationType(value: unknown): string {
@@ -991,6 +993,7 @@ async function handleInterceptor(
 ): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
   const chatId = extractChatId(context);
   const userId = resolveUserId(chatId, extractContextUserId(context));
+  const generationId = chatId && userId ? activeGenerationIds.get(generationChatKey(userId, chatId)) : undefined;
   const generationType = extractGenerationType(context);
   // A dry run is a preview: it must be side-effect free.
   const dryRun = extractDryRun(context);
@@ -1142,11 +1145,12 @@ async function handleInterceptor(
     if (settings.jev.enabled && settings.jev.worldStateEnabled && chatId && !dryRun) {
       const committed = commitWorldState(worldState, verifyRecords, directive);
       worldState = committed;
-      if (userId) {
-        pendingCommits.set(chatId, { userId, state: committed });
+      if (userId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId) {
+        pendingCommits.set(generationCommitKey(userId, chatId, generationId), { userId, chatId, state: committed });
       } else {
-        // Without a resolvable user the commit would be unownable; skip it.
-        spindle.log.warn("LumiWorld skipped a scene-state commit because no user could be resolved.");
+        // A generation that was superseded during Jev work, or one whose start
+        // event was unavailable, must never commit under another generation's ID.
+        spindle.log.warn("LumiWorld skipped a scene-state commit because its generation could not be matched.");
       }
     }
 
@@ -1388,6 +1392,18 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
   void pushState(lastFrontendUserId);
 });
 
+(spindle as any).on?.("GENERATION_STARTED", (payload: unknown, eventUserId?: string) => {
+  const chatId = extractChatId(payload);
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId) return;
+  const chatKey = generationChatKey(eventUserId, chatId);
+  const previous = activeGenerationIds.get(chatKey);
+  if (previous && previous !== generationId) {
+    pendingCommits.delete(generationCommitKey(eventUserId, chatId, previous));
+  }
+  activeGenerationIds.set(chatKey, generationId);
+});
+
 /**
  * Flushes a staged scene-state commit once the reply has actually landed.
  *
@@ -1396,24 +1412,30 @@ permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; gr
  */
 (spindle as any).on?.("GENERATION_ENDED", (payload: unknown, eventUserId?: string) => {
   const chatId = extractChatId(payload);
-  if (!chatId) return;
-  const pending = pendingCommits.get(chatId);
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId) return;
+  const chatKey = generationChatKey(eventUserId, chatId);
+  if (activeGenerationIds.get(chatKey) === generationId) activeGenerationIds.delete(chatKey);
+  const commitKey = generationCommitKey(eventUserId, chatId, generationId);
+  const pending = pendingCommits.get(commitKey);
   if (!pending) return;
-  // Released either way: this event belongs to one generation, and the staging it
-  // was waiting for is now settled.
-  pendingCommits.delete(chatId);
+  pendingCommits.delete(commitKey);
 
   const failed = !!(payload && typeof payload === "object" && (payload as { error?: unknown }).error);
   if (failed) return;
 
-  void saveWorldState(storageApi(), chatId, pending.state, pending.userId)
+  void saveWorldState(storageApi(), pending.chatId, pending.state, pending.userId)
     .catch((error: unknown) => spindle.log.warn(`LumiWorld could not save scene state: ${error instanceof Error ? error.message : String(error)}`));
 });
 
 /** A stopped generation never produced a reply, so its staged commit is discarded. */
-(spindle as any).on?.("GENERATION_STOPPED", (payload: unknown) => {
+(spindle as any).on?.("GENERATION_STOPPED", (payload: unknown, eventUserId?: string) => {
   const chatId = extractChatId(payload);
-  if (chatId) pendingCommits.delete(chatId);
+  const generationId = extractGenerationId(payload);
+  if (!chatId || !generationId || !eventUserId) return;
+  const chatKey = generationChatKey(eventUserId, chatId);
+  if (activeGenerationIds.get(chatKey) === generationId) activeGenerationIds.delete(chatKey);
+  pendingCommits.delete(generationCommitKey(eventUserId, chatId, generationId));
 });
 
 (spindle as any).on?.("CHAT_SWITCHED", (payload: unknown, eventUserId?: string) => {
