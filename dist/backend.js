@@ -1291,7 +1291,7 @@ var GATE_CATALOG = withCore([
     safeValue: true,
     blockValue: false,
     codeOnly: true,
-    appliesWhen: "Evaluated in code from the confidence Jev reports for the other gates."
+    appliesWhen: "A decision answered below the confidence floor."
   },
   {
     id: "budget_degradation",
@@ -1308,7 +1308,7 @@ var GATE_CATALOG = withCore([
     safeValue: true,
     blockValue: false,
     codeOnly: true,
-    appliesWhen: "Evaluated in code from the Jev client result and the remaining interceptor budget."
+    appliesWhen: "Jev was unavailable, timed out, or exceeded the remaining budget."
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));

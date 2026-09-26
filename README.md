@@ -31,8 +31,8 @@ Jev is opt-in. With no Jev connection configured, LumiWorld behaves exactly as t
 - [Compatibility](#compatibility)
 - [Installation](#installation)
 - [Quick start](#quick-start)
-- [Jev gates](#jev-gates)
-- [The Director drawer](#the-director-drawer)
+- [Jev decisions](#jev-decisions)
+- [The drawer](#the-drawer)
 - [Settings reference](#settings-reference)
 - [Prompt templates](#prompt-templates)
 - [Testing and Prompt Breakdown](#testing-and-prompt-breakdown)
@@ -59,7 +59,7 @@ Jev is opt-in. With no Jev connection configured, LumiWorld behaves exactly as t
 | **Automatic saving** | Saves edits as you make them and retains the draft for retry if a save fails. |
 | **Inspectable output** | Attributes the injected system block as **LumiWorld Director** in Prompt Breakdown. |
 | **Graceful failure** | Continues the normal generation without a Director note if the Director fails or times out. |
-| **Jev gates** | Optional: asks a System One model whether a turn needs the Director at all, verifies the draft, and records every decision. |
+| **Jev decisions** | Optional: asks a System One model whether a turn needs the Director at all, verifies the draft, and records every decision. |
 
 ## How it works
 
@@ -138,7 +138,7 @@ and give nearby NPCs practical reasons to disagree about entering it.
 
 Director notes remain in your user settings until you change or clear them. Clear scene-specific guidance before moving to an unrelated chat.
 
-## Jev gates
+## Jev decisions
 
 **Jev** is TypeSafe AI's System One model. It is not a chat model: you send it a
 `state` and a map of typed questions, and it returns one typed answer per
@@ -204,14 +204,38 @@ logged.
 The key is stored per Lumiverse user in encrypted at-rest secret storage
 (AES-256-GCM) and is never sent back to the drawer.
 
-### Choosing gates
+### Choosing decisions
 
-The **Jev gates** section lists every gate, grouped by category. Each row has an
-enable switch, a confidence floor, and a fallback. The core loop — smart
-triggering, context filtering, model routing, verification, player agency,
-duplicate and continuity checking, intensity gating, confidence escalation, and
-graceful degradation — is on by default. The remaining gates shape craft and
-state tracking and are off until you turn them on.
+Open the **Jev** view and expand **Decisions**. Every gate is listed by category
+with a live count of how many are on. Each gate collapses to a single line
+showing its type and when it runs, so the whole list stays scannable:
+
+- The switch turns the gate on or off.
+- The caret opens its detail sheet, holding the **confidence floor** — a slider,
+  also typeable for an exact value — and the **fallback** it uses when Jev cannot
+  answer confidently.
+- A gate you have changed is marked **custom** and carries an accent edge, so a
+  non-default setup is visible at a glance.
+- **Enable all** / **Disable all** acts on a whole category, and a single
+  **Reset** action returns every changed gate to its defaults.
+
+The core loop — smart triggering, context filtering, model routing, verification,
+player agency, duplicate and continuity checking, intensity gating, confidence
+escalation, and graceful degradation — is on by default. The remaining gates
+shape craft and track state, and stay off until you turn them on.
+
+### Reading the last turn
+
+**Last turn decisions** shows what Jev decided for the most recent Director call.
+The summary strip reports whether every gate answered, which model served it, the
+request count, how many answers fell back or escalated, the time spent in Jev, and
+token usage. Below it, each gate lists its answer, confidence, and the fallback it
+used if any.
+
+A confidence shown with a `~` is derived rather than reported: Noul (yes/no)
+answers carry no confidence field, so LumiWorld computes `max(p, 1 - p)` and marks
+it. The two computed records — confidence escalation and graceful degradation —
+are listed last, since they describe the turn rather than decide it.
 
 > **Jev is an external service.** The projected scene state and, in the verify
 > phase, the draft directive are sent to your chosen provider. The state is a
@@ -224,16 +248,40 @@ There is also an optional **strong** Director target. When Jev's model-routing
 gate asks for a stronger Director, LumiWorld promotes the turn to that connection
 or model. With nothing configured, the normal target is used.
 
-## The Director drawer
+## The drawer
 
-- **Director switch and status:** enable or disable automatic direction and see whether setup is complete.
+LumiWorld adds one drawer tab, **LumiWorld**, with two views: **Director** and
+**Jev**. The title, the status line, and the switch in the header all follow
+whichever view you are on, so the master toggle always controls what is in front
+of you.
+
+The Jev tab carries a small marker so its state is readable without opening
+anything: muted when Jev is off, amber when it is on but blocked, green when it
+is active. The Director tab flags only the case that would block a generation.
+
+### Director view
+
+- **Enable Director:** the header switch. Turns automatic direction on or off.
 - **Connection and Model:** select the model that prepares the note.
 - **Test Director:** try the current draft settings and read the success or error feedback.
 - **Run before:** select which reply types trigger a Director call. Unchecking every type stops automatic Director calls.
 - **Include in context:** control the additional character, persona, and World Info context sent to the Director.
 - **Director notes:** expand to edit your private guidance.
 - **Advanced settings:** expand for response limits, history, retention, and prompt templates.
-- **Save status:** edits save automatically. If saving fails, your draft stays in the open drawer and **Retry save** becomes available.
+- **Save status:** shown at the foot of both views. Edits save automatically; if saving fails, your draft stays in the open drawer and **Retry save** becomes available.
+
+### Jev view
+
+- **Enable Jev:** the header switch. Turns the decision layer on or off.
+- **Provider and Model:** choose TypeSafe or OpenRouter and the model it calls.
+- **API key:** paste a key and choose **Test Jev**. The key is stored only once the
+  provider accepts it, and is never sent back to the drawer.
+- **Decisions:** the full gate list, grouped by category. See
+  [Choosing decisions](#choosing-decisions).
+- **Last turn decisions:** what Jev decided for the most recent Director call. See
+  [Reading the last turn](#reading-the-last-turn).
+- **Advanced settings:** state cap, history messages, timeout, and the confidence
+  floor that applies to every gate.
 
 ## Settings reference
 
@@ -252,7 +300,7 @@ or model. With nothing configured, the normal target is used.
 
 Context switches control what LumiWorld adds to the Director’s input. They do not remove context already present in the main model’s prompt.
 
-### Advanced settings
+### Advanced settings (Director view)
 
 | Setting | Default | Range / meaning |
 |---|---|---|
@@ -264,6 +312,17 @@ Context switches control what LumiWorld adds to the Director’s input. They do 
 | Run log limit | `12` | `0–50`; number of Director run records retained in extension storage. `0` disables retention of Director records. |
 
 The prompt cap is measured in characters, not tokens. Large histories and custom templates still need to fit the selected model’s context window.
+
+### Advanced settings (Jev view)
+
+| Setting | Default | Range / meaning |
+|---|---|---|
+| Provider | TypeSafe | TypeSafe or OpenRouter. Both use the same request and response shape. |
+| Model | Provider default (`jev-latest` or `typesafe/jev-1.13`) | Pin a version such as `jev-1.13.0` if you tuned thresholds against a release. |
+| State cap (chars) | `30000` | `2000–32000`; caps the projected state sent to Jev. Jev allows 32k tokens for the state. |
+| History messages | `10` | Most recent chat messages included in that projection. `0` sends none. |
+| Timeout (ms) | `8000` | `1000–60000`; maximum wait for a Jev request. |
+| Confidence floor | `0.55` | `0–1`; applies to every gate. An answer below it uses that gate’s fallback. |
 
 ## Prompt templates
 
@@ -382,9 +441,9 @@ The technical extension identifier remains `agent_world` so existing installatio
 | **Save failed** | Keep the drawer open and choose **Retry save**. Your unsaved draft remains available there. |
 | **Old scene guidance appears in another chat** | Director notes are shared across your chats. Clear or replace scene-specific notes when switching stories. |
 | **Test Jev is disabled** | Grant `cors_proxy`, then paste an API key. A key must already be stored or typed to test. |
-| **Jev never seems to run** | Check that **Use Jev gates** is on, a key is stored for the selected provider, and `cors_proxy` is granted. Open **Last turn decisions** to see whether Jev answered or degraded. |
+| **Jev never seems to run** | Open the **Jev** view and check that **Enable Jev** (the switch in the header) is on, a key is stored for the selected provider, and `cors_proxy` is granted. Expand **Last turn decisions** to see whether Jev answered or degraded. |
 | **Every turn shows a Jev fallback** | Inspect the error in **Last turn decisions**. A rejected key, a rate limit, or a timeout are the usual causes. LumiWorld runs the Director ungated in the meantime. |
-| **The Director stopped running for quiet turns** | That is smart triggering. Turn off **Smart Director triggering** under Jev gates, or switch Jev off entirely. |
+| **The Director stopped running for quiet turns** | That is smart triggering. Turn off **Smart Director triggering** under **Decisions**, or switch Jev off entirely. |
 | **Decisions look uncertain** | Noul answers near 0.5 are Jev saying it has no clear read. Raise the confidence floor, or ask a more specific question by adjusting the gate. |
 
 ## Development
@@ -401,7 +460,7 @@ bun run build
 ```text
 src/
   backend.ts        Director calls, interception, Jev orchestration, and storage
-  frontend.ts       Director drawer, Jev settings, gate editor, and diagnostics
+  frontend.ts       The drawer: Director and Jev views, decisions editor, diagnostics
   shared.ts         Defaults, settings normalization, gate types, and response parsing
   jev.ts            Provider-neutral Jev client, batching, and response normalization
   gates.ts          The gate catalog, phase planning, and decision resolution
@@ -409,8 +468,8 @@ src/
   types.ts          Frontend/backend message contracts
   backend.test.ts   Backend, interceptor, and Jev turn-flow tests
   frontend.test.ts  Settings normalization and autosave queue tests
-  frontend.jev.test.ts  Drawer rendering tests for the Jev UI
-  gates.test.ts     Gate catalog, planning, and resolution tests
+  frontend.jev.test.ts  Drawer rendering tests for both views
+  gates.test.ts     Decision catalog, planning, and resolution tests
   jev.test.ts       Jev request, response, and transport tests
   shared.test.ts    Context, generation selection, and prompt behavior tests
   world-state.test.ts   Scene state persistence and projection tests

@@ -607,7 +607,7 @@ var GATE_CATALOG = withCore([
     safeValue: true,
     blockValue: false,
     codeOnly: true,
-    appliesWhen: "Evaluated in code from the confidence Jev reports for the other gates."
+    appliesWhen: "A decision answered below the confidence floor."
   },
   {
     id: "budget_degradation",
@@ -624,7 +624,7 @@ var GATE_CATALOG = withCore([
     safeValue: true,
     blockValue: false,
     codeOnly: true,
-    appliesWhen: "Evaluated in code from the Jev client result and the remaining interceptor budget."
+    appliesWhen: "Jev was unavailable, timed out, or exceeded the remaining budget."
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
@@ -1403,7 +1403,7 @@ function setup(ctx) {
     const enabled = definitions.filter((definition) => effectivePolicy(definition).enabled).length;
     const customised = definitions.filter((definition) => (definition.id in draft.jev.gatePolicy)).length;
     return collapsible({
-      title: "Jev gates",
+      title: "Decisions",
       badge: `${enabled}/${definitions.length}`,
       expanded: gatesOpen,
       onToggle: (open) => {
@@ -1412,7 +1412,7 @@ function setup(ctx) {
       className: "lw-gates"
     }, (body) => {
       body.classList.add("lw-gate-body");
-      body.append(el("p", "lw-hint", "Enabled gates travel in one batched request per phase, so adding gates adds no round trips. A gate that cannot answer uses its own fallback."));
+      body.append(el("p", "lw-hint", "Enabled decisions travel in one batched request per phase, so adding more costs no round trips. A decision that cannot answer uses its own fallback."));
       for (const category of GATE_CATEGORY_ORDER) {
         const group = definitions.filter((definition) => definition.category === category);
         if (group.length === 0)
@@ -1427,7 +1427,7 @@ function setup(ctx) {
             next[definition.id] = { ...next[definition.id], enabled: on !== group.length };
           mutateJev({ gatePolicy: next }, true);
         });
-        all.title = on === group.length ? `Turn off every ${GATE_CATEGORY_LABELS[category]} gate` : `Turn on every ${GATE_CATEGORY_LABELS[category]} gate`;
+        all.title = on === group.length ? `Turn off every ${GATE_CATEGORY_LABELS[category]} decision` : `Turn on every ${GATE_CATEGORY_LABELS[category]} decision`;
         head.append(title, all);
         body.append(head);
         for (const definition of group)
@@ -1435,7 +1435,7 @@ function setup(ctx) {
       }
       if (customised > 0) {
         const footer = el("div", "lw-cat-head");
-        const cleared = button(`Reset ${customised} changed gate${customised === 1 ? "" : "s"} to defaults`, () => {
+        const cleared = button(`Reset ${customised} changed decision${customised === 1 ? "" : "s"} to defaults`, () => {
           mutateJev({ gatePolicy: {} }, true);
         });
         cleared.className = "lw-button lw-button-primary";
@@ -1537,7 +1537,7 @@ function setup(ctx) {
     } else
       sliderFallback();
     sheet.append(track);
-    sheet.append(el("div", "lw-hint", "Answers below this are escalated: the gate stops deciding and uses its fallback instead."));
+    sheet.append(el("div", "lw-hint", "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
     const fallbackHead = el("div", "lw-sheet-label");
     fallbackHead.append(el("span", undefined, "When it cannot answer"));
     sheet.append(fallbackHead, selectControl(policy.fallback, GATE_FALLBACKS2.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })), `${definition.label} fallback`, (next) => mutateGate(definition.id, { fallback: next })));
@@ -1561,7 +1561,7 @@ function setup(ctx) {
     const diagnostics = latestJevRun()?.run.jev ?? null;
     const summary = summarizeJevDiagnostics(diagnostics);
     return collapsible({
-      title: "Last turn decisions",
+      title: "Last turn",
       badge: diagnostics ? diagnostics.status === "ok" ? "answered" : diagnostics.status : undefined,
       badgeTone: diagnostics ? diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error" : "neutral",
       expanded: diagnosticsOpen,
@@ -1570,7 +1570,7 @@ function setup(ctx) {
       }
     }, (body) => {
       if (!diagnostics) {
-        body.append(el("p", "lw-hint", state?.settings.jev.enabled ? "Generate a reply to see what each gate decided for that turn." : "Turn on Use Jev gates to start recording decisions."));
+        body.append(el("p", "lw-hint", state?.settings.jev.enabled ? "Generate a reply to see what each gate decided for that turn." : "Turn on Enable Jev to start recording decisions."));
         return;
       }
       body.append(diagnosticsPanel(diagnostics, summary));

@@ -318,7 +318,7 @@ describe("drawer views", () => {
     expect(within(jev, "Temperature")).toBeNull();
     expect(within(jev, "Jev state cap")).not.toBeNull();
     expect(within(director, "Jev state cap")).toBeNull();
-    expect(jev.textContent).toContain("Jev gates");
+    expect(jev.textContent).toContain("Decisions");
     harness.destroy();
   });
 
@@ -482,7 +482,7 @@ describe("drawer views", () => {
   });
 });
 
-describe("Jev gates editor", () => {
+describe("Jev decisions editor", () => {
   test("renders every catalog gate grouped by category", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
     // The gates editor is a collapsed <details>; its rows are still in the DOM.
@@ -610,7 +610,7 @@ describe("Jev gates editor", () => {
     const tuned = mount(makeState({
       settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, gatePolicy: { callback: { enabled: true } } } }),
     }));
-    expect(tuned.root.textContent).toContain("Reset 1 changed gate to defaults");
+    expect(tuned.root.textContent).toContain("Reset 1 changed decision to defaults");
     tuned.destroy();
   });
 
@@ -663,8 +663,8 @@ describe("Jev diagnostics panel", () => {
 
   test("explains that no decisions exist yet", () => {
     const harness = mount(makeState());
-    expect(harness.root.textContent).toContain("Last turn decisions");
-    expect(harness.root.textContent).toContain("Turn on Use Jev gates to start recording decisions.");
+    expect(harness.root.textContent).toContain("Last turn");
+    expect(harness.root.textContent).toContain("Turn on Enable Jev to start recording decisions.");
     harness.destroy();
   });
 
