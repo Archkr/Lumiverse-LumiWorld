@@ -161,7 +161,13 @@ const CORE_GATES: ReadonlySet<string> = new Set([
 ]);
 
 function withCore(gates: GateDefinition[]): GateDefinition[] {
-  return gates.map((gate) => (CORE_GATES.has(gate.id) ? { ...gate, enabledByDefault: true } : gate));
+  return gates.map((gate) => ({
+    ...gate,
+    enabledByDefault: CORE_GATES.has(gate.id),
+    // A weak "consistent" or "new" answer must not clear a note whose scene
+    // or completed player action may have changed.
+    threshold: gate.id === "continuity_guard" || gate.id === "duplicate_suppression" ? 0.7 : gate.threshold,
+  }));
 }
 
 export const GATE_CATALOG: readonly GateDefinition[] = withCore([
@@ -296,7 +302,7 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Story-thread management",
     "director_control",
     "gate",
-    "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for the open threads if present.",
+    "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for open threads only when they still fit `chat_history`; a saved thread contradicted by the latest chat is stale.",
     "Picks the thread to advance so the Director does not drift onto uninteresting tangents.",
     {
       none: "No open thread needs movement right now",
@@ -441,11 +447,11 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Director verification",
     "guardrails",
     "verify",
-    "Read `draft_directive` against `latest_player_action`, `chat_history`, and `scene_state`. Does it change the actor or target of the player's completed action, repeat that action as a new event, contradict a committed fact, or prematurely resolve an open thread?",
+    "Treat `latest_player_action` and `chat_history` as the only record of current events; `character` and `world_info` are background lore, and `scene_state` is derived and may be stale. Read `draft_directive` against the most recent marked chat. Does it move the scene to a different setting or participants, change the actor, target, object, or outcome of a completed player action, replay that action, contradict a committed event, or prematurely resolve an open thread? A conflict with the chat is a violation even if other context describes the other scene.",
     "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.",
     {
-      clean: "The directive is free of contradictions, repetition, and premature resolution",
-      violation: "The directive contains at least one of those problems",
+      clean: "The directive preserves the chat's current scene and every completed player action, with no contradiction, repetition, or premature resolution",
+      violation: "The directive changes the scene or a completed action's actor, target, object, or outcome, repeats an action, or resolves an open thread too early",
       uncertain: "Something looks off, but it is not clear enough to call a violation",
     },
     "accept",
@@ -487,12 +493,12 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Duplicate suppression",
     "guardrails",
     "verify",
-    "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay a completed player action or an already committed development? NPC reactions to that action are new, but repeating the action itself is not.",
+    "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay, prevent, or change the outcome of a completed player action or an already committed development? A camera flash, movement, or spoken line described as completed has already happened. NPC reactions afterward are new; rewriting the action is not.",
     "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.",
     {
-      new: "The development has not happened yet in the recent exchange",
-      repeats: "The directive repeats a development that already happened",
-      near_duplicate: "The directive is a thin variation on something that already happened",
+      new: "The directive begins after completed actions and develops something new",
+      repeats: "The directive asks the next reply to perform a completed action again",
+      near_duplicate: "The directive prevents, redirects, or changes the outcome of a completed action, or thinly repeats it",
     },
     "retry",
     "new",
@@ -503,11 +509,11 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
     "Continuity guard",
     "guardrails",
     "verify",
-    "Does `draft_directive` contradict `latest_player_action`, `chat_history`, `scene_state`, or `world_info`? Check the actor and target of the player's completed action exactly; do not silently switch who or what they acted on.",
+    "Use `latest_player_action` and `chat_history` as the authority for the current scene; `character` and `world_info` are background, and `scene_state` may be stale. Does `draft_directive` move to a different setting or group of participants, or change the actor, target, object, or completed outcome of the player's action? Check exactly who or what was acted on. A draft that imports a scene from other context instead of continuing the chat is a violation.",
     "Prevents the Director from breaking facts the story has already committed to.",
     {
-      consistent: "Nothing in the directive contradicts established facts",
-      violation: "The directive contradicts an established fact",
+      consistent: "The directive continues the marked chat scene and preserves the completed action's actor, target, objects, and outcome",
+      violation: "The directive changes the chat's location or participants, or changes a completed action's actor, target, objects, or outcome",
       uncertain: "The directive may contradict an established fact, but it is not clear",
     },
     "soften",

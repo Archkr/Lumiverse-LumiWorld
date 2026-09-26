@@ -38,7 +38,6 @@ export interface LumiWorldSettings {
   strongConnectionId: string | null;
   strongModelOverride: string;
   temperature: number;
-  maxTokens: number;
   timeoutMs: number;
   maxInputChars: number;
   historyMessageLimit: number;
@@ -482,8 +481,6 @@ export interface ControllerTargetError {
 
 export type ControllerTargetResult = ControllerTarget | ControllerTargetError;
 
-export const MAX_DIRECTIVE_CHARS = 2200;
-export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 // Lumiverse clamps prompt interceptor work to five minutes.
 export const MAX_DIRECTOR_TIMEOUT_MS = 300_000;
 export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
@@ -577,7 +574,7 @@ export const PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
-export const DEFAULT_SYSTEM_TEMPLATE = [
+export const PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE = [
   "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -602,8 +599,13 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
+export const DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE.replace(
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed.",
+);
+
 /** Built-in template shipped before structured thread names were introduced. */
-const PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = DEFAULT_SYSTEM_TEMPLATE
+const PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE
   .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
   .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
     "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
@@ -643,7 +645,6 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   strongConnectionId: null,
   strongModelOverride: "",
   temperature: 0.35,
-  maxTokens: 420,
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
@@ -959,6 +960,7 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ||
     storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ||
     storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE ||
     storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE
       ? DEFAULT_SYSTEM_TEMPLATE
       : storedSystemTemplate;
@@ -1008,7 +1010,6 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
     strongConnectionId: cleanNullableString(obj.strongConnectionId),
     strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
-    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
@@ -1440,13 +1441,16 @@ export function buildControllerMessages(
     chatId: context.chatId,
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
-    maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
+    maxDirectiveChars: "no fixed limit",
     // Notes are sent as their own controller-only message; keep the legacy token empty to avoid duplication.
     additionalNotes: "",
     user: identity.userName,
     char: identity.characterName,
   };
-  const renderedSystem = renderTemplate(settings.systemTemplate, vars);
+  const renderedSystem = [
+    renderTemplate(settings.systemTemplate, vars),
+    "Current-scene authority: Only marked chat history establishes what has happened, where the scene is, and who is present. Character, persona, and World Info context are background reference, not a record of current events. Derived scene state is advisory and must yield to the chat if stale. The latest completed player chat action already happened exactly as written: preserve its actor, target, objects, and outcome. Start after that action; never rewind it, redirect it to another target, or give its objects to another character without a new on-scene event. If other context conflicts with chat, follow the chat.",
+  ].join("\n\n");
   const renderedUser = renderTemplate(settings.userTemplate, vars);
   const messages: LlmMessageLike[] = [{ role: "system", content: renderedSystem }];
   if (additionalNotes) {
@@ -1485,17 +1489,16 @@ function findJsonObject(value: string): unknown | null {
   }
 }
 
-function normalizeDirectiveText(value: string, maxChars: number): string | null {
+function normalizeDirectiveText(value: string): string | null {
   const normalized = value
     .replace(/\r/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (!normalized) return null;
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+  return normalized;
 }
 
-export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
+export function parseControllerDirective(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const stripped = stripCodeFence(raw);
   const parsed = findJsonObject(stripped);
@@ -1514,13 +1517,13 @@ export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_
       "content",
     ];
     for (const key of keys) {
-      if (typeof obj[key] === "string") return normalizeDirectiveText(obj[key] as string, maxChars);
+      if (typeof obj[key] === "string") return normalizeDirectiveText(obj[key] as string);
     }
     if ("thread_label" in obj) return null;
     const firstString = Object.values(obj).find((value): value is string => typeof value === "string" && value.trim().length > 0);
-    if (firstString) return normalizeDirectiveText(firstString, maxChars);
+    if (firstString) return normalizeDirectiveText(firstString);
   }
-  return normalizeDirectiveText(stripped, maxChars);
+  return normalizeDirectiveText(stripped);
 }
 
 function readStringAtPath(value: unknown, path: Array<string | number>): string | null {
@@ -1644,8 +1647,8 @@ export function describeEmptyControllerResponse(response: unknown): string {
   ].join(" ");
 }
 
-export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
-  return parseControllerDirective(extractControllerResponseText(response), maxChars);
+export function parseControllerDirectiveFromResponse(response: unknown): string | null {
+  return parseControllerDirective(extractControllerResponseText(response));
 }
 
 /** Optional structured thread name; plain-text Director replies do not create threads. */
@@ -1662,6 +1665,7 @@ export function buildInjectedDirective(directive: string): string {
   return [
     "[LumiWorld Director]",
     "Use this private world-state directive to guide the next visible reply. Do not mention LumiWorld, the controller, or this note.",
+    "The saved chat history is authoritative for the current scene and completed player actions. Treat this note as a suggestion only where it agrees with that history. Do not change the player's actor, target, objects, or completed outcome, and do not import a different scene from character background or an opening message.",
     "",
     directive.trim(),
   ].join("\n");

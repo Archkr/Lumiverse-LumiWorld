@@ -222,6 +222,22 @@ describe("gate resolution", () => {
     expect(record.escalated).toBe(true);
     expect(record.usedFallback).toBe(true);
   });
+
+  test("the observed weak continuity approvals cannot clear a scene-changing note", () => {
+    const continuity = resolveGateAnswer(
+      policy("continuity_guard"),
+      { type: "choice", choice: "consistent", probabilities: { consistent: 0.59, violation: 0.41 }, confidence: 0.59 },
+      { minConfidence: 0.55 },
+    );
+    const repetition = resolveGateAnswer(
+      policy("duplicate_suppression"),
+      { type: "choice", choice: "new", probabilities: { new: 0.58, repeats: 0.2, near_duplicate: 0.22 }, confidence: 0.58 },
+      { minConfidence: 0.55 },
+    );
+    expect(continuity.usedFallback).toBe(true);
+    expect(repetition.usedFallback).toBe(true);
+    expect(assessVerification([continuity, repetition]).verdict).toBe("inconclusive");
+  });
 });
 
 describe("decision helpers", () => {

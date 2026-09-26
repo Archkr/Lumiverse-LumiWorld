@@ -1768,18 +1768,16 @@ export function setup(ctx: SpindleFrontendContext) {
     notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
     notes.append(notesBody); view.append(notes);
 
-    // Response limits and templates shape the Director call, so they belong here
-    // rather than competing with the gate setup for space in the Jev view.
+    // Director request settings and templates belong here rather than in Jev.
     const advanced = el("details", "lw-details"); advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => { advancedOpen = advanced.open; });
     const advancedSummary = el("summary"); const advancedCopy = el("span", "lw-summary-copy");
-    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Response limits & prompt templates"));
+    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Request settings & prompt templates"));
     advancedSummary.append(advancedCopy); advanced.append(advancedSummary);
     const advancedBody = el("div", "lw-details-body");
     const parameters = el("div", "lw-fields");
     parameters.append(
       numberField("Temperature", "temperature", draft.temperature, 0, 2, .05),
-      numberField("Max tokens", "maxTokens", draft.maxTokens, 64, Number.MAX_SAFE_INTEGER, 1),
       numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."),
       numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1),
       numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000),

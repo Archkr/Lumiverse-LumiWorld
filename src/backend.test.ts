@@ -323,6 +323,22 @@ describe("v0.5 Jev turn flow", () => {
     expect(generatedMessages).toHaveLength(1);
   });
 
+  test("does not send an output token limit to the Director provider", async () => {
+    answerCleanTurn();
+    const captured: { parameters?: Record<string, unknown> } = {};
+    const originalRaw = (globalThis as any).spindle.generate.raw;
+    (globalThis as any).spindle.generate.raw = async (input: any) => {
+      captured.parameters = input.parameters;
+      return originalRaw(input);
+    };
+    try {
+      await runJevTurn();
+    } finally {
+      (globalThis as any).spindle.generate.raw = originalRaw;
+    }
+    expect(captured.parameters).toEqual({ temperature: baseSettings.temperature });
+  });
+
   test("Jev context switches independently control its state", async () => {
     activePersona = { id: "persona-1", name: "Aster", description: "PERSONA_PRIVATE_CANARY" };
     activeCharacter = { id: "character-1", name: "Iris", description: "CHARACTER_PRIVATE_CANARY" };
@@ -339,6 +355,39 @@ describe("v0.5 Jev turn flow", () => {
     expect(director).not.toContain("CHARACTER_PRIVATE_CANARY");
     expect(director).not.toContain("sealed with salt and iron");
     expect(worldInfoFetches).toBe(1);
+  });
+
+  test("uses current marked chat instead of a character card's stale opening scene", async () => {
+    activeCharacter = {
+      id: "character-1", name: "Date A Live", description: "Ratatoskr is an organization.",
+      personality: "NPCs may challenge intrusions.", scenario: "A round-table meeting is underway.",
+      first_mes: "Woodman and Karen sit with Nia at the round table.",
+      mes_example: "Karen blocks the Chairman's camera.",
+      system_prompt: "Play the round-table meeting.",
+      post_history_instructions: "Return to Woodman's meeting.",
+    };
+    stored.set("global/settings.json", { ...baseSettings, includeCharacter: true,
+      jev: jevSettings({ includeCharacter: true }) });
+    answerCleanTurn();
+    const messages = [
+      { role: "assistant", content: "Shido stands with Kotori on the Fraxinus bridge.", __isChatHistory: true },
+      { role: "user", content: "I hold my datapad up to Shido's face. The camera flashes.", __isChatHistory: true },
+    ];
+    await messageHandler!({ type: "refresh_state", chatId: "chat-scene-source" }, "user-jev");
+    await interceptor!(messages, { chatId: "chat-scene-source", generationType: "normal" });
+
+    const director = JSON.stringify(generatedMessages[0]);
+    const jev = JSON.stringify(jevStates);
+    for (const text of [director, jev]) {
+      expect(text).toContain("Ratatoskr is an organization.");
+      expect(text).toContain("Fraxinus bridge");
+      expect(text).toContain("Shido's face");
+      expect(text).not.toContain("round-table meeting");
+      expect(text).not.toContain("Woodman and Karen");
+      expect(text).not.toContain("Chairman's camera");
+      expect(text).not.toContain("Return to Woodman's meeting");
+    }
+    expect(director).toContain("Only marked chat history establishes what has happened");
   });
 
   test("Jev cannot filter Director context that its switches hide", async () => {

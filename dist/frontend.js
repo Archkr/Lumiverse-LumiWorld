@@ -49,7 +49,6 @@ var DEFAULT_JEV_SETTINGS = {
   worldStateEnabled: true,
   gatePolicy: {}
 };
-var MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 var MAX_DIRECTOR_TIMEOUT_MS = 300000;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
@@ -121,7 +120,7 @@ var PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var DEFAULT_SYSTEM_TEMPLATE = [
+var PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE = [
   "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -146,7 +145,8 @@ var DEFAULT_SYSTEM_TEMPLATE = [
   "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters."
 ].join(`
 `);
-var PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = DEFAULT_SYSTEM_TEMPLATE.replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}').replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.", "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
+var DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE.replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.", "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed.");
+var PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE.replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}').replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.", "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
 var PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
   "",
@@ -181,7 +181,6 @@ var DEFAULT_SETTINGS = {
   strongConnectionId: null,
   strongModelOverride: "",
   temperature: 0.35,
-  maxTokens: 420,
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
@@ -289,7 +288,7 @@ function normalizeSettings(value) {
   const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
+  const legacySystemTemplate = !storedSystemTemplate || storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE || storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE ? DEFAULT_SYSTEM_TEMPLATE : storedSystemTemplate;
   const legacyUserTemplate = !storedUserTemplate || storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE || storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE || storedUserTemplate === PRE_CONTEXT_DEFAULT_USER_TEMPLATE ? DEFAULT_USER_TEMPLATE : storedUserTemplate;
   const promptPresets = [];
   const seenPresetIds = new Set;
@@ -329,7 +328,6 @@ function normalizeSettings(value) {
     strongConnectionId: cleanNullableString(obj.strongConnectionId),
     strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
-    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
@@ -430,7 +428,11 @@ var CORE_GATES = new Set([
   "scene_state_tracking"
 ]);
 function withCore(gates) {
-  return gates.map((gate) => CORE_GATES.has(gate.id) ? { ...gate, enabledByDefault: true } : gate);
+  return gates.map((gate) => ({
+    ...gate,
+    enabledByDefault: CORE_GATES.has(gate.id),
+    threshold: gate.id === "continuity_guard" || gate.id === "duplicate_suppression" ? 0.7 : gate.threshold
+  }));
 }
 var GATE_CATALOG = withCore([
   noul("smart_trigger", "Smart Director triggering", "director_control", "gate", "Given `chat_history`, `scene_state`, `director_notes`, and the latest player message, is there anything in this turn that a private world director should intervene in before the visible reply is written? Judge only whether intervention would add something the main model would otherwise miss.", "Decides whether the Director runs at all, so a quiet or purely conversational turn costs one cheap Jev call instead of a full Director generation.", {
@@ -476,7 +478,7 @@ var GATE_CATALOG = withCore([
     resolve: "Bring this conflict to a genuine conclusion",
     redirect: "Move the conflict somewhere else or onto a different target"
   }, "run", "hold", "resolve"),
-  choice("story_thread", "Story-thread management", "director_control", "gate", "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for the open threads if present.", "Picks the thread to advance so the Director does not drift onto uninteresting tangents.", {
+  choice("story_thread", "Story-thread management", "director_control", "gate", "Which unresolved story thread most deserves movement in this turn? Use `scene_state` for open threads only when they still fit `chat_history`; a saved thread contradicted by the latest chat is stale.", "Picks the thread to advance so the Director does not drift onto uninteresting tangents.", {
     none: "No open thread needs movement right now",
     primary: "The main unresolved thread",
     secondary: "A background or supporting thread",
@@ -531,9 +533,9 @@ var GATE_CATALOG = withCore([
     thread: "Another thread is affected by it",
     broad: "Several of the above react at once"
   }, "run", "contained", "broad"),
-  choice("director_verification", "Director verification", "guardrails", "verify", "Read `draft_directive` against `latest_player_action`, `chat_history`, and `scene_state`. Does it change the actor or target of the player's completed action, repeat that action as a new event, contradict a committed fact, or prematurely resolve an open thread?", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
-    clean: "The directive is free of contradictions, repetition, and premature resolution",
-    violation: "The directive contains at least one of those problems",
+  choice("director_verification", "Director verification", "guardrails", "verify", "Treat `latest_player_action` and `chat_history` as the only record of current events; `character` and `world_info` are background lore, and `scene_state` is derived and may be stale. Read `draft_directive` against the most recent marked chat. Does it move the scene to a different setting or participants, change the actor, target, object, or outcome of a completed player action, replay that action, contradict a committed event, or prematurely resolve an open thread? A conflict with the chat is a violation even if other context describes the other scene.", "Checks the directive before it is injected, so a bad note costs one retry instead of a bad reply.", {
+    clean: "The directive preserves the chat's current scene and every completed player action, with no contradiction, repetition, or premature resolution",
+    violation: "The directive changes the scene or a completed action's actor, target, object, or outcome, repeats an action, or resolves an open thread too early",
     uncertain: "Something looks off, but it is not clear enough to call a violation"
   }, "accept", "clean", "violation"),
   noul("player_agency", "Player agency guard", "guardrails", "verify", "Does `draft_directive` decide what the player's character thinks, feels, says, or does? Judge only the player's character, not NPCs and not the world.", "Catches the most damaging Director failure: a private note that hijacks the player's character.", {
@@ -546,14 +548,14 @@ var GATE_CATALOG = withCore([
     blends: "The directive satisfies both, weighting the instruction",
     not_applicable: "There is no explicit out-of-character instruction to reconcile"
   }, "accept", "not_applicable", "follows_world"),
-  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay a completed player action or an already committed development? NPC reactions to that action are new, but repeating the action itself is not.", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
-    new: "The development has not happened yet in the recent exchange",
-    repeats: "The directive repeats a development that already happened",
-    near_duplicate: "The directive is a thin variation on something that already happened"
+  choice("duplicate_suppression", "Duplicate suppression", "guardrails", "verify", "Compare `draft_directive` with `latest_player_action` and `chat_history`. Does it ask the next reply to replay, prevent, or change the outcome of a completed player action or an already committed development? A camera flash, movement, or spoken line described as completed has already happened. NPC reactions afterward are new; rewriting the action is not.", "Stops the Director from re-running a beat that has already happened, which reads to the player as the story stalling.", {
+    new: "The directive begins after completed actions and develops something new",
+    repeats: "The directive asks the next reply to perform a completed action again",
+    near_duplicate: "The directive prevents, redirects, or changes the outcome of a completed action, or thinly repeats it"
   }, "retry", "new", "repeats"),
-  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Does `draft_directive` contradict `latest_player_action`, `chat_history`, `scene_state`, or `world_info`? Check the actor and target of the player's completed action exactly; do not silently switch who or what they acted on.", "Prevents the Director from breaking facts the story has already committed to.", {
-    consistent: "Nothing in the directive contradicts established facts",
-    violation: "The directive contradicts an established fact",
+  choice("continuity_guard", "Continuity guard", "guardrails", "verify", "Use `latest_player_action` and `chat_history` as the authority for the current scene; `character` and `world_info` are background, and `scene_state` may be stale. Does `draft_directive` move to a different setting or group of participants, or change the actor, target, object, or completed outcome of the player's action? Check exactly who or what was acted on. A draft that imports a scene from other context instead of continuing the chat is a violation.", "Prevents the Director from breaking facts the story has already committed to.", {
+    consistent: "The directive continues the marked chat scene and preserves the completed action's actor, target, objects, and outcome",
+    violation: "The directive changes the chat's location or participants, or changes a completed action's actor, target, objects, or outcome",
     uncertain: "The directive may contradict an established fact, but it is not clear"
   }, "soften", "consistent", "violation"),
   choice("intensity_boundary", "Intensity and boundary gating", "guardrails", "verify", "Weigh `draft_directive` against `director_notes` and the scene's established intensity. Does it stay inside the range the player has signalled?", "Keeps the Director inside the intensity band the player actually asked for, rather than escalating past it.", {
@@ -2410,12 +2412,12 @@ function setup(ctx) {
     });
     const advancedSummary = el("summary");
     const advancedCopy = el("span", "lw-summary-copy");
-    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Response limits & prompt templates"));
+    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Request settings & prompt templates"));
     advancedSummary.append(advancedCopy);
     advanced.append(advancedSummary);
     const advancedBody = el("div", "lw-details-body");
     const parameters = el("div", "lw-fields");
-    parameters.append(numberField("Temperature", "temperature", draft.temperature, 0, 2, 0.05), numberField("Max tokens", "maxTokens", draft.maxTokens, 64, Number.MAX_SAFE_INTEGER, 1), numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."), numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1), numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000), numberField("Run log limit", "runLogLimit", draft.runLogLimit, 0, 50, 1));
+    parameters.append(numberField("Temperature", "temperature", draft.temperature, 0, 2, 0.05), numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."), numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1), numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000), numberField("Run log limit", "runLogLimit", draft.runLogLimit, 0, 50, 1));
     advancedBody.append(parameters);
     advanced.append(advancedBody);
     view.append(advanced);

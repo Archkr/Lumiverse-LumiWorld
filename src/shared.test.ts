@@ -6,6 +6,7 @@ import {
   jevSecretKey,
   KeyedOperationLock,
   MAX_DIRECTOR_TIMEOUT_MS,
+  PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
@@ -76,7 +77,7 @@ describe("settings normalization", () => {
     expect(settings.connectionId).toBe("conn-1");
     expect(settings.modelOverride).toBe("controller-model");
     expect(settings.temperature).toBe(2);
-    expect(settings.maxTokens).toBe(64);
+    expect("maxTokens" in settings).toBe(false);
     expect(settings.timeoutMs).toBe(1000);
     expect(settings.maxInputChars).toBe(4000);
     expect(settings.historyMessageLimit).toBe(0);
@@ -224,7 +225,7 @@ describe("settings normalization", () => {
   });
 
   test("upgrades the previous built-in template to request structured thread names", () => {
-    const previous = DEFAULT_SYSTEM_TEMPLATE
+    const previous = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE
       .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
       .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
         "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
@@ -233,8 +234,13 @@ describe("settings normalization", () => {
     expect(settings.systemTemplate).toBe(DEFAULT_SYSTEM_TEMPLATE);
   });
 
-  test("does not cap controller max tokens at legacy 4096", () => {
-    expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
+  test("migrates the built-in capped template and ignores its old token setting", () => {
+    const settings = normalizeSettings({
+      systemTemplate: PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE,
+      maxTokens: 420,
+    });
+    expect(settings.systemTemplate).toBe(DEFAULT_SYSTEM_TEMPLATE);
+    expect("maxTokens" in settings).toBe(false);
   });
 
   test("uses Lumiverse's real five-minute interceptor ceiling", () => {
@@ -510,9 +516,11 @@ describe("controller prompt and directive parsing", () => {
       { generationType: "swipe", chatId: "chat-1", connectionId: "conn-1", timestamp: "now", user: "Alice", char: "Bob" },
     );
 
-    expect(messages[0].content).toBe("System sees swipe for Alice");
+    expect(messages[0].content).toContain("System sees swipe for Alice");
+    expect(messages[0].content).toContain("Only marked chat history establishes what has happened");
     expect(messages[1].content).toContain("Prompt=hello");
     expect(messages[1].content).toContain("Chat=chat-1");
+    expect(messages[1].content).toContain("Max=no fixed limit");
     expect(messages[1].content).toContain("Char=Bob");
   });
 
@@ -554,6 +562,12 @@ describe("controller prompt and directive parsing", () => {
     expect(parseControllerThreadLabelFromResponse({ content: "Let Nia press her question." })).toBeNull();
   });
 
+  test("keeps a Director note longer than the former 2200-character limit", () => {
+    const note = "Advance the scene. ".repeat(300);
+    expect(parseControllerDirective(JSON.stringify({ director_note: note }))).toBe(note.trim());
+    expect(parseControllerDirectiveFromResponse({ choices: [{ message: { content: JSON.stringify({ director_note: note }) } }] })).toBe(note.trim());
+  });
+
   test("extracts controller text from common provider response shapes", () => {
     expect(extractControllerResponseText({ content: "Use the rain." })).toBe("Use the rain.");
     expect(extractControllerResponseText({ choices: [{ message: { content: "{\"directive\":\"Lights flicker.\"}" } }] })).toBe(
@@ -583,6 +597,7 @@ describe("controller prompt and directive parsing", () => {
     const injected = buildInjectedDirective("The lock clicks from the other side.");
     expect(injected).toContain("[LumiWorld Director]");
     expect(injected).toContain("Do not mention LumiWorld");
+    expect(injected).toContain("saved chat history is authoritative");
     expect(injected).toContain("The lock clicks");
   });
 });

@@ -438,16 +438,13 @@ function formatPersonaContext(persona: PersonaDTO, identity: IdentityMacroValues
 }
 
 function formatCharacterContext(character: CharacterDTO, identity: IdentityMacroValues): string {
+  // These fields describe the character across scenes. The card's scenario,
+  // examples, and opening message can depict a different point in the story;
+  // the marked chat history is the only source for the current scene.
   return [
     `Name: ${character.name}`,
     section("Description", identityText(character.description, identity)),
     section("Personality", identityText(character.personality, identity)),
-    section("Scenario", identityText(character.scenario, identity)),
-    section("Creator notes", identityText(character.creator_notes, identity)),
-    section("System prompt", identityText(character.system_prompt, identity)),
-    section("Post-history instructions", identityText(character.post_history_instructions, identity)),
-    section("Example messages", identityText(character.mes_example, identity)),
-    section("Opening message", identityText(character.first_mes, identity)),
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1020,7 +1017,6 @@ async function callController(
       messages,
       parameters: {
         temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
       },
       reasoning: { source: "off" },
       signal: controller.signal,
@@ -1379,7 +1375,7 @@ async function regenerateDirective(
         `LumiWorld verification found a problem with the draft directive above. Repair it with this action: ${repair.action}.`,
         repair.reason,
         violated ? `Blocking or inconclusive checks:\n${violated}` : "",
-        "Preserve unaffected beats. Preserve the actor, target, and completed events in the latest player chat action exactly. Do not decide the player's next action.",
+        "Preserve unaffected beats. Preserve the actor, target, objects, and completed outcome in the latest player chat action exactly. Do not redirect a finished action or decide the player's next action.",
         "Return a corrected directive only. Keep the same format and length limits. Include an optional thread_label only if it names a specific story thread.",
       ].filter(Boolean).join("\n"),
     },

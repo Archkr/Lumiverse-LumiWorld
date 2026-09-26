@@ -153,6 +153,7 @@ Jev receives recent chat turns up to its **History messages** limit, the derived
 
 The Director has separate context switches and a separate history limit. Turning a source off for Jev does not turn it off for the Director. When a Jev context switch is off, Jev's filter preserves that source for the Director rather than making a decision about unseen context.
 The latest marked player chat action is kept separately for the Director and Jev verification. LumiWorld uses only marked chat history for user messages in those calls; unmarked user prompt blocks, including author notes, remain in Lumiverse's main prompt but are not forwarded to the Director or Jev.
+Character context sent to the Director and Jev contains only the card's name, description, and personality. The card's opening message, example messages, scenario, and prompt instructions are excluded because they may describe a different scene. Marked chat history controls the current location, participants, and completed player actions.
 
 ### One turn, step by step
 
@@ -172,6 +173,7 @@ Usually that is **one Jev request if the Director is skipped, or two if it runs*
 | **Score** | A number on a five-level scale, usually `0–4`, plus reported confidence. | Emotional release: from “hold tension” to “release it now.” |
 
 An answer is acted on only when its confidence reaches **both** the global floor and that decision's floor: the effective floor is the higher number. Defaults are `0.55` globally, `0.60` for yes/no questions, and `0.50` for Choice and Score. You can raise a decision's floor when you want to trust it less often. A missing answer also falls back. Low-confidence craft/world guidance is omitted from the Director prompt; it does not cause an extra Director call.
+Continuity and repetition checks use a stricter `0.70` default floor. An uncertain result on either check triggers the single repair pass; if it is still uncertain, the Director note is withheld.
 
 For the three direct controls, an uncertain Smart trigger **runs the Director**, an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. An uncertain key guardrail prompts one repair; if the recheck remains inconclusive, the note is withheld. Other uncertain answers remain advisory.
 
@@ -329,13 +331,13 @@ Context switches control what LumiWorld adds to the Director’s input. They do 
 | Setting | Default | Range / meaning |
 |---|---|---|
 | Temperature | `0.35` | `0–2`; controls variation in the Director’s response. |
-| Max tokens | `420` | At least `64`; output budget for the Director call, subject to the selected provider’s limits. |
 | Timeout (ms) | `45000` | `1000–300000`; maximum wait for the Director call. Lumiverse caps interceptors at five minutes. |
 | History messages | `12` | Most recent chat messages included in Director context. `0` excludes chat history. |
 | Prompt cap (chars) | `60000` | `4000–500000`; caps the serialized history and enabled context, before custom templates and notes are added. |
 | Run log limit | `12` | `0–50`; number of Director run records retained in extension storage. `0` disables retention of Director records. |
 
 The prompt cap is measured in characters, not tokens. Large histories and custom templates still need to fit the selected model’s context window.
+LumiWorld does not set a Director output limit or truncate the returned note. The selected provider or model may still impose its own limit.
 
 ### Advanced settings (Jev view)
 
@@ -388,7 +390,7 @@ Plain text is also accepted. Only the final response content is used; a reasonin
 | `{{chatId}}` | The current chat ID when available. |
 | `{{connectionId}}` | Connection ID supplied by the intercepted generation; during a test, the selected Director connection ID. |
 | `{{timestamp}}` | ISO timestamp for the Director request. |
-| `{{maxDirectiveChars}}` | Maximum directive length: `2200`. |
+| `{{maxDirectiveChars}}` | Legacy compatibility variable; now expands to `no fixed limit`. New templates should omit it. |
 
 Director notes are always sent separately. The legacy `{{additionalNotes}}` variable expands to an empty string to avoid duplicating them.
 
