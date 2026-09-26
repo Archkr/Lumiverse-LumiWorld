@@ -259,6 +259,35 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
+  test("lets users set the default and strong Director targets", () => {
+    const initial = makeState({
+      settings: settings({ connectionId: "conn-1" }),
+      connections: [
+        { id: "conn-1", name: "Default", provider: "mock", model: "small-model", isDefault: true, hasApiKey: true },
+        { id: "conn-2", name: "Strong", provider: "mock", model: "large-model", isDefault: false, hasApiKey: true },
+      ],
+    });
+    const harness = mount(initial);
+    expect(harness.root.textContent).toContain("Default Director · cheap route");
+    expect(harness.root.textContent).toContain("Strong Director · optional");
+
+    const connection = labelled(harness.root, "Strong Director connection") as HTMLSelectElement;
+    connection.value = "conn-2";
+    connection.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    const model = labelled(harness.root, "Strong Director model") as HTMLInputElement;
+    model.value = "strong-override";
+    model.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    harness.advanceSave();
+    const saved = harness.sent.find((message) => message.type === "save_settings");
+    expect(saved?.type === "save_settings" && saved.settings.strongConnectionId).toBe("conn-2");
+    expect(saved?.type === "save_settings" && saved.settings.strongModelOverride).toBe("strong-override");
+
+    tabs(harness.root)[1]!.click();
+    expandGate(harness.root, "model_route");
+    expect(harness.root.querySelector('[data-lw-gate="model_route"]')?.textContent).toContain("Director tab");
+    harness.destroy();
+  });
+
   test("opens on Director and switches to Jev on click", () => {
     const harness = mount(makeState());
     const { director, jev } = views(harness.root);

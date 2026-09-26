@@ -271,7 +271,10 @@ LumiWorld's extension storage.
 
 There is also an optional **strong** Director target. When Jev's model-routing
 gate asks for a stronger Director, LumiWorld promotes the turn to that connection
-or model. With nothing configured, the normal target is used.
+or model. Set the default (cheap) connection and model, plus the optional strong
+connection and model, on the **Director** tab. Leave the strong connection blank
+to use the default connection with a different model; leave both strong fields
+blank to use the default target for either route.
 
 ## The drawer
 

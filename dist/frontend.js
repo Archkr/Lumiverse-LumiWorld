@@ -1122,67 +1122,75 @@ function setup(ctx) {
     row.append(copy, slot);
     return row;
   }
-  function connectionField() {
+  function connectionField(strong = false) {
     const slot = el("div", "lw-control");
+    const connectionId = strong ? draft.strongConnectionId : draft.connectionId;
     const options = (state?.connections ?? []).map((connection) => ({
       value: connection.id,
       label: connection.name || connection.id,
       sublabel: [connection.provider, connection.model, connection.hasApiKey ? null : "No API key"].filter(Boolean).join(" · "),
       group: connection.provider || "Connections"
     }));
-    if (draft.connectionId && !options.some((option) => option.value === draft.connectionId)) {
-      options.unshift({ value: draft.connectionId, label: "Saved connection unavailable", sublabel: draft.connectionId, group: "Unavailable" });
+    if (connectionId && !options.some((option) => option.value === connectionId)) {
+      options.unshift({ value: connectionId, label: "Saved connection unavailable", sublabel: connectionId, group: "Unavailable" });
     }
+    const change = (value) => strong ? mutate({ strongConnectionId: value || null, strongModelOverride: "" }, true) : mutate({ connectionId: value || null, modelOverride: "" }, true);
+    const placeholder = strong ? "Same as default connection" : "Select connection…";
     const fallback = () => {
       const select = el("select", "lw-select");
-      select.appendChild(new Option("Select connection…", ""));
+      select.setAttribute("aria-label", strong ? "Strong Director connection" : "Director connection");
+      select.appendChild(new Option(placeholder, ""));
       for (const option of options)
         select.appendChild(new Option(option.label, option.value));
-      select.value = draft.connectionId ?? "";
-      select.addEventListener("change", () => mutate({ connectionId: select.value || null, modelOverride: "" }, true));
+      select.value = connectionId ?? "";
+      select.addEventListener("change", () => change(select.value));
       slot.replaceChildren(select);
     };
     if (ctx.components?.mountSelect)
       queueMount(() => ctx.components.mountSelect(slot, {
-        value: draft.connectionId ?? "",
+        value: connectionId ?? "",
         options,
-        placeholder: "Select connection…",
+        placeholder,
         searchPlaceholder: "Search connections…",
         emptyMessage: state?.connectionError || "No LLM connections found.",
         clearable: true,
-        clearLabel: "No connection",
-        ariaLabel: "Director connection",
-        onChange: (value) => mutate({ connectionId: value || null, modelOverride: "" }, true)
+        clearLabel: strong ? "Same as default connection" : "No connection",
+        ariaLabel: strong ? "Strong Director connection" : "Director connection",
+        onChange: change
       }), fallback);
     else
       fallback();
-    return field("Connection", slot);
+    return field(strong ? "Strong connection" : "Connection", slot);
   }
-  function modelField() {
+  function modelField(strong = false) {
     const slot = el("div", "lw-control");
-    const selected = state?.connections.find((item) => item.id === draft.connectionId);
+    const selected = state?.connections.find((item) => item.id === (strong ? draft.strongConnectionId || draft.connectionId : draft.connectionId));
+    const value = strong ? draft.strongModelOverride : draft.modelOverride;
+    const placeholder = strong && !draft.strongConnectionId ? draft.modelOverride || selected?.model : selected?.model;
+    const change = (next) => strong ? mutate({ strongModelOverride: next }) : mutate({ modelOverride: next });
     const fallback = () => {
       const input = el("input", "lw-input");
       input.type = "text";
-      input.placeholder = selected?.model || "Model ID";
-      input.value = draft.modelOverride;
+      input.placeholder = placeholder || "Model ID";
+      input.value = value;
       input.disabled = !selected;
-      input.setAttribute("aria-label", "Director model");
-      input.addEventListener("input", () => mutate({ modelOverride: input.value }));
+      input.setAttribute("aria-label", strong ? "Strong Director model" : "Director model");
+      input.addEventListener("input", () => change(input.value));
       slot.replaceChildren(input);
     };
     if (selected && ctx.components?.mountModelCombobox)
       queueMount(() => ctx.components.mountModelCombobox(slot, {
-        value: draft.modelOverride,
+        value,
         connection: { kind: "llm", id: selected.id },
         appearance: "standard",
-        placeholder: selected.model || "Model ID",
-        browseHint: selected.model ? `Connection default: ${selected.model}` : "Choose a model for this connection.",
-        onChange: (value) => mutate({ modelOverride: value })
+        placeholder: placeholder || "Model ID",
+        browseHint: placeholder ? `Current default: ${placeholder}` : "Choose a model for this connection.",
+        onChange: change
       }), fallback);
     else
       fallback();
-    return field("Model", slot, selected?.model ? "Leave blank to use the connection’s default." : selected ? "Choose a model for this connection." : "Select a connection to choose a model.");
+    const hint = strong ? !selected ? "Select the default Director connection first." : draft.strongConnectionId ? "Leave blank to use this connection’s default model." : "Leave blank to use the default Director model above." : selected?.model ? "Leave blank to use the connection’s default." : selected ? "Choose a model for this connection." : "Select a connection to choose a model.";
+    return field(strong ? "Strong model" : "Model", slot, hint);
   }
   function numberField(label, key, value, min, max, step, hint) {
     const slot = el("div", "lw-control");
@@ -1506,6 +1514,9 @@ function setup(ctx) {
       return sheet;
     }
     sheet.append(el("div", "lw-sheet-copy", definition.rationale));
+    if (definition.id === "model_route") {
+      sheet.append(el("div", "lw-hint", "Set the default and optional strong Director models on the Director tab. Without a strong target, both choices use the default model."));
+    }
     const floorHead = el("div", "lw-sheet-label");
     const value = el("button", "lw-diag-value", policy.threshold.toFixed(2));
     value.type = "button";
@@ -1946,6 +1957,7 @@ function setup(ctx) {
     view.setAttribute("aria-labelledby", "lw-tab-director");
     const core = el("section", "lw-setup");
     core.setAttribute("aria-label", "Director connection");
+    core.append(el("h2", "lw-section-title", "Default Director · cheap route"));
     const fields = el("div", "lw-fields");
     fields.append(connectionField(), modelField());
     core.append(fields);
@@ -1959,6 +1971,14 @@ function setup(ctx) {
     actions.append(test, testHint);
     core.append(actions);
     view.append(core);
+    const strong = el("section", "lw-setup");
+    strong.setAttribute("aria-label", "Strong Director target");
+    strong.append(el("h2", "lw-section-title", "Strong Director · optional"));
+    strong.append(el("p", "lw-hint", "Used when Jev’s model routing chooses strong. Leave both fields blank to use the default Director model."));
+    const strongFields = el("div", "lw-fields");
+    strongFields.append(connectionField(true), modelField(true));
+    strong.append(strongFields);
+    view.append(strong);
     const generation = el("section", "lw-section");
     const options = el("fieldset", "lw-options");
     options.append(el("legend", "lw-section-title", "Run before"));

@@ -49,6 +49,7 @@ let worldInfoFetches = 0;
 /** What each host call was scoped to, for verifying the resolved user. */
 let enclaveGetUsers: Array<string | undefined> = [];
 let generateUsers: Array<string | undefined> = [];
+const generatedModels: string[] = [];
 /** Host lifecycle events the extension subscribed to. */
 const eventHandlers = new Map<string, (payload: unknown, userId?: string) => void>();
 function emitEvent(name: string, payload: unknown, userId?: string): void {
@@ -156,6 +157,7 @@ function latestRun(): any {
     raw: async (input: any) => {
       generations += 1;
       generateUsers.push(input?.userId);
+      generatedModels.push(input?.model);
       return { choices: [{ message: { content: '{"director_note":"Make the storm intensify."}' } }] };
     },
   },
@@ -249,6 +251,7 @@ describe("v0.4 backend", () => {
 describe("v0.5 Jev turn flow", () => {
   beforeEach(() => {
     jevRequests.length = 0;
+    generatedModels.length = 0;
     sent.length = 0;
     generations = 0;
     corsShouldThrow = false;
@@ -272,6 +275,17 @@ describe("v0.5 Jev turn flow", () => {
     expect(Object.keys(jevRequests[0]!)).toContain("smart_trigger");
     expect(Object.keys(jevRequests[1]!)).toContain("director_verification");
     expect(generations).toBe(1);
+  });
+
+  test("uses the configured strong Director model when Jev selects strong", async () => {
+    stored.set("global/settings.json", { ...baseSettings, strongModelOverride: "strong-model", jev: jevSettings() });
+    answerCleanTurn();
+    const normalAnswer = jevAnswerFor;
+    jevAnswerFor = (id) => id === "model_route"
+      ? { type: "choice", choice: "strong", probabilities: { cheap: 0.02, strong: 0.98 }, confidence: 0.98 }
+      : normalAnswer(id);
+    await runJevTurn();
+    expect(generatedModels).toContain("strong-model");
   });
 
   test("skips the Director and sends no verification request when Jev says no", async () => {
