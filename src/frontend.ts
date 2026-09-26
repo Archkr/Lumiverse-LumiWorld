@@ -23,6 +23,7 @@ const CSS = `
 .lw-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:12px; color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
 .lw-icon svg { width:25px; height:25px; }
 .lw-title { margin:0; font-size:22px; line-height:1.2; font-weight:650; letter-spacing:-.5px; }
+.lw-title-row { display:flex; align-items:center; gap:8px; }
 .lw-status { display:flex; align-items:center; gap:6px; margin-top:4px; color:var(--lumiverse-text-muted); font-size:12px; }
 .lw-status::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--lumiverse-text-muted); }
 .lw-status[data-tone="success"]::before { background:var(--lumiverse-success); }
@@ -89,34 +90,77 @@ const CSS = `
 .lw-footer-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .lw-loading { padding:16px 0; color:var(--lumiverse-text-muted); }
 .lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
-.lw-key-row { display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; }
-.lw-badge { display:inline-flex; align-items:center; gap:5px; min-height:22px; padding:2px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; color:var(--lumiverse-text-muted); font-size:11px; white-space:nowrap; }
+/* --- Pills ---------------------------------------------------------- */
+.lw-badge { display:inline-flex; align-items:center; gap:5px; min-height:20px; padding:1px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; color:var(--lumiverse-text-muted); background:var(--lumiverse-fill-subtle); font-size:10.5px; font-weight:550; letter-spacing:.01em; white-space:nowrap; }
 .lw-badge[data-tone="success"] { border-color:var(--lumiverse-success); color:var(--lumiverse-success); }
 .lw-badge[data-tone="warning"] { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
 .lw-badge[data-tone="error"] { border-color:var(--lumiverse-danger); color:var(--lumiverse-danger); }
-.lw-gate-group { display:grid; gap:8px; padding:12px 0 4px; }
-.lw-gate-group + .lw-gate-group { border-top:1px solid var(--lumiverse-border); }
-.lw-gate-head { display:flex; align-items:baseline; gap:8px; }
-.lw-gate-head strong { font-size:12px; }
-.lw-gate-list { display:grid; gap:6px; }
-.lw-gate { display:grid; gap:6px 10px; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; padding:6px 0; }
-.lw-gate-copy { min-width:0; }
-.lw-gate-copy .lw-hint { font-size:11px; }
-.lw-gate-threshold { display:flex; align-items:center; gap:6px; flex:none; }
-.lw-gate-threshold input { width:64px; min-height:30px; padding:4px 6px; }
-.lw-gate-threshold span { color:var(--lumiverse-text-muted); font-size:11px; }
-.lw-gate-fallback { grid-column:2 / -1; }
-.lw-gate-fallback select { min-height:30px; padding:4px 6px; font-size:11px; }
-.lw-diag { display:grid; gap:8px; }
-.lw-diag-summary { display:flex; flex-wrap:wrap; gap:6px; }
-.lw-diag-table { display:grid; gap:4px; max-height:340px; overflow:auto; }
-.lw-diag-row { display:grid; gap:2px 10px; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto; align-items:baseline; padding:7px 9px; border:1px solid var(--lumiverse-border); border-radius:7px; background:var(--lumiverse-fill-subtle); font-size:11px; }
+.lw-badge[data-tone="primary"] { border-color:var(--lumiverse-primary-muted); color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
+.lw-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--lumiverse-text-muted); }
+.lw-badge[data-tone="success"] .lw-dot { background:var(--lumiverse-success); }
+.lw-badge[data-tone="warning"] .lw-dot { background:var(--lumiverse-warning); }
+.lw-badge[data-tone="error"] .lw-dot { background:var(--lumiverse-danger); }
+.lw-badge[data-tone="primary"] .lw-dot { background:var(--lumiverse-primary); }
+
+/* --- Jev panel ------------------------------------------------------ */
+.lw-panel { display:grid; gap:14px; margin:4px 0 6px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
+.lw-panel[data-active="true"] { border-color:var(--lumiverse-primary-muted); }
+.lw-panel-soon { color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
+.lw-stack { display:grid; gap:12px; }
+.lw-control-card { display:grid; gap:12px; padding:12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-fill-subtle); }
+.lw-control-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.lw-control-title { font-size:12px; font-weight:600; }
+
+/* --- Segmented provider control ------------------------------------- */
+.lw-segments { display:flex; gap:4px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); }
+.lw-segment { flex:1 1 0; min-width:0; min-height:30px; padding:5px 10px; border:0; border-radius:6px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12px; font-weight:550; cursor:pointer; transition:background .15s,color .15s; }
+.lw-segment:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-segment[aria-pressed="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
+.lw-segment:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+.lw-provider-note { font-size:11px; }
+.lw-provider-note a { color:var(--lumiverse-primary-text); }
+
+/* --- Key row -------------------------------------------------------- */
+.lw-key-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; }
+
+/* --- Gates ---------------------------------------------------------- */
+.lw-gate-body { display:grid; gap:6px; }
+.lw-cat-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
+.lw-cat-head:first-child { margin-top:0; }
+.lw-cat-title { display:flex; align-items:baseline; gap:7px; font-size:11px; font-weight:650; letter-spacing:.07em; text-transform:uppercase; color:var(--lumiverse-text-muted); }
+.lw-cat-head .lw-button { min-height:24px; padding:1px 8px; font-size:10.5px; font-weight:600; }
+.lw-gate { display:grid; gap:0; margin-bottom:2px; border:1px solid transparent; border-radius:9px; }
+.lw-gate[data-on="true"] { border-color:var(--lumiverse-border); background:var(--lumiverse-fill-subtle); }
+.lw-gate[data-open="true"] { border-color:var(--lumiverse-primary-muted); background:var(--lumiverse-surface-raised); }
+.lw-gate[data-custom="true"][data-on="true"] { box-shadow:inset 3px 0 0 var(--lumiverse-primary); }
+.lw-gate-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:10px; padding:7px 10px; }
+.lw-gate-copy { display:grid; gap:1px; min-width:0; }
+.lw-gate-name { font-size:12.5px; font-weight:550; }
+.lw-gate[data-on="false"] .lw-gate-name { color:var(--lumiverse-text-muted); font-weight:450; }
+.lw-gate-meta { color:var(--lumiverse-text-muted); font-size:10.5px; }
+.lw-gate-meta code { font-family:var(--lumiverse-font-mono,monospace); font-size:10.5px; }
+.lw-gate-caret { display:grid; place-items:center; width:22px; height:22px; padding:0; border:1px solid var(--lumiverse-border); border-radius:6px; color:var(--lumiverse-text-muted); background:var(--lumiverse-fill-subtle); font:inherit; font-size:10px; cursor:pointer; }
+.lw-gate-caret:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-gate-caret:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+.lw-gate-sheet { display:grid; gap:10px; padding:2px 14px 13px; }
+.lw-sheet-label { display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:11px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--lumiverse-text-muted); }
+.lw-sheet-copy { color:var(--lumiverse-text-muted); font-size:11.5px; line-height:1.5; }
+
+/* --- Diagnostics ---------------------------------------------------- */
+.lw-diag { display:grid; gap:12px; }
+.lw-diag-strip { display:flex; flex-wrap:wrap; gap:5px; }
+.lw-diag-list { display:grid; gap:4px; max-height:360px; overflow:auto; }
+.lw-diag-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:4px 10px; padding:8px 10px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); }
 .lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
-.lw-diag-gate { font-weight:600; }
-.lw-diag-value { font-family:var(--lumiverse-font-mono,monospace); overflow-wrap:anywhere; }
-.lw-diag-meta { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); white-space:nowrap; }
-.lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); }
-.lw-gate-reset { justify-self:start; margin-top:2px; font-size:11px; min-height:28px; padding:2px 8px; }
+.lw-diag-row[data-on="false"] { opacity:.65; }
+.lw-diag-head { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.lw-diag-name { font-size:12px; font-weight:600; }
+.lw-diag-value { flex:none; padding:1px 7px; border:1px solid var(--lumiverse-border); border-radius:6px; background:var(--lumiverse-input-bg); font-family:var(--lumiverse-font-mono,monospace); font-size:10.5px; }
+.lw-diag-row[data-flag="true"] .lw-diag-value { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
+.lw-diag-meta { display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); font-size:11px; line-height:1.45; }
+.lw-gate-reset { justify-self:start; }
+
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
@@ -193,6 +237,77 @@ function textInput(value: string, placeholder: string, ariaLabel: string, onInpu
   return input;
 }
 
+const CHEVRON_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 4 4-4 4"/></svg>';
+
+interface CollapsibleOptions {
+  title: string;
+  badge?: string;
+  badgeTone?: "neutral" | "primary" | "success" | "warning" | "error";
+  expanded: boolean;
+  onToggle: (expanded: boolean) => void;
+  className?: string;
+}
+
+/**
+ * A self-owned collapsible section.
+ *
+ * The host's `mountCollapsibleSection` is preferred when the drawer can mount it,
+ * but its chrome is subject to host registration timing, so this stands in as the
+ * default and gives LumiWorld full control over the header, badge, and body.
+ */
+function collapsible(options: CollapsibleOptions, build: (body: HTMLElement) => void): HTMLElement {
+  const details = el("details", `lw-details${options.className ? ` ${options.className}` : ""}`);
+  details.open = options.expanded;
+  details.addEventListener("toggle", () => options.onToggle(details.open));
+
+  const summary = el("summary");
+  const copy = el("span", "lw-summary-copy");
+  copy.append(el("span", undefined, options.title));
+  summary.append(copy);
+  if (options.badge) {
+    const badge = el("span", "lw-badge", options.badge);
+    if (options.badgeTone && options.badgeTone !== "neutral") badge.dataset.tone = options.badgeTone;
+    summary.append(badge);
+  }
+  details.append(summary);
+
+  const body = el("div", "lw-details-body");
+  build(body);
+  details.append(body);
+  return details;
+}
+
+/** A small status pill: a coloured dot plus a label. */
+function pill(text: string, tone: "neutral" | "success" | "warning" | "error" | "primary" = "neutral"): HTMLElement {
+  const badge = el("span", "lw-badge");
+  if (tone !== "neutral") badge.dataset.tone = tone;
+  badge.append(el("span", "lw-dot"), el("span", undefined, text));
+  return badge;
+}
+
+/**
+ * A segmented control. The host's `mountSelect` renders a collapsed dropdown;
+ * two options read better as visible segments.
+ */
+function segmented(
+  value: string,
+  options: Array<{ value: string; label: string }>,
+  ariaLabel: string,
+  onChange: (next: string) => void,
+): HTMLElement {
+  const group = el("div", "lw-segments");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", ariaLabel);
+  for (const option of options) {
+    const node = el("button", "lw-segment", option.label);
+    node.type = "button";
+    node.setAttribute("aria-pressed", String(option.value === value));
+    node.addEventListener("click", () => { if (option.value !== value) onChange(option.value); });
+    group.append(node);
+  }
+  return group;
+}
+
 function activeChat(ctx: SpindleFrontendContext): { chatId: string | null; characterId: string | null } {
   try { return ctx.getActiveChat(); }
   catch { return { chatId: null, characterId: null }; }
@@ -217,6 +332,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let notesOpen = false;
   let jevOpen = false;
   let gatesOpen = false;
+  /** Gate ids whose detail sheet is expanded. Survives re-renders. */
+  const openGates = new Set<string>();
   let diagnosticsOpen = false;
   let nextFieldId = 0;
 
@@ -297,7 +414,14 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function mutate(patch: Partial<LumiWorldSettings>, rerender = false): void {
+    const previous = normalizeFrontendSettings(draft);
     draft = normalizeFrontendSettings({ ...draft, ...patch });
+    // A re-render triggered by pure UI state (an opened gate sheet, a mode toggle)
+    // holds no settings change, so it must not queue a write.
+    if (JSON.stringify(previous) === JSON.stringify(draft)) {
+      if (rerender) render();
+      return;
+    }
     queue.markDirty();
     scheduleSave();
     const notesHint = drawer.root.querySelector<HTMLElement>("[data-lw-notes-hint]");
@@ -492,7 +616,20 @@ export function setup(ctx: SpindleFrontendContext) {
     send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
   }
 
+  function updateJevStatus(): void {
+    const target = drawer.root.querySelector<HTMLElement>("[data-lw-jev-status]");
+    if (!target) return;
+    const tone = !draft.jev.enabled
+      ? "neutral"
+      : !state?.permissions.corsProxy || (!hasJevKey() && !jevKeyDraft.trim()) ? "warning" : "success";
+    const text = !draft.jev.enabled
+      ? "Off"
+      : !state?.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+    target.replaceChildren(pill(text, tone));
+  }
+
   function updateJevTestButton(): void {
+    updateJevStatus();
     const node = drawer.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]");
     if (node) {
       node.disabled = jevTestPending || !canTestJev();
@@ -512,53 +649,107 @@ export function setup(ctx: SpindleFrontendContext) {
   function jevSection(): HTMLElement {
     const section = el("section", "lw-section");
     section.append(el("h2", "lw-section-title", "Jev simulation"));
-    section.append(switchField(
-      "Use Jev gates",
-      draft.jev.enabled,
-      (enabled) => mutateJev({ enabled }, true),
-      "Ask a cheap decision model whether each turn needs the Director.",
-    ));
+
+    const panel = el("div", "lw-panel");
+    panel.dataset.active = String(draft.jev.enabled);
+
+    // Header: the switch plus a live status pill, so the panel state is legible
+    // without expanding anything.
+    const head = el("div", "lw-row");
+    const headCopy = el("div", "lw-row-copy");
+    const headTitle = el("div", "lw-row-title");
+    headTitle.append(document.createTextNode("Use Jev gates"));
+    const statusSlot = el("span");
+    statusSlot.dataset.lwJevStatus = "";
+    headTitle.append(statusSlot);
+    headTitle.classList.add("lw-title-row");
+    headCopy.append(headTitle, el("div", "lw-hint", "Ask a cheap decision model whether each turn needs the Director at all."));
+    head.append(headCopy);
+    const headSwitch = el("div", "lw-control");
+    const headFallback = () => {
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = draft.jev.enabled;
+      input.setAttribute("aria-label", "Use Jev gates");
+      input.addEventListener("change", () => mutateJev({ enabled: input.checked }, true));
+      headSwitch.replaceChildren(input);
+    };
+    if (typeof ctx.components?.mountSwitch === "function") {
+      queueMount(() => ctx.components!.mountSwitch!(headSwitch, {
+        checked: draft.jev.enabled, size: "md", ariaLabel: "Use Jev gates",
+        onChange: (enabled: boolean) => mutateJev({ enabled }, true),
+      }), headFallback);
+    } else headFallback();
+    head.append(headSwitch);
+    panel.append(head);
 
     if (!draft.jev.enabled) {
-      section.append(el("p", "lw-hint", "With Jev off, LumiWorld runs exactly as the Director-only baseline."));
+      const card = el("div", "lw-control-card");
+      card.append(el("div", "lw-panel-soon",
+        "Jev is off. LumiWorld runs exactly as the Director-only baseline: one Director call per selected reply type, no network calls beyond your own connection."));
+      panel.append(card);
+      section.append(panel);
       return section;
     }
 
+    // --- Connection ---
+    const connection = el("div", "lw-control-card");
+    const connectionHead = el("div", "lw-control-head");
+    const connectionTitle = el("div");
+    connectionTitle.append(el("div", "lw-control-title", "Decision provider"));
+    const note = el("div", "lw-provider-note");
+    const link = el("a", undefined, `${providerInfo().label} API keys`) as HTMLAnchorElement;
+    link.href = providerInfo().keyUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer noopener";
+    note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
+    connectionTitle.append(note);
+    connectionHead.append(connectionTitle);
+    connection.append(connectionHead);
+
+    connection.append(segmented(
+      draft.jev.provider,
+      JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
+      "Jev provider",
+      (value) => mutateJev({ provider: value as JevProvider, model: "" }, true),
+    ));
+
     const fields = el("div", "lw-fields");
     fields.append(
-      field("Provider", selectControl(
-        draft.jev.provider,
-        JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
-        "Jev provider",
-        (value) => mutateJev({ provider: value as JevProvider, model: "" }, true),
-      ), providerInfo().keyUrl),
       field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })),
-        `Leave blank to use ${providerInfo().defaultModel}.`),
+        `Blank uses ${providerInfo().defaultModel}.`),
+      field("State cap (chars)", numberInput(
+        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
+        (value) => mutateJev({ maxStateChars: value }),
+      ), "Jev allows 32k tokens for the state."),
     );
-    section.append(fields);
+    connection.append(fields);
+    panel.append(connection);
 
-    const keyLabel = el("div"); keyLabel.textContent = "API key";
-    const keyWrap = el("div", "lw-field");
-    keyWrap.append(keyLabel);
+    // --- Credential ---
+    const credential = el("div", "lw-control-card");
+    const credentialHead = el("div", "lw-control-head");
+    credentialHead.append(el("div", "lw-control-title", "API key"));
+    credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
+    credential.append(credentialHead);
+
     const keyRow = el("div", "lw-key-row");
     const keyInput = el("input", "lw-input");
     keyInput.type = "password";
     keyInput.autocomplete = "off";
     keyInput.spellcheck = false;
     keyInput.value = jevKeyDraft;
-    keyInput.placeholder = hasJevKey() ? "A key is stored" : "Paste your API key";
+    keyInput.placeholder = hasJevKey() ? "A key is stored — paste to replace" : "Paste your API key";
     keyInput.setAttribute("aria-label", "Jev API key");
     keyInput.addEventListener("input", () => { jevKeyDraft = keyInput.value; updateJevTestButton(); });
-    const keyBadge = el("span", "lw-badge", hasJevKey() ? "Stored" : "Not set");
-    keyBadge.dataset.tone = hasJevKey() ? "success" : "warning";
     const clear = button("Clear", () => {
       jevKeyDraft = "";
       send({ type: "clear_jev_key", provider: draft.jev.provider });
     });
     clear.disabled = !hasJevKey();
-    keyRow.append(keyInput, keyBadge, clear);
-    keyWrap.append(keyRow, el("div", "lw-hint", "Encrypted at rest per Lumiverse user and never sent back to this panel."));
-    section.append(keyWrap);
+    keyRow.append(keyInput, clear);
+    credential.append(keyRow);
+    credential.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
 
     const actions = el("div", "lw-actions");
     const test = button("Test Jev", testJev, true);
@@ -566,14 +757,17 @@ export function setup(ctx: SpindleFrontendContext) {
     const hint = el("div", "lw-hint lw-test-hint");
     hint.dataset.lwJevHint = "";
     actions.append(test, hint);
-    section.append(actions);
+    credential.append(actions);
+    panel.append(credential);
 
-    const advancedFields = el("div", "lw-fields");
-    advancedFields.append(
-      field("State cap (chars)", numberInput(
-        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
-        (value) => mutateJev({ maxStateChars: value }),
-      ), "Jev allows 32k tokens for the state."),
+    // --- Shape of the request ---
+    const shape = el("div", "lw-control-card");
+    const shapeHead = el("div", "lw-control-head");
+    shapeHead.append(el("div", "lw-control-title", "What gets sent"));
+    shapeHead.append(pill("Capped", "primary"));
+    shape.append(shapeHead);
+    const shapeFields = el("div", "lw-fields");
+    shapeFields.append(
       field("History messages", numberInput(
         draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages",
         (value) => mutateJev({ historyMessageLimit: value }),
@@ -585,90 +779,191 @@ export function setup(ctx: SpindleFrontendContext) {
       field("Confidence floor", numberInput(
         draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor",
         (value) => mutateJev({ minConfidence: value }),
-      ), "Decisions below this are escalated to their fallback."),
+      ), "Applies to every gate. Decisions below it use their fallback."),
     );
-    section.append(advancedFields);
+    shape.append(shapeFields);
+    shape.append(el("div", "lw-hint",
+      "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
+    panel.append(shape);
+
+    section.append(panel);
     return section;
   }
 
   function gatesSection(): HTMLElement {
-    const details = el("details", "lw-details");
-    details.open = gatesOpen;
-    details.addEventListener("toggle", () => { gatesOpen = details.open; });
-    const summary = el("summary");
-    const copy = el("span", "lw-summary-copy");
-    const active = GATE_CATALOG.filter((definition) => effectivePolicy(definition).enabled).length;
-    copy.append(
-      el("span", undefined, "Jev gates"),
-      el("span", "lw-hint", `${active} of ${GATE_CATALOG.length} enabled`),
-    );
-    summary.append(copy);
-    details.append(summary);
+    const definitions = GATE_CATALOG;
+    const enabled = definitions.filter((definition) => effectivePolicy(definition).enabled).length;
+    // A hand-tuned gate keeps a marker so a non-default setup is visible at a glance.
+    const customised = definitions.filter((definition) => definition.id in draft.jev.gatePolicy).length;
 
-    const body = el("div", "lw-details-body");
-    body.append(el("p", "lw-hint", "Every enabled gate travels in one batched request per phase, so adding gates adds no round trips. Unanswered gates use their declared fallback."));
+    return collapsible({
+      title: "Jev gates",
+      badge: `${enabled}/${definitions.length}`,
+      expanded: gatesOpen,
+      onToggle: (open) => { gatesOpen = open; },
+      className: "lw-gates",
+    }, (body) => {
+      body.classList.add("lw-gate-body");
+      body.append(el("p", "lw-hint",
+        "Enabled gates travel in one batched request per phase, so adding gates adds no round trips. A gate that cannot answer uses its own fallback."));
 
-    for (const category of GATE_CATEGORY_ORDER) {
-      const definitions = GATE_CATALOG.filter((definition) => definition.category === category);
-      if (definitions.length === 0) continue;
-      const group = el("div", "lw-gate-group");
-      const head = el("div", "lw-gate-head");
-      head.append(el("strong", undefined, GATE_CATEGORY_LABELS[category]), el("span", "lw-hint", `${definitions.length} gates`));
-      group.append(head);
+      for (const category of GATE_CATEGORY_ORDER) {
+        const group = definitions.filter((definition) => definition.category === category);
+        if (group.length === 0) continue;
+        const on = group.filter((definition) => effectivePolicy(definition).enabled).length;
 
-      const list = el("div", "lw-gate-list");
-      for (const definition of definitions) {
-        list.append(gateRow(definition));
+        const head = el("div", "lw-cat-head");
+        const title = el("span", "lw-cat-title");
+        title.append(
+          el("span", undefined, GATE_CATEGORY_LABELS[category]),
+          el("span", "lw-cat-count", `${on}/${group.length}`),
+        );
+        const all = button(on === group.length ? "Disable all" : "Enable all", () => {
+          const next = { ...draft.jev.gatePolicy };
+          for (const definition of group) next[definition.id] = { ...next[definition.id], enabled: on !== group.length };
+          mutateJev({ gatePolicy: next }, true);
+        });
+        all.title = on === group.length ? `Turn off every ${GATE_CATEGORY_LABELS[category]} gate` : `Turn on every ${GATE_CATEGORY_LABELS[category]} gate`;
+        head.append(title, all);
+        body.append(head);
+
+        for (const definition of group) body.append(gateCard(definition));
       }
-      group.append(list);
-      body.append(group);
-    }
-    details.append(body);
-    return details;
+
+      if (customised > 0) {
+        const footer = el("div", "lw-cat-head");
+        const cleared = button(`Reset ${customised} changed gate${customised === 1 ? "" : "s"} to defaults`, () => {
+          mutateJev({ gatePolicy: {} }, true);
+        });
+        cleared.className = "lw-button lw-button-primary";
+        footer.append(cleared);
+        body.append(footer);
+      }
+    });
   }
 
-  function gateRow(definition: GateDefinition): HTMLElement {
+  /**
+   * One gate, collapsed to a single line: switch, name, shape, and a caret that
+   * reveals the floor and fallback. Collapsed rows exist so 36 gates stay
+   * scannable instead of becoming a wall of selects.
+   */
+  function gateCard(definition: GateDefinition): HTMLElement {
     const policy = effectivePolicy(definition);
-    const row = el("div", "lw-gate");
-    row.dataset.lwGate = definition.id;
+    const isOpen = openGates.has(definition.id);
+    const isCustom = definition.id in draft.jev.gatePolicy;
+    const card = el("div", "lw-gate");
+    card.dataset.lwGate = definition.id;
+    card.dataset.on = String(policy.enabled);
+    card.dataset.open = String(isOpen);
+    card.dataset.custom = String(isCustom);
 
-    const toggle = el("input");
-    toggle.type = "checkbox";
-    toggle.checked = policy.enabled;
-    toggle.setAttribute("aria-label", definition.label);
-    toggle.addEventListener("change", () => mutateGate(definition.id, { enabled: toggle.checked }));
+    const switchSlot = el("div", "lw-control");
+    const switchFallback = () => {
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = policy.enabled;
+      input.setAttribute("aria-label", definition.label);
+      input.addEventListener("change", () => mutateGate(definition.id, { enabled: input.checked }));
+      switchSlot.replaceChildren(input);
+    };
+    if (typeof ctx.components?.mountSwitch === "function") {
+      queueMount(() => ctx.components!.mountSwitch!(switchSlot, {
+        checked: policy.enabled,
+        size: "sm",
+        ariaLabel: definition.label,
+        onChange: (checked: boolean) => mutateGate(definition.id, { enabled: checked }),
+      }), switchFallback);
+    } else switchFallback();
 
     const copy = el("div", "lw-gate-copy");
-    copy.append(
-      el("div", "lw-row-title", definition.label),
-      el("div", "lw-hint", definition.codeOnly
-        ? definition.appliesWhen ?? "Evaluated in code."
-        : `${definition.primitiveLabel} · ${definition.phase === "gate" ? "before the Director" : "verifies the draft"}`),
-    );
+    const meta = el("div", "lw-gate-meta");
+    const shape = definition.codeOnly
+      ? definition.appliesWhen ?? "Evaluated in code"
+      : `${definition.primitiveLabel} · ${definition.phase === "gate" ? "before the Director" : "verifies the draft"}`;
+    meta.append(el("span", undefined, shape));
+    if (isCustom) meta.append(document.createTextNode(" · "), el("code", undefined, "custom"));
+    copy.append(el("div", "lw-gate-name", definition.label), meta);
 
-    const threshold = el("div", "lw-gate-threshold");
-    threshold.append(
-      numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, (value) => mutateGate(definition.id, { threshold: value })),
-      el("span", undefined, "floor"),
-    );
+    const caret = el("button", "lw-gate-caret", isOpen ? "▾" : "▸");
+    caret.type = "button";
+    caret.setAttribute("aria-expanded", String(isOpen));
+    caret.setAttribute("aria-label", `${isOpen ? "Hide" : "Show"} ${definition.label} settings`);
+    caret.addEventListener("click", () => {
+      if (isOpen) openGates.delete(definition.id);
+      else openGates.add(definition.id);
+      mutate({}, true);
+    });
 
-    const fallbackRow = el("div", "lw-gate-fallback");
-    fallbackRow.append(selectControl(
+    const row = el("div", "lw-gate-row");
+    row.append(switchSlot, copy, caret);
+    card.append(row);
+
+    if (isOpen) card.append(gateSheet(definition, policy, isCustom));
+    return card;
+  }
+
+  /** The expanded controls for one gate: confidence floor, fallback, and reset. */
+  function gateSheet(definition: GateDefinition, policy: Required<GatePolicy>, isCustom: boolean): HTMLElement {
+    const sheet = el("div", "lw-gate-sheet");
+
+    if (definition.codeOnly) {
+      sheet.append(el("div", "lw-sheet-copy", definition.rationale));
+      if (isCustom) sheet.append(gateReset(definition));
+      return sheet;
+    }
+
+    sheet.append(el("div", "lw-sheet-copy", definition.rationale));
+
+    const floorHead = el("div", "lw-sheet-label");
+    const value = el("button", "lw-diag-value", policy.threshold.toFixed(2));
+    value.type = "button";
+    value.title = "Click to type an exact floor";
+    let editing = false;
+    value.addEventListener("click", () => {
+      if (editing) return;
+      editing = true;
+      const input = numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
+        (next) => mutateGate(definition.id, { threshold: next }));
+      input.className = "lw-input";
+      value.replaceWith(input);
+      input.focus();
+      input.select();
+    });
+    floorHead.append(el("span", undefined, "Confidence floor"), value);
+    sheet.append(floorHead);
+
+    const track = el("div", "lw-control");
+    const sliderFallback = () => {
+      track.replaceChildren(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
+        (next) => mutateGate(definition.id, { threshold: next })));
+    };
+    if (typeof ctx.components?.mountRangeSlider === "function") {
+      queueMount(() => ctx.components!.mountRangeSlider!(track, {
+        min: 0, max: 1, step: 0.05, value: policy.threshold,
+        onCommit: (next: number) => mutateGate(definition.id, { threshold: next }),
+      }), sliderFallback);
+    } else sliderFallback();
+    sheet.append(track);
+    sheet.append(el("div", "lw-hint",
+      "Answers below this are escalated: the gate stops deciding and uses its fallback instead."));
+
+    const fallbackHead = el("div", "lw-sheet-label");
+    fallbackHead.append(el("span", undefined, "When it cannot answer"));
+    sheet.append(fallbackHead, selectControl(
       policy.fallback,
       GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
       `${definition.label} fallback`,
-      (value) => mutateGate(definition.id, { fallback: value as GateFallback }),
+      (next) => mutateGate(definition.id, { fallback: next as GateFallback }),
     ));
-    fallbackRow.title = `${definition.rationale}\nFallback when Jev cannot answer.`;
 
-    const reset = button("Reset", () => resetGate(definition.id));
+    if (isCustom) sheet.append(gateReset(definition));
+    return sheet;
+  }
+
+  function gateReset(definition: GateDefinition): HTMLElement {
+    const reset = button("Reset to default", () => resetGate(definition.id));
     reset.className = "lw-button lw-gate-reset";
-    reset.hidden = !(definition.id in draft.jev.gatePolicy);
-    const resetRow = el("div", "lw-gate-fallback");
-    resetRow.append(reset);
-
-    row.append(toggle, copy, threshold, fallbackRow, resetRow);
-    return row;
+    return reset;
   }
 
   function latestJevRun(): { run: { jev: JevTurnDiagnostics }; } | null {
@@ -679,76 +974,102 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function diagnosticsSection(): HTMLElement {
-    const details = el("details", "lw-details");
-    details.open = diagnosticsOpen;
-    details.addEventListener("toggle", () => { diagnosticsOpen = details.open; });
-    const summary = el("summary");
-    const copy = el("span", "lw-summary-copy");
-    const latest = latestJevRun();
-    const status = summarizeJevDiagnostics(latest?.run.jev ?? null);
-    copy.append(
-      el("span", undefined, "Last turn decisions"),
-      el("span", "lw-hint", status ?? "No Jev decisions recorded yet"),
-    );
-    summary.append(copy);
-    details.append(summary);
+    const diagnostics = latestJevRun()?.run.jev ?? null;
+    const summary = summarizeJevDiagnostics(diagnostics);
 
-    const body = el("div", "lw-details-body");
-    const diagnostics = latest?.run.jev;
-    if (!diagnostics) {
-      body.append(el("p", "lw-hint", "Generate a reply with Jev enabled to see what each gate decided."));
-      details.append(body);
-      return details;
-    }
-    body.append(diagnosticsPanel(diagnostics));
-    details.append(body);
-    return details;
+    return collapsible({
+      title: "Last turn decisions",
+      badge: diagnostics ? (diagnostics.status === "ok" ? "answered" : diagnostics.status) : undefined,
+      badgeTone: diagnostics
+        ? (diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error")
+        : "neutral",
+      expanded: diagnosticsOpen,
+      onToggle: (open) => { diagnosticsOpen = open; },
+    }, (body) => {
+      if (!diagnostics) {
+        body.append(el("p", "lw-hint",
+          state?.settings.jev.enabled
+            ? "Generate a reply to see what each gate decided for that turn."
+            : "Turn on Use Jev gates to start recording decisions."));
+        return;
+      }
+      body.append(diagnosticsPanel(diagnostics, summary));
+    });
   }
 
-  function diagnosticsPanel(diagnostics: JevTurnDiagnostics): HTMLElement {
+  function diagnosticsPanel(diagnostics: JevTurnDiagnostics, summary: string | null): HTMLElement {
     const wrap = el("div", "lw-diag");
-    const badges = el("div", "lw-diag-summary");
-    const statusBadge = el("span", "lw-badge", diagnostics.status === "ok" ? "Answered" : diagnostics.status === "degraded" ? "Degraded" : "Skipped");
-    statusBadge.dataset.tone = diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error";
-    badges.append(statusBadge);
-    if (diagnostics.model) badges.append(el("span", "lw-badge", diagnostics.resolvedModel ?? diagnostics.model));
-    badges.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
+
+    const strip = el("div", "lw-diag-strip");
+    const status = el("span", "lw-badge");
+    status.dataset.tone = diagnostics.status === "ok" ? "success" : diagnostics.status === "degraded" ? "warning" : "error";
+    status.append(el("span", "lw-dot"), el("span", undefined,
+      diagnostics.status === "ok" ? "Answered every gate" : diagnostics.status === "degraded" ? "Degraded" : "Skipped the Director"));
+    strip.append(status);
+
+    if (diagnostics.resolvedModel) strip.append(el("span", "lw-badge", diagnostics.resolvedModel));
+    strip.append(el("span", "lw-badge", `${diagnostics.requestCount} request${diagnostics.requestCount === 1 ? "" : "s"}`));
     if (diagnostics.fallbackCount) {
-      const fallback = el("span", "lw-badge", `${diagnostics.fallbackCount} fallback`);
+      const fallback = el("span", "lw-badge");
       fallback.dataset.tone = "warning";
-      badges.append(fallback);
+      fallback.append(el("span", "lw-dot"), el("span", undefined, `${diagnostics.fallbackCount} fallback`));
+      strip.append(fallback);
     }
-    if (diagnostics.escalatedCount) badges.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
-    if (diagnostics.gatePhaseMs !== null) badges.append(el("span", "lw-badge", `gate ${diagnostics.gatePhaseMs}ms`));
-    if (diagnostics.verifyPhaseMs !== null) badges.append(el("span", "lw-badge", `verify ${diagnostics.verifyPhaseMs}ms`));
-    wrap.append(badges);
+    if (diagnostics.escalatedCount) {
+      strip.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated`));
+    }
+    const latency = [diagnostics.gatePhaseMs, diagnostics.verifyPhaseMs]
+      .filter((value): value is number => value !== null)
+      .reduce((total, value) => total + value, 0);
+    if (latency > 0) strip.append(el("span", "lw-badge", `${latency}ms in Jev`));
+    if (diagnostics.inputTokens !== null) strip.append(el("span", "lw-badge", `${diagnostics.inputTokens} in / ${diagnostics.outputTokens ?? 0} out`));
+    if (diagnostics.stateCompacted) strip.append(el("span", "lw-badge", "state compacted"));
+    wrap.append(strip);
+
     if (diagnostics.error) {
       const notice = el("div", "lw-notice", diagnostics.error);
       notice.dataset.tone = "warning";
       wrap.append(notice);
     }
 
-    const table = el("div", "lw-diag-table");
-    for (const record of diagnostics.gates) table.append(gateResultRow(record));
-    wrap.append(table);
+    // Real gate decisions first; the two code-computed records are informational
+    // and would otherwise sit in the middle of the list as noise.
+    const decided = diagnostics.gates.filter((record) => record.gateId !== "confidence_escalation" && record.gateId !== "budget_degradation");
+    const computed = diagnostics.gates.filter((record) => record.gateId === "confidence_escalation" || record.gateId === "budget_degradation");
+
+    const list = el("div", "lw-diag-list");
+    for (const record of decided) list.append(gateResultRow(record));
+    for (const record of computed) list.append(gateResultRow(record, true));
+    wrap.append(list);
+
+    if (summary) wrap.append(el("p", "lw-hint", summary));
     return wrap;
   }
 
-  function gateResultRow(record: JevGateRecord): HTMLElement {
-    const flagged = record.usedFallback || record.escalated;
+  function gateResultRow(record: JevGateRecord, informational = false): HTMLElement {
+    const flagged = !informational && (record.usedFallback || record.escalated);
     const row = el("div", "lw-diag-row");
     row.dataset.flag = String(flagged);
-    row.append(
-      el("span", "lw-diag-gate", record.label),
-      el("span", "lw-diag-value", describeGateValue(record)),
-    );
-    const meta = el("span", "lw-diag-meta");
+    row.dataset.on = String(!informational);
+
+    const head = el("div", "lw-diag-head");
+    head.append(el("span", "lw-diag-name", record.label), el("span", "lw-diag-value", describeGateValue(record)));
+
+    const meta = el("div", "lw-diag-meta");
     if (record.confidence !== null) {
-      meta.append(el("span", undefined, `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`));
-      if (record.confidence < record.threshold) meta.append(el("span", undefined, `below ${record.threshold.toFixed(2)}`));
+      const confidence = el("span", "lw-badge", `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`);
+      if (record.confidence < record.threshold) {
+        confidence.dataset.tone = "warning";
+        confidence.title = `Below the ${record.threshold.toFixed(2)} floor`;
+      }
+      meta.append(confidence);
     }
-    if (record.usedFallback) meta.append(el("span", undefined, `fallback: ${GATE_FALLBACK_LABELS[record.fallback]}`));
-    row.append(meta);
+    if (record.usedFallback && !informational) {
+      const fallback = el("span", "lw-badge", GATE_FALLBACK_LABELS[record.fallback]);
+      fallback.dataset.tone = "warning";
+      meta.append(fallback);
+    }
+    row.append(head, meta);
     if (record.note) row.append(el("span", "lw-diag-note", record.note));
     return row;
   }

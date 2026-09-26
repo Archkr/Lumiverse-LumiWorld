@@ -125,6 +125,24 @@ function labelled(root: HTMLElement, label: string): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[aria-label="${label}"]`);
 }
 
+/** The provider picker is a segmented group, not a dropdown. */
+function providerSegments(root: HTMLElement): HTMLButtonElement[] {
+  return [...root.querySelectorAll<HTMLButtonElement>('[aria-label="Jev provider"] .lw-segment')];
+}
+
+function apiKeyLink(root: HTMLElement): HTMLAnchorElement | null {
+  return root.querySelector<HTMLAnchorElement>(".lw-provider-note a");
+}
+
+/** Gate cards are collapsed to one scannable line until their caret is opened. */
+function expandGate(root: HTMLElement, gateId: string): void {
+  const card = root.querySelector<HTMLElement>(`[data-lw-gate="${gateId}"]`);
+  if (!card) throw new Error(`no gate card for ${gateId}`);
+  const caret = card.querySelector<HTMLButtonElement>(".lw-gate-caret");
+  if (!caret) throw new Error(`no caret for ${gateId}`);
+  caret.click();
+}
+
 beforeEach(() => {
   if (!(globalThis as any).document) throw new Error("jsdom did not install a document");
   scheduled = [];
@@ -143,11 +161,13 @@ describe("Jev drawer section", () => {
 
   test("reveals the provider and key controls once enabled", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
-    const provider = labelled(harness.root, "Jev provider") as HTMLSelectElement;
-    expect(provider).not.toBeNull();
-    expect([...provider.options].map((option) => option.value)).toEqual(["typesafe", "openrouter"]);
+    const segments = providerSegments(harness.root);
+    expect(segments.map((node) => node.textContent)).toEqual(["TypeSafe", "OpenRouter"]);
+    // The active provider is exposed as a pressed state, not a dropdown value.
+    expect(segments[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(segments[1]!.getAttribute("aria-pressed")).toBe("false");
     expect(labelled(harness.root, "Jev API key")).not.toBeNull();
-    expect(harness.root.textContent).toContain("https://console.typesafe.ai/keys");
+    expect(apiKeyLink(harness.root)?.href).toBe("https://console.typesafe.ai/keys");
     expect(harness.root.textContent).toContain("Not set");
     harness.destroy();
   });
@@ -157,10 +177,10 @@ describe("Jev drawer section", () => {
       settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, provider: "openrouter" } }),
       jevProviderInfo: JEV_PROVIDERS.openrouter,
     }));
-    expect(harness.root.textContent).toContain("https://openrouter.ai/settings/keys");
-    expect(harness.root.textContent).toContain("Leave blank to use typesafe/jev-1.13");
-    const provider = labelled(harness.root, "Jev provider") as HTMLSelectElement;
-    expect(provider.value).toBe("openrouter");
+    expect(apiKeyLink(harness.root)?.href).toBe("https://openrouter.ai/settings/keys");
+    expect(harness.root.textContent).toContain("Blank uses typesafe/jev-1.13");
+    const segments = providerSegments(harness.root);
+    expect(segments[1]!.getAttribute("aria-pressed")).toBe("true");
     harness.destroy();
   });
 
@@ -227,6 +247,8 @@ describe("Jev gates editor", () => {
       const row = harness.root.querySelector(`[data-lw-gate="${definition.id}"]`);
       expect(row, `missing gate row for ${definition.id}`).not.toBeNull();
       expect(row!.textContent).toContain(definition.label);
+      // Collapsed cards carry the shape but not the floor/fallback controls.
+      expect(row!.querySelector(`[aria-label="${definition.label} fallback"]`)).toBeNull();
     }
     expect(harness.root.textContent).toContain("Director control");
     expect(harness.root.textContent).toContain("Guardrails");
@@ -243,7 +265,7 @@ describe("Jev gates editor", () => {
     expect(smartTrigger.checked).toBe(true);
     expect(callback.checked).toBe(false);
     const enabled = GATE_CATALOG.filter((definition) => definition.enabledByDefault).length;
-    expect(harness.root.textContent).toContain(`${enabled} of ${GATE_CATALOG.length} enabled`);
+    expect(harness.root.textContent).toContain(`${enabled}/${GATE_CATALOG.length}`);
     harness.destroy();
   });
 
@@ -269,6 +291,7 @@ describe("Jev gates editor", () => {
         jev: { ...DEFAULT_SETTINGS.jev, enabled: true, gatePolicy: { callback: { enabled: true } } },
       }),
     }));
+    expandGate(harness.root, "callback");
     const threshold = labelled(harness.root, "Callback threshold") as HTMLInputElement;
     threshold.value = "0.8";
     threshold.dispatchEvent(new dom.window.Event("change"));
@@ -281,8 +304,76 @@ describe("Jev gates editor", () => {
     harness.destroy();
   });
 
+  test("expands one gate sheet at a time without touching the others", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    const card = () => harness.root.querySelector<HTMLElement>('[data-lw-gate="callback"]')!;
+    expect(card().dataset.open).toBe("false");
+    expandGate(harness.root, "callback");
+    expect(card().dataset.open).toBe("true");
+    expect(labelled(harness.root, "Callback fallback")).not.toBeNull();
+    // Opening a second gate must not disturb the first.
+    expandGate(harness.root, "foreshadowing");
+    expect(card().dataset.open).toBe("true");
+    const closed = harness.root.querySelector<HTMLElement>('[data-lw-gate="foreshadowing"]')!;
+    expect(closed.dataset.open).toBe("true");
+    harness.destroy();
+  });
+
+  test("marks a hand-tuned gate as custom and clears it on reset", () => {
+    const harness = mount(makeState({
+      settings: settings({
+        jev: { ...DEFAULT_SETTINGS.jev, enabled: true, gatePolicy: { callback: { enabled: true, threshold: 0.9 } } },
+      }),
+    }));
+    const card = () => harness.root.querySelector<HTMLElement>('[data-lw-gate="callback"]')!;
+    expect(card().dataset.custom).toBe("true");
+    expandGate(harness.root, "callback");
+    const reset = card().querySelector<HTMLButtonElement>(".lw-gate-reset")!;
+    expect(reset).not.toBeNull();
+    reset.click();
+    expect(card().dataset.custom).toBe("false");
+    const save = harness.sent.filter((entry) => entry.type === "save_settings").pop();
+    if (save?.type === "save_settings") expect(save.settings.jev?.gatePolicy.callback).toBeUndefined();
+    harness.destroy();
+  });
+
+  test("toggles every gate in a category at once", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    // Narrative direction ships entirely off, so the bulk action turns it on.
+    const narrativeHead = [...harness.root.querySelectorAll<HTMLElement>(".lw-cat-head")]
+      .find((head) => head.textContent?.includes("Narrative direction"))!;
+    expect(narrativeHead.textContent).toContain("0/5");
+    const bulk = narrativeHead.querySelector<HTMLButtonElement>("button")!;
+    expect(bulk.textContent).toBe("Enable all");
+    bulk.click();
+    harness.advanceSave();
+    const save = harness.sent.filter((entry) => entry.type === "save_settings").pop();
+    expect(save?.type).toBe("save_settings");
+    if (save?.type === "save_settings") {
+      for (const id of ["emotional_release", "foreshadowing", "callback", "hook_prioritization", "context_compaction"]) {
+        expect(save.settings.jev?.gatePolicy[id]?.enabled).toBe(true);
+      }
+      // Only the acted-on category is written.
+      expect(save.settings.jev?.gatePolicy.smart_trigger).toBeUndefined();
+    }
+    harness.destroy();
+  });
+
+  test("offers a single reset once any gate has been changed", () => {
+    const clean = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    expect(clean.root.textContent).not.toContain("to defaults");
+    clean.destroy();
+
+    const tuned = mount(makeState({
+      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, gatePolicy: { callback: { enabled: true } } } }),
+    }));
+    expect(tuned.root.textContent).toContain("Reset 1 changed gate to defaults");
+    tuned.destroy();
+  });
+
   test("offers every declared fallback for a gate", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    expandGate(harness.root, "continuity_guard");
     const fallback = labelled(harness.root, "Continuity guard fallback") as HTMLSelectElement;
     expect(fallback).not.toBeNull();
     expect([...fallback.options].map((option) => option.value)).toContain("soften");
@@ -330,7 +421,7 @@ describe("Jev diagnostics panel", () => {
   test("explains that no decisions exist yet", () => {
     const harness = mount(makeState());
     expect(harness.root.textContent).toContain("Last turn decisions");
-    expect(harness.root.textContent).toContain("No Jev decisions recorded yet");
+    expect(harness.root.textContent).toContain("Turn on Use Jev gates to start recording decisions.");
     harness.destroy();
   });
 
@@ -347,8 +438,10 @@ describe("Jev diagnostics panel", () => {
     expect(root.textContent).toContain("Continuity guard");
     // A derived Noul confidence is marked so it is not read as model-reported.
     expect(root.textContent).toContain("~0.95");
-    expect(root.textContent).toContain("fallback: Soften the directive");
-    expect(root.textContent).toContain("below 0.50");
+    expect(root.textContent).toContain("Soften the directive");
+    // The sub-threshold confidence is flagged on the badge itself.
+    const belowFloor = root.querySelector<HTMLElement>('[title="Below the 0.50 floor"]');
+    expect(belowFloor?.textContent).toBe("0.30");
     const flagged = root.querySelector('[data-flag="true"]');
     expect(flagged?.textContent).toContain("Continuity guard");
     harness.destroy();
