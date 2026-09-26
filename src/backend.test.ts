@@ -564,19 +564,22 @@ describe("v0.5 Jev turn flow", () => {
     expect(latestRun().jev.revision.unresolved).toBe(true);
   });
 
-  test("sends unmarked user author notes only to the Director and protects the latest player action", async () => {
+  test("excludes unmarked user blocks from the Director and protects the latest player action", async () => {
     answerCleanTurn();
     await messageHandler!({ type: "refresh_state", chatId: "chat-notes" }, "user-jev");
     const messages = [
       { role: "user", content: "I photograph Shido.", __isChatHistory: true },
       { role: "user", content: "Author note: leave my next action to me." },
+      { role: "user", content: "<my_self_reasoning>Internal prompt block</my_self_reasoning>" },
     ];
     await interceptor!(messages, { chatId: "chat-notes", generationType: "normal" });
     const prompt = JSON.stringify(generatedMessages[0]);
-    expect(prompt).toContain("Author note: leave my next action to me.");
+    expect(prompt).not.toContain("Author note: leave my next action to me.");
+    expect(prompt).not.toContain("Internal prompt block");
     expect(prompt).toContain("Latest completed player chat action");
     expect(prompt).toContain("I photograph Shido.");
     expect(JSON.stringify(jevStates)).not.toContain("Author note: leave my next action to me.");
+    expect(JSON.stringify(jevStates)).not.toContain("Internal prompt block");
     expect(JSON.stringify(jevStates)).toContain("latest_player_action");
   });
 

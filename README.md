@@ -152,7 +152,7 @@ There are **36 entries in the Decisions list**: 34 possible Jev questions and 2 
 Jev receives recent chat turns up to its **History messages** limit, the derived scene state when available, and your Director notes. Its separate **Include in Jev state** switches control the active Character, User persona, and Activated World Info summaries. Jev does **not** receive the full assembled main-model prompt or your Director prompt preset. When verifying, it also receives the Director's draft note. The **State cap (chars)** may shorten any of these fields.
 
 The Director has separate context switches and a separate history limit. Turning a source off for Jev does not turn it off for the Director. When a Jev context switch is off, Jev's filter preserves that source for the Director rather than making a decision about unseen context.
-The latest marked player chat action is kept separately for the Director and Jev verification. Unmarked user messages in Lumiverse's assembled prompt, such as author notes, go to the Director as current instructions but are not sent to Jev.
+The latest marked player chat action is kept separately for the Director and Jev verification. LumiWorld uses only marked chat history for user messages in those calls; unmarked user prompt blocks, including author notes, remain in Lumiverse's main prompt but are not forwarded to the Director or Jev.
 
 ### One turn, step by step
 

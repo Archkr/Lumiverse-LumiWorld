@@ -818,21 +818,13 @@ function selectChatHistoryMessagesForController(messages, limit) {
     return [];
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
-function selectCurrentUserNotes(messages) {
-  return messages.filter((message) => message.role === "user" && !isChatHistoryMessage(message) && !isWorldInfoEntryMessage(message) && serializeMessageContent(message.content).trim().length > 0);
-}
 function latestPlayerChatMessage(messages) {
   return messages.filter((message) => message.role === "user" && isChatHistoryMessage(message)).at(-1) ?? null;
 }
 function currentUserContextMessages(messages, maxChars) {
   const latest = latestPlayerChatMessage(messages);
-  const notes = selectCurrentUserNotes(messages);
   const actionCap = Math.max(500, Math.min(40000, Math.floor(maxChars * 0.35)));
-  const notesCap = Math.max(500, Math.min(1e4, Math.floor(maxChars * 0.1)));
   const lastAction = latest ? serializeMessageContent(latest.content).trim() : "";
-  const noteText = notes.map((note) => serializeMessageContent(note.content).trim()).join(`
-
-`);
   const out = [];
   if (lastAction) {
     const marker = `
@@ -842,10 +834,6 @@ function currentUserContextMessages(messages, maxChars) {
     out.push({ role: "user", content: `Latest completed player chat action (preserve its actor, target, and events exactly):
 ${action}` });
   }
-  if (noteText)
-    out.push({ role: "user", content: `Current Lumiverse author notes (follow these as user instructions):
-${noteText.length <= notesCap ? noteText : `[... older author notes omitted ...]
-${noteText.slice(-notesCap)}`}` });
   return out;
 }
 function selectControllerMessagesForController(messages, settings, contextMessages = []) {

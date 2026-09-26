@@ -364,19 +364,21 @@ describe("message serialization and prompt trimming", () => {
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
   });
 
-  test("keeps the latest player action and unmarked author notes outside trimmed history", () => {
+  test("keeps the latest marked player action outside trimmed history and excludes unmarked user blocks", () => {
     const messages: LlmMessageLike[] = [
       { role: "user", content: "I photograph Shido.", __isChatHistory: true },
       { role: "assistant", content: "The room reacts.", __isChatHistory: true },
       { role: "user", content: "Do not move my character for me." },
+      { role: "user", content: "<my_self_reasoning>Internal prompt block</my_self_reasoning>" },
       { role: "user", content: "World Info text", __isWorldInfoEntry: true },
     ];
     expect(selectChatHistoryMessagesForController(messages, 1)).toHaveLength(1);
     const current = currentUserContextMessages(messages, 10000);
     expect(current.map((message) => String(message.content))).toEqual([
       expect.stringContaining("I photograph Shido."),
-      expect.stringContaining("Do not move my character for me."),
     ]);
+    expect(JSON.stringify(current)).not.toContain("Do not move my character for me.");
+    expect(JSON.stringify(current)).not.toContain("Internal prompt block");
     expect(JSON.stringify(current)).not.toContain("World Info text");
   });
 

@@ -1322,23 +1322,15 @@ export function selectChatHistoryMessagesForController(messages: LlmMessageLike[
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
 
-/** Lumiverse may place author notes in the assembled prompt as unmarked user messages. */
-export function selectCurrentUserNotes(messages: LlmMessageLike[]): LlmMessageLike[] {
-  return messages.filter((message) => message.role === "user" && !isChatHistoryMessage(message)
-    && !isWorldInfoEntryMessage(message) && serializeMessageContent(message.content).trim().length > 0);
-}
-
 export function latestPlayerChatMessage(messages: LlmMessageLike[]): LlmMessageLike | null {
   return messages.filter((message) => message.role === "user" && isChatHistoryMessage(message)).at(-1) ?? null;
 }
 
+/** Preserve the latest saved player action even when the normal chat-history window trims it. */
 export function currentUserContextMessages(messages: LlmMessageLike[], maxChars: number): LlmMessageLike[] {
   const latest = latestPlayerChatMessage(messages);
-  const notes = selectCurrentUserNotes(messages);
   const actionCap = Math.max(500, Math.min(40000, Math.floor(maxChars * 0.35)));
-  const notesCap = Math.max(500, Math.min(10000, Math.floor(maxChars * 0.10)));
   const lastAction = latest ? serializeMessageContent(latest.content).trim() : "";
-  const noteText = notes.map((note) => serializeMessageContent(note.content).trim()).join("\n\n");
   const out: LlmMessageLike[] = [];
   if (lastAction) {
     const marker = "\n[... middle of long player message omitted ...]\n";
@@ -1346,7 +1338,6 @@ export function currentUserContextMessages(messages: LlmMessageLike[], maxChars:
       : `${lastAction.slice(0, Math.floor((actionCap - marker.length) * 0.6))}${marker}${lastAction.slice(-Math.floor((actionCap - marker.length) * 0.4))}`;
     out.push({ role: "user", content: `Latest completed player chat action (preserve its actor, target, and events exactly):\n${action}` });
   }
-  if (noteText) out.push({ role: "user", content: `Current Lumiverse author notes (follow these as user instructions):\n${noteText.length <= notesCap ? noteText : `[... older author notes omitted ...]\n${noteText.slice(-notesCap)}`}` });
   return out;
 }
 
