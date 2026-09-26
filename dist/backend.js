@@ -27,8 +27,13 @@ var JEV_PROVIDERS = {
   }
 };
 var JEV_SECRET_KEY_PREFIX = "jev-api-key";
+var ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
 function jevSecretKey(provider) {
-  return `${JEV_SECRET_KEY_PREFIX}:${provider}`;
+  const key = `${JEV_SECRET_KEY_PREFIX}.${provider}`;
+  if (!ENCLAVE_KEY_PATTERN.test(key)) {
+    throw new Error(`Jev enclave key "${key}" is not a valid enclave key.`);
+  }
+  return key;
 }
 var JEV_MAX_STATE_TOKENS = 32000;
 var DEFAULT_JEV_STATE_CHARS = 30000;
@@ -2604,8 +2609,9 @@ async function readJevKey(provider, userId) {
 }
 async function storeJevKey(provider, key, userId) {
   const enclave = enclaveApi();
-  if (!enclave || typeof enclave.put !== "function")
-    return;
+  if (!enclave || typeof enclave.put !== "function") {
+    throw new Error("This Lumiverse host does not expose encrypted secret storage.");
+  }
   const value = key.trim();
   if (!value)
     return;
@@ -2617,7 +2623,9 @@ async function clearJevKey(provider, userId) {
     return;
   try {
     await enclave.delete(jevSecretKey(provider), userId ?? undefined);
-  } catch {}
+  } catch (error) {
+    spindle.log.warn(`LumiWorld could not clear the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 function jevPhaseBudgetMs(settings) {
   const elapsed = 0;
@@ -3201,7 +3209,14 @@ async function runJevTest(userId, patch, draftKey) {
     try {
       await storeJevKey(settings.jev.provider, draft, userId);
     } catch (error) {
-      spindle.log.warn(`LumiWorld could not store the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      spindle.log.warn(`LumiWorld could not store the Jev key: ${message}`);
+      send({
+        type: "jev_test_result",
+        ok: false,
+        error: `Jev answered, but the key could not be saved: ${message}`
+      }, userId ?? undefined);
+      return;
     }
   }
   send({

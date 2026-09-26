@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  ENCLAVE_KEY_PATTERN,
+  jevSecretKey,
   KeyedOperationLock,
   MAX_DIRECTOR_TIMEOUT_MS,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
@@ -28,6 +30,23 @@ import {
   type LlmMessageLike,
   type RunLogEntry,
 } from "./shared";
+
+describe("Jev enclave key", () => {
+  test("uses a key the host's enclave accepts", () => {
+    // The host rejects anything outside alphanumeric, underscore, dash, and dot.
+    // A colon separator silently broke every read and write.
+    for (const provider of ["typesafe", "openrouter"] as const) {
+      const key = jevSecretKey(provider);
+      expect(key).toMatch(ENCLAVE_KEY_PATTERN);
+      expect(key).not.toContain(":");
+      expect(key.length).toBeLessThanOrEqual(128);
+    }
+  });
+
+  test("namespaces the key per provider so one provider cannot overwrite the other", () => {
+    expect(jevSecretKey("typesafe")).not.toBe(jevSecretKey("openrouter"));
+  });
+});
 
 describe("settings normalization", () => {
   test("clamps numeric settings and restores empty templates", () => {

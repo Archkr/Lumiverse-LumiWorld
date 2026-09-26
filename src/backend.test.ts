@@ -27,8 +27,14 @@ const stored = new Map<string, unknown>([
     { id: "old-world-run", timestamp: 1, status: "success", channel: "world_agent", worldAgentDay: 4, legacyDetail: "keep" },
   ]],
 ]);
-/** Mirrors the encrypted per-user enclave. */
+/** Mirrors the encrypted per-user enclave, including the host's key rules. */
 const enclave = new Map<string, string>();
+const ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
+function assertEnclaveKey(key: string): void {
+  if (!ENCLAVE_KEY_PATTERN.test(key)) {
+    throw new Error("Invalid enclave key: must be 1-128 characters, alphanumeric/underscore/dash/dot only");
+  }
+}
 const sent: BackendToFrontend[] = [];
 let interceptor: Interceptor | null = null;
 let messageHandler: MessageHandler | null = null;
@@ -100,10 +106,12 @@ function latestRun(): any {
     },
   },
   enclave: {
-    get: async (key: string) => enclave.get(key) ?? null,
-    put: async (key: string, value: string) => { enclave.set(key, value); },
-    delete: async (key: string) => enclave.delete(key),
-    has: async (key: string) => enclave.has(key),
+    // Mirrors the host's key validation. Without it the mock accepts anything and
+    // an invalid key format passes every test while failing in Lumiverse.
+    get: async (key: string) => { assertEnclaveKey(key); return enclave.get(key) ?? null; },
+    put: async (key: string, value: string) => { assertEnclaveKey(key); enclave.set(key, value); },
+    delete: async (key: string) => { assertEnclaveKey(key); return enclave.delete(key); },
+    has: async (key: string) => { assertEnclaveKey(key); return enclave.has(key); },
     list: async () => [...enclave.keys()],
   },
   connections: {
@@ -227,7 +235,7 @@ describe("v0.5 Jev turn flow", () => {
     worldInfoEntryFetches = 0;
     jevAnswerFor = () => undefined;
     enclave.clear();
-    enclave.set("jev-api-key:typesafe", "test-key");
+    enclave.set("jev-api-key.typesafe", "test-key");
     stored.forEach((_value, key) => { if (key !== "global/runs.json") stored.delete(key); });
     stored.set("global/settings.json", { ...baseSettings, jev: jevSettings() });
     stored.set("global/runs.json", []);
@@ -441,7 +449,7 @@ describe("v0.5 Jev drawer protocol", () => {
     } else {
       throw new Error("expected a successful Jev test");
     }
-    expect(enclave.get("jev-api-key:typesafe")).toBe("fresh-key");
+    expect(enclave.get("jev-api-key.typesafe")).toBe("fresh-key");
   });
 
   test("does not store a key the provider rejected", async () => {
@@ -449,7 +457,7 @@ describe("v0.5 Jev drawer protocol", () => {
     await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() }, apiKey: "bad-key" }, "user-jev");
     const result = sent.find((message) => message.type === "jev_test_result");
     expect(result?.type === "jev_test_result" && result.ok).toBe(false);
-    expect(enclave.has("jev-api-key:typesafe")).toBe(false);
+    expect(enclave.has("jev-api-key.typesafe")).toBe(false);
   });
 
   test("reports a missing key without calling Jev", async () => {
@@ -461,13 +469,13 @@ describe("v0.5 Jev drawer protocol", () => {
   });
 
   test("clears a stored key", async () => {
-    enclave.set("jev-api-key:typesafe", "existing");
+    enclave.set("jev-api-key.typesafe", "existing");
     await messageHandler!({ type: "clear_jev_key", provider: "typesafe" }, "user-jev");
-    expect(enclave.has("jev-api-key:typesafe")).toBe(false);
+    expect(enclave.has("jev-api-key.typesafe")).toBe(false);
   });
 
   test("reports gateway state without exposing the key", async () => {
-    enclave.set("jev-api-key:typesafe", "existing");
+    enclave.set("jev-api-key.typesafe", "existing");
     await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
     const state = sent.find((message) => message.type === "state");
     expect(state?.type).toBe("state");

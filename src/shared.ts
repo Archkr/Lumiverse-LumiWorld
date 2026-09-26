@@ -99,8 +99,21 @@ export const JEV_PROVIDER_IDS = ["typesafe", "openrouter"] as const;
  */
 export const JEV_SECRET_KEY_PREFIX = "jev-api-key";
 
+/**
+ * The host rejects any enclave key outside this set, so a separator like `:` is
+ * refused outright. Kept here rather than in the backend so the constraint is
+ * testable without a host. Mirror of `ENCLAVE_KEY_PATTERN` in Lumiverse.
+ */
+export const ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
+
 export function jevSecretKey(provider: JevProvider): string {
-  return `${JEV_SECRET_KEY_PREFIX}:${provider}`;
+  const key = `${JEV_SECRET_KEY_PREFIX}.${provider}`;
+  // A key the host will reject would fail every read and write silently, so this
+  // is asserted at construction rather than discovered at runtime.
+  if (!ENCLAVE_KEY_PATTERN.test(key)) {
+    throw new Error(`Jev enclave key "${key}" is not a valid enclave key.`);
+  }
+  return key;
 }
 
 /** Jev reports 64k tokens per request, of which the `state` may use 32k. */

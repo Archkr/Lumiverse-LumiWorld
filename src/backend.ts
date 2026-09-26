@@ -418,9 +418,17 @@ async function readJevKey(provider: JevSettings["provider"], userId?: string | n
   }
 }
 
+/**
+ * Stores the key, throwing if the enclave refuses it.
+ *
+ * A swallowed failure here is invisible: the drawer would claim the key was
+ * stored while every later read returned null, so the caller must report it.
+ */
 async function storeJevKey(provider: JevSettings["provider"], key: string, userId?: string | null): Promise<void> {
   const enclave = enclaveApi();
-  if (!enclave || typeof enclave.put !== "function") return;
+  if (!enclave || typeof enclave.put !== "function") {
+    throw new Error("This Lumiverse host does not expose encrypted secret storage.");
+  }
   const value = key.trim();
   if (!value) return;
   await enclave.put(jevSecretKey(provider), value, userId ?? undefined);
@@ -431,8 +439,10 @@ async function clearJevKey(provider: JevSettings["provider"], userId?: string | 
   if (!enclave || typeof enclave.delete !== "function") return;
   try {
     await enclave.delete(jevSecretKey(provider), userId ?? undefined);
-  } catch {
-    // Clearing a key that is already gone is not an error.
+  } catch (error) {
+    // Clearing a key that is already gone is not an error, but anything else is
+    // worth a warning rather than silence.
+    spindle.log.warn(`LumiWorld could not clear the Jev key: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1201,12 +1211,19 @@ async function runJevTest(
   const confidence = answer && answer.type === "noul" ? Math.max(answer.noul, 1 - answer.noul) : null;
   const label = answer && answer.type === "noul" ? (answer.noul >= 0.5 ? "yes" : "no") : "unknown";
 
-  // Only persist a key that the provider actually accepted.
+  // Only persist a key that the provider actually accepted. If storage refuses it
+  // the test must fail loudly: a silently unstored key would break every later turn.
   if (draft) {
     try {
       await storeJevKey(settings.jev.provider, draft, userId);
     } catch (error) {
-      spindle.log.warn(`LumiWorld could not store the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      spindle.log.warn(`LumiWorld could not store the Jev key: ${message}`);
+      send({
+        type: "jev_test_result", ok: false,
+        error: `Jev answered, but the key could not be saved: ${message}`,
+      }, userId ?? undefined);
+      return;
     }
   }
 
