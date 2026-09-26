@@ -353,6 +353,9 @@ describe("drawer views", () => {
     const offDot = off.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot");
     expect(offDot).not.toBeNull();
     expect(offDot!.getAttribute("title")).toBe("Jev is off");
+    // The marker travels with the label instead of sitting at the tab's edge.
+    expect(offDot!.parentElement?.className).toBe("lw-tab-content");
+    expect(offDot!.parentElement?.querySelector(".lw-tab-label")?.textContent).toBe("Jev");
     off.destroy();
   });
 

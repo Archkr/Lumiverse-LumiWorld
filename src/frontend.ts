@@ -26,8 +26,9 @@ const CSS = `
 .lw-title-row { display:flex; align-items:center; gap:8px; }
 .lw-tabs { position:sticky; top:0; z-index:2; display:flex; gap:2px; margin:2px 0 16px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-surface-raised); backdrop-filter:blur(8px); }
 .lw-tab { position:relative; flex:1 1 0; display:flex; align-items:center; justify-content:center; min-width:0; min-height:34px; padding:6px 10px; border:0; border-radius:7px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,color .15s; }
+.lw-tab-content { display:inline-flex; align-items:center; gap:7px; min-width:0; max-width:100%; }
 .lw-tab-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.lw-tab-dot { position:absolute; top:6px; right:8px; width:6px; height:6px; border-radius:50%; }
+.lw-tab-dot { flex:none; width:6px; height:6px; border-radius:50%; }
 .lw-tab:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
 .lw-tab[aria-selected="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
 .lw-tab:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
@@ -1293,22 +1294,23 @@ export function setup(ctx: SpindleFrontendContext) {
       tab.setAttribute("aria-controls", `lw-view-${entry.id}`);
       tab.tabIndex = activeTab === entry.id ? 0 : -1;
       tab.title = entry.hint;
-      tab.append(el("span", "lw-tab-label", entry.label));
 
-      // The dot is reserved for something the user has to act on. It stays absent
-      // in the ordinary cases (the feature is off, or it is on and working) so a
-      // marker only ever appears when it means something.
+      // Label and marker sit in one inline row so the marker reads as part of the
+      // label rather than as a detached light at the tab's edge.
+      const content = el("span", "lw-tab-content");
+      content.append(el("span", "lw-tab-label", entry.label));
+
       const marker = tabMarker(entry.id);
       if (marker) {
         const dot = el("span", "lw-tab-dot");
         dot.style.background = marker.tone === "warning" ? "var(--lumiverse-warning)"
           : marker.tone === "success" ? "var(--lumiverse-success)"
           : "var(--lumiverse-text-muted)";
-        dot.style.opacity = marker.tone === "off" ? ".55" : "1";
         dot.title = marker.label;
         dot.setAttribute("aria-hidden", "true");
-        tab.append(dot);
+        content.append(dot);
       }
+      tab.append(content);
 
       tab.addEventListener("click", () => activateView(entry.id));
       tab.addEventListener("keydown", (event) => {
