@@ -557,7 +557,11 @@ describe("v0.5 Jev turn flow", () => {
     expect(first.jev.phases[0].requestJson).toContain("I open the observatory door.");
     expect(first.jev.phases[0].responseJson).toContain("answers");
     expect(first.jev.revision.promptJson).toContain("Repair it with this action");
-    expect(JSON.parse(first.jev.revision.promptJson).some((message: any) => message.role === "assistant" && message.content === first.trace.initialDirective)).toBe(true);
+    const repairPrompt = JSON.parse(first.jev.revision.promptJson);
+    expect(repairPrompt.at(-1).role).toBe("user");
+    expect(repairPrompt.at(-1).content).toContain(first.trace.initialDirective);
+    expect(repairPrompt.at(-1).content).toContain("<draft_directive>");
+    expect(repairPrompt.at(-1).content).not.toContain("length limits");
     expect(first.jev.revision.promptJson).not.toContain("Claim extraction: true");
 
     await messageHandler!({ type: "test_controller" }, "user-jev");
@@ -596,6 +600,35 @@ describe("v0.5 Jev turn flow", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(latestRun().trace.finalReply).toBe("VISIBLE_REPLY_CANARY");
     expect(stored.has("chats/chat-withheld/world.json")).toBe(false);
+  });
+
+  test("withholds the initial note when the single repair returns empty content", async () => {
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => gateId === "continuity_guard"
+      ? { type: "choice", choice: "consistent", probabilities: { consistent: 0.36, violation: 0.32, uncertain: 0.32 }, confidence: 0.36 }
+      : clean(gateId);
+    const originalRaw = (globalThis as any).spindle.generate.raw;
+    let calls = 0;
+    (globalThis as any).spindle.generate.raw = async (input: any) => {
+      calls += 1;
+      return calls === 2
+        ? { choices: [{ message: { content: "" }, finish_reason: "stop" }] }
+        : originalRaw(input);
+    };
+    let result: any;
+    try {
+      result = await runJevTurn("chat-empty-repair");
+    } finally {
+      (globalThis as any).spindle.generate.raw = originalRaw;
+    }
+    expect(result).toEqual(jevMessages);
+    expect(calls).toBe(2);
+    expect(latestRun().trace.initialDirective).toBe("Make the storm intensify.");
+    expect(latestRun().trace.finalDirective).toBeNull();
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().jev.revision.promptJson).toContain("could not confirm this check");
+    expect(latestRun().jev.revision.status).toBe("failed");
   });
 
   test("withholds a revised note when player agency remains a low-confidence concern", async () => {

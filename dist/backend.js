@@ -3666,20 +3666,24 @@ function resolveJevModelForDiagnostics(settings) {
   return settings.jev.model.trim() || provider.defaultModel;
 }
 async function regenerateDirective(userId, settings, target, prepared, originalDirective, repair, records) {
-  const violated = records.filter((record) => ["player_agency", "continuity_guard", "duplicate_suppression", "intensity_boundary", "director_verification"].includes(record.gateId) && (record.usedFallback || ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value))).map((record) => `- ${record.label}: ${String(record.value)}${record.usedFallback ? " (inconclusive)" : ""}`).join(`
+  const violated = records.filter((record) => ["player_agency", "continuity_guard", "duplicate_suppression", "intensity_boundary", "director_verification"].includes(record.gateId) && (record.usedFallback || ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value))).map((record) => record.usedFallback ? `- ${record.label}: inconclusive; Jev could not confirm this check${record.confidence != null ? ` (confidence ${record.confidence.toFixed(2)})` : ""}` : `- ${record.label}: ${String(record.value)}`).join(`
 `);
   const repairMessages = [
     ...prepared.controllerMessages,
-    { role: "assistant", content: originalDirective },
     {
-      role: "system",
+      role: "user",
       content: [
-        `LumiWorld verification found a problem with the draft directive above. Repair it with this action: ${repair.action}.`,
+        "Revise this complete original Director note:",
+        `<draft_directive>
+${originalDirective}
+</draft_directive>`,
+        `Repair it with this action: ${repair.action}.`,
         repair.reason,
         violated ? `Blocking or inconclusive checks:
 ${violated}` : "",
+        "An inconclusive check is not a confirmed violation. Make the scene timing and the player's completed action unambiguous while keeping sound parts of the draft.",
         "Preserve unaffected beats. Preserve the actor, target, objects, and completed outcome in the latest player chat action exactly. Do not redirect a finished action or decide the player's next action.",
-        "Return a corrected directive only. Keep the same format and length limits. Include an optional thread_label only if it names a specific story thread."
+        "Return only the corrected directive, preferably as JSON with director_note and an optional specific thread_label. There is no LumiWorld output length limit."
       ].filter(Boolean).join(`
 `)
     }
