@@ -30,8 +30,14 @@ export interface LumiWorldSettings {
   enabled: boolean;
   connectionId: string | null;
   modelOverride: string;
+  /**
+   * Optional escalation target used when Jev's `model_route` gate asks for a
+   * stronger Director. Both blank/empty keeps the normal target, which makes the
+   * gate degrade safely on a fresh install.
+   */
+  strongConnectionId: string | null;
+  strongModelOverride: string;
   temperature: number;
-  maxTokens: number;
   timeoutMs: number;
   maxInputChars: number;
   historyMessageLimit: number;
@@ -42,7 +48,322 @@ export interface LumiWorldSettings {
   additionalNotes: string;
   systemTemplate: string;
   userTemplate: string;
+  activePromptPresetId: string;
+  promptPresets: PromptPreset[];
   runLogLimit: number;
+  jev: JevSettings;
+}
+
+export interface PromptPreset {
+  id: string;
+  name: string;
+  systemTemplate: string;
+  userTemplate: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Jev (TypeSafe System One) integration
+ * ------------------------------------------------------------------ */
+
+export type JevProvider = "typesafe" | "openrouter";
+
+export interface JevProviderInfo {
+  id: JevProvider;
+  label: string;
+  baseUrl: string;
+  path: string;
+  defaultModel: string;
+  keyUrl: string;
+}
+
+/**
+ * The Jev wire contract is identical for both providers except for the base
+ * URL, the route, and the model naming convention.
+ */
+export const JEV_PROVIDERS: Record<JevProvider, JevProviderInfo> = {
+  typesafe: {
+    id: "typesafe",
+    label: "TypeSafe",
+    baseUrl: "https://api.typesafe.ai",
+    path: "/v1/systemone",
+    defaultModel: "jev-latest",
+    keyUrl: "https://console.typesafe.ai/keys",
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    path: "/alpha/decisions",
+    defaultModel: "typesafe/jev-1.13",
+    keyUrl: "https://openrouter.ai/settings/keys",
+  },
+};
+
+export const JEV_PROVIDER_IDS = ["typesafe", "openrouter"] as const;
+
+/**
+ * Enclave is per-user AES-256-GCM at-rest secret storage. One slot per provider
+ * so switching providers never destroys the other credential.
+ */
+export const JEV_SECRET_KEY_PREFIX = "jev-api-key";
+
+/**
+ * The host rejects any enclave key outside this set, so a separator like `:` is
+ * refused outright. Kept here rather than in the backend so the constraint is
+ * testable without a host. Mirror of `ENCLAVE_KEY_PATTERN` in Lumiverse.
+ */
+export const ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
+
+export function jevSecretKey(provider: JevProvider): string {
+  const key = `${JEV_SECRET_KEY_PREFIX}.${provider}`;
+  // A key the host will reject would fail every read and write silently, so this
+  // is asserted at construction rather than discovered at runtime.
+  if (!ENCLAVE_KEY_PATTERN.test(key)) {
+    throw new Error(`Jev enclave key "${key}" is not a valid enclave key.`);
+  }
+  return key;
+}
+
+/** Jev reports 64k tokens per request, of which the `state` may use 32k. */
+export const JEV_MAX_STATE_TOKENS = 32_000;
+export const DEFAULT_JEV_STATE_CHARS = 30_000;
+export const MIN_JEV_STATE_CHARS = 2_000;
+export const MAX_JEV_STATE_CHARS = 32_000;
+export const DEFAULT_JEV_TIMEOUT_MS = 8_000;
+export const MIN_JEV_TIMEOUT_MS = 1_000;
+export const MAX_JEV_TIMEOUT_MS = 60_000;
+export const MAX_JEV_HISTORY_MESSAGES = 24;
+export const DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
+
+export interface JevSettings {
+  enabled: boolean;
+  provider: JevProvider;
+  /** Context sent to Jev, independently of the Director's context switches. */
+  includeCharacter: boolean;
+  includeUserPersona: boolean;
+  includeWorldInfoEntries: boolean;
+  /** Blank means "use the provider default model". */
+  model: string;
+  /** Blank means "use the provider default base URL". */
+  baseUrlOverride: string;
+  timeoutMs: number;
+  maxStateChars: number;
+  historyMessageLimit: number;
+  /** Decisions below this confidence are escalated (flag + gate fallback). */
+  minConfidence: number;
+  retryOnRateLimit: boolean;
+  /** Opt-in persistence of the derived scene state between turns. */
+  worldStateEnabled: boolean;
+  /** Per-gate enable / threshold / fallback overrides, keyed by gate id. */
+  gatePolicy: Record<string, GatePolicy>;
+}
+
+export const DEFAULT_JEV_SETTINGS: JevSettings = {
+  enabled: false,
+  provider: "typesafe",
+  includeCharacter: true,
+  includeUserPersona: true,
+  includeWorldInfoEntries: false,
+  model: "",
+  baseUrlOverride: "",
+  timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
+  maxStateChars: DEFAULT_JEV_STATE_CHARS,
+  historyMessageLimit: 10,
+  minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
+  retryOnRateLimit: true,
+  worldStateEnabled: true,
+  gatePolicy: {},
+};
+
+export function resolveJevProvider(settings: { provider?: unknown }): JevProviderInfo {
+  const provider = settings.provider === "openrouter" ? "openrouter" : "typesafe";
+  return JEV_PROVIDERS[provider];
+}
+
+export function resolveJevModel(settings: { provider?: unknown; model?: unknown }): string {
+  const model = typeof settings.model === "string" ? settings.model.trim() : "";
+  return model || resolveJevProvider(settings).defaultModel;
+}
+
+export function resolveJevBaseUrl(settings: { provider?: unknown; baseUrlOverride?: unknown }): string {
+  const override = typeof settings.baseUrlOverride === "string" ? settings.baseUrlOverride.trim().replace(/\/+$/, "") : "";
+  return override || resolveJevProvider(settings).baseUrl;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gate catalog types
+ * ------------------------------------------------------------------ */
+
+export type JevPrimitive = "noul" | "choice" | "score";
+
+/** Which Jev round-trip a gate belongs to. Each phase is one batched request. */
+export type GatePhase = "gate" | "verify";
+
+export type GateCategory = "director_control" | "guardrails" | "state_accuracy" | "narrative" | "world";
+
+export type GateFallback =
+  | "run"
+  | "skip"
+  | "accept"
+  | "retry"
+  | "patch"
+  | "soften"
+  | "drop"
+  | "hold"
+  | "none"
+  | "ignore";
+
+export type GateValue = string | number | boolean;
+
+export interface GatePolicyOverride {
+  enabled?: boolean;
+  threshold?: number;
+  fallback?: GateFallback;
+}
+
+export type GatePolicy = GatePolicyOverride;
+
+export type GateCriteria = Record<string, string> | string[] | { true: string; false: string };
+
+export interface GateDefinition {
+  /** Doubles as the Jev question id: answers return under this exact key. */
+  id: string;
+  label: string;
+  /** Shape of the question sent to Jev and the shape of the answer returned. */
+  primitive: JevPrimitive;
+  phase: GatePhase;
+  category: GateCategory;
+  primitiveLabel: string;
+  /** Options for Choice, ordered levels for Score, true/false wording for Noul. */
+  criteria?: GateCriteria;
+  instructions: string;
+  /**
+   * What the gate asks for in plain language. Jev returns only a typed value and
+   * probabilities, never prose, so there is no model-authored rationale to store.
+   */
+  rationale: string;
+  enabledByDefault: boolean;
+  threshold: number;
+  fallback: GateFallback;
+  /** Value that means "the Director should run" for this gate. */
+  safeValue: GateValue;
+  /** Value that means "the Director should not run" for this gate. */
+  blockValue: GateValue;
+  /** Gate only applies when this condition holds for the current turn. */
+  appliesWhen?: string;
+  /** Evaluated in code from thresholds and request state, not sent to Jev. */
+  codeOnly?: boolean;
+}
+
+/** A gate policy with every field filled in, ready to be applied. */
+export interface ResolvedGatePolicy extends GatePolicy {
+  enabled: boolean;
+  threshold: number;
+  fallback: GateFallback;
+  definition: GateDefinition;
+}
+
+export interface JevGateRecord {
+  gateId: string;
+  label: string;
+  primitive: JevPrimitive;
+  phase: GatePhase;
+  /** Raw typed answer from Jev, or null when the gate had no answer. */
+  value: GateValue | null;
+  probability: number | null;
+  /** Choice/Score report confidence; Noul confidence is derived from p and flagged. */
+  confidence: number | null;
+  confidenceDerived: boolean;
+  threshold: number;
+  escalated: boolean;
+  usedFallback: boolean;
+  fallback: GateFallback;
+  /** Full reported distribution, kept for the diagnostics view. */
+  probabilities?: Record<string, number>;
+  note?: string;
+}
+
+export interface JevPhaseTrace {
+  stage: "before_director" | "verify_draft" | "verify_revision";
+  questionCount: number;
+  requestCount: number;
+  durationMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  resolvedModel: string | null;
+  stateChars: number;
+  stateCompacted: boolean;
+  error: string | null;
+  gates: JevGateRecord[];
+  /** Complete request and normalized response, including the projected chat context. */
+  requestJson: string | null;
+  responseJson: string | null;
+}
+
+export interface JevRevisionTrace {
+  action: string;
+  reason: string;
+  status: "revised" | "failed";
+  durationMs: number;
+  error: string | null;
+  initialDirectivePreview: string;
+  revisedDirectivePreview: string | null;
+  unresolved: boolean;
+  promptJson: string | null;
+  revisedDirective: string | null;
+  responseJson: string | null;
+}
+
+export interface TurnTrace {
+  chatId: string | null;
+  generationId: string | null;
+  dryRun: boolean;
+  generationOutcome: "preview" | "pending" | "completed" | "failed" | "stopped" | "superseded" | "unknown";
+  generationError: string | null;
+  messageId: string | null;
+  finalReply: string | null;
+  directiveDisposition?: "injected" | "withheld" | null;
+  verificationVerdict?: "clean" | "inconclusive" | "violation" | "unverified" | null;
+  verificationReason?: string | null;
+  worldStateOutcome: "not_used" | "pending" | "saved" | "discarded" | "save_failed";
+  worldStateBeforeJson: string | null;
+  worldStateAfterJson: string | null;
+  settingsJson: string | null;
+  incomingMessagesJson: string | null;
+  directorMessagesJson: string | null;
+  initialDirective: string | null;
+  finalDirective: string | null;
+  initialResponseJson: string | null;
+}
+
+export interface JevTurnDiagnostics {
+  /** Whether Jev was consulted at all this turn. */
+  used: boolean;
+  enabled: boolean;
+  provider: JevProvider | null;
+  model: string | null;
+  /** Model id the provider reported as the actual responder. */
+  resolvedModel: string | null;
+  /** "ok" when every phase answered, otherwise the degradation reason. */
+  status: "ok" | "degraded" | "skipped";
+  error: string | null;
+  requestCount: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  gatePhaseMs: number | null;
+  verifyPhaseMs: number | null;
+  gateCount: number;
+  fallbackCount: number;
+  escalatedCount: number;
+  stateChars: number;
+  /** True when the state had to be compacted to fit the configured cap. */
+  stateCompacted: boolean;
+  gates: JevGateRecord[];
+  /** Ordered passes, including both sides of a Director revision. */
+  phases: JevPhaseTrace[];
+  revision: JevRevisionTrace | null;
 }
 
 export interface ConnectionOption {
@@ -68,6 +389,7 @@ export interface RunLogEntry {
   action?: string | null;
   generationType?: string | null;
   durationMs?: number | null;
+  directorDurationMs?: number | null;
   connectionId?: string | null;
   connectionName?: string | null;
   model?: string | null;
@@ -77,6 +399,10 @@ export interface RunLogEntry {
   worldInfoFetchedCount?: number | null;
   worldInfoFallbackTaggedCount?: number | null;
   worldInfoFetchError?: string | null;
+  /** Jev gate diagnostics for this turn. Absent when Jev was not consulted. */
+  jev?: JevTurnDiagnostics | null;
+  /** Full text for the latest turn only; older run entries retain summaries. */
+  trace?: TurnTrace | null;
 }
 
 export interface PromptSnapshot {
@@ -155,8 +481,6 @@ export interface ControllerTargetError {
 
 export type ControllerTargetResult = ControllerTarget | ControllerTargetError;
 
-export const MAX_DIRECTIVE_CHARS = 2200;
-export const MAX_CONTROLLER_OUTPUT_TOKENS = Number.MAX_SAFE_INTEGER;
 // Lumiverse clamps prompt interceptor work to five minutes.
 export const MAX_DIRECTOR_TIMEOUT_MS = 300_000;
 export const MAX_CONTROLLER_TIMEOUT_MS = 2_147_483_647;
@@ -250,7 +574,7 @@ export const PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE = [
   "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
 ].join("\n");
 
-export const DEFAULT_SYSTEM_TEMPLATE = [
+export const PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE = [
   "You are LumiWorld, a private world-state director for an interactive Lumiverse chat.",
   "",
   "Your job is to advance the world behind the next visible reply.",
@@ -270,10 +594,21 @@ export const DEFAULT_SYSTEM_TEMPLATE = [
   "Return only one private directive for the next visible reply. Do not write the visible assistant reply. Do not address the user. Do not mention LumiWorld, the controller, this prompt, or the directive.",
   "",
   "Prefer JSON exactly like:",
-  "{\"director_note\":\"...\"}",
+  "{\"director_note\":\"...\",\"thread_label\":\"optional short name of the specific story thread developed\"}",
   "",
-  "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.",
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
 ].join("\n");
+
+export const DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE.replace(
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+  "Omit thread_label when no specific thread can be named. Plain text is acceptable if needed.",
+);
+
+/** Built-in template shipped before structured thread names were introduced. */
+const PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE
+  .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
+  .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+    "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
 
 export const PRE_CONTEXT_DEFAULT_USER_TEMPLATE = [
   "Generation type: {{generationType}}",
@@ -301,12 +636,15 @@ export const DEFAULT_USER_TEMPLATE = [
   "Start with a verb. No recap. No review. No explanation. No \"has just\" framing.",
 ].join("\n");
 
+export const BUILTIN_PROMPT_PRESET_ID = "builtin";
+
 export const DEFAULT_SETTINGS: LumiWorldSettings = {
   enabled: false,
   connectionId: null,
   modelOverride: "",
+  strongConnectionId: null,
+  strongModelOverride: "",
   temperature: 0.35,
-  maxTokens: 420,
   timeoutMs: 45000,
   maxInputChars: 60000,
   historyMessageLimit: DEFAULT_HISTORY_MESSAGE_LIMIT,
@@ -317,7 +655,10 @@ export const DEFAULT_SETTINGS: LumiWorldSettings = {
   additionalNotes: "",
   systemTemplate: DEFAULT_SYSTEM_TEMPLATE,
   userTemplate: DEFAULT_USER_TEMPLATE,
+  activePromptPresetId: BUILTIN_PROMPT_PRESET_ID,
+  promptPresets: [],
   runLogLimit: DEFAULT_RUN_LOG_LIMIT,
+  jev: { ...DEFAULT_JEV_SETTINGS },
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -350,18 +691,280 @@ export function normalizeGenerationTypes(value: unknown): LumiWorldGenerationTyp
   return Array.isArray(value) ? [...new Set(normalized)] : [...DEFAULT_SETTINGS.generationTypes];
 }
 
+const GATE_FALLBACKS: readonly GateFallback[] = [
+  "run", "skip", "accept", "retry", "patch", "soften", "drop", "hold", "none", "ignore",
+];
+
+function normalizeProbability(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Gate policy overrides are sparse: an unknown or malformed entry is dropped so a
+ * corrupted settings file cannot disable a guardrail by accident.
+ */
+export function normalizeGatePolicy(value: unknown): Record<string, GatePolicy> {
+  const obj = asRecord(value);
+  const normalized: Record<string, GatePolicy> = {};
+  for (const [gateId, raw] of Object.entries(obj)) {
+    const id = gateId.trim();
+    if (!id) continue;
+    const entry = asRecord(raw);
+    const policy: GatePolicy = {};
+    if (typeof entry.enabled === "boolean") policy.enabled = entry.enabled;
+    const threshold = normalizeProbability(entry.threshold);
+    if (threshold !== undefined) policy.threshold = threshold;
+    const fallback = cleanString(entry.fallback) as GateFallback;
+    if (GATE_FALLBACKS.includes(fallback)) policy.fallback = fallback;
+    if (Object.keys(policy).length > 0) normalized[id] = policy;
+  }
+  return normalized;
+}
+
+export function normalizeJevSettings(
+  value: unknown,
+  legacyContext: Pick<LumiWorldSettings, "includeCharacter" | "includeUserPersona" | "includeWorldInfoEntries"> = DEFAULT_SETTINGS,
+): JevSettings {
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
+    provider,
+    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
+    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
+    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
+    model: cleanString(obj.model),
+    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
+    maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
+    historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
+    minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
+    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
+    worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
+    gatePolicy: normalizeGatePolicy(obj.gatePolicy),
+  };
+}
+
+const JEV_STATUSES: readonly JevTurnDiagnostics["status"][] = ["ok", "degraded", "skipped"];
+const JEV_PRIMITIVES: readonly JevPrimitive[] = ["noul", "choice", "score"];
+const JEV_PHASES: readonly GatePhase[] = ["gate", "verify"];
+
+function normalizeGateValue(value: unknown): GateValue | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  return null;
+}
+
+function normalizeProbabilityMap(value: unknown): Record<string, number> | undefined {
+  const obj = asRecord(value);
+  const entries = Object.entries(obj)
+    .map(([key, raw]): [string, number] | null => {
+      const probability = normalizeProbability(raw);
+      return probability === undefined ? null : [key, probability];
+    })
+    .filter((entry): entry is [string, number] => entry !== null);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+export function normalizeJevGateRecord(value: unknown): JevGateRecord | null {
+  const obj = asRecord(value);
+  const gateId = cleanString(obj.gateId);
+  const primitive = cleanString(obj.primitive) as JevPrimitive;
+  const phase = cleanString(obj.phase) as GatePhase;
+  if (!gateId || !JEV_PRIMITIVES.includes(primitive) || !JEV_PHASES.includes(phase)) return null;
+  const fallback = cleanString(obj.fallback) as GateFallback;
+  const rawConfidence = normalizeProbability(obj.confidence);
+  return {
+    gateId,
+    label: cleanString(obj.label) || gateId,
+    primitive,
+    phase,
+    value: normalizeGateValue(obj.value),
+    probability: normalizeProbability(obj.probability) ?? null,
+    confidence: rawConfidence ?? null,
+    confidenceDerived: obj.confidenceDerived === true,
+    threshold: numberInRange(obj.threshold, 0, 0, 1),
+    escalated: obj.escalated === true,
+    usedFallback: obj.usedFallback === true,
+    fallback: GATE_FALLBACKS.includes(fallback) ? fallback : "none",
+    probabilities: normalizeProbabilityMap(obj.probabilities),
+    note: cleanNullableString(obj.note) ?? undefined,
+  };
+}
+
+function normalizeJevPhaseTrace(value: unknown): JevPhaseTrace | null {
+  const obj = asRecord(value);
+  const stage = cleanString(obj.stage);
+  if (stage !== "before_director" && stage !== "verify_draft" && stage !== "verify_revision") return null;
+  return {
+    stage,
+    questionCount: integerInRange(obj.questionCount, 0, 0, Number.MAX_SAFE_INTEGER),
+    requestCount: integerInRange(obj.requestCount, 0, 0, 16),
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    inputTokens: obj.inputTokens == null ? null : integerInRange(obj.inputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    outputTokens: obj.outputTokens == null ? null : integerInRange(obj.outputTokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    error: cleanNullableString(obj.error),
+    gates: (Array.isArray(obj.gates) ? obj.gates : [])
+      .map(normalizeJevGateRecord).filter((gate): gate is JevGateRecord => gate !== null),
+    requestJson: typeof obj.requestJson === "string" ? obj.requestJson : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null,
+  };
+}
+
+function normalizeJevRevisionTrace(value: unknown): JevRevisionTrace | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  const status = cleanString(obj.status);
+  if (status !== "revised" && status !== "failed") return null;
+  return {
+    action: cleanString(obj.action),
+    reason: cleanString(obj.reason),
+    status,
+    durationMs: integerInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    error: cleanNullableString(obj.error),
+    initialDirectivePreview: cleanString(obj.initialDirectivePreview),
+    revisedDirectivePreview: cleanNullableString(obj.revisedDirectivePreview),
+    unresolved: obj.unresolved === true,
+    promptJson: typeof obj.promptJson === "string" ? obj.promptJson : null,
+    revisedDirective: typeof obj.revisedDirective === "string" ? obj.revisedDirective : null,
+    responseJson: typeof obj.responseJson === "string" ? obj.responseJson : null,
+  };
+}
+
+function normalizeTurnTrace(value: unknown): TurnTrace | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  return {
+    chatId: cleanNullableString(obj.chatId),
+    generationId: cleanNullableString(obj.generationId),
+    dryRun: obj.dryRun === true,
+    generationOutcome: ["preview", "pending", "completed", "failed", "stopped", "superseded", "unknown"].includes(cleanString(obj.generationOutcome))
+      ? cleanString(obj.generationOutcome) as TurnTrace["generationOutcome"] : "unknown",
+    generationError: cleanNullableString(obj.generationError),
+    messageId: cleanNullableString(obj.messageId),
+    finalReply: typeof obj.finalReply === "string" ? obj.finalReply : null,
+    directiveDisposition: ["injected", "withheld"].includes(cleanString(obj.directiveDisposition))
+      ? cleanString(obj.directiveDisposition) as TurnTrace["directiveDisposition"] : null,
+    verificationVerdict: ["clean", "inconclusive", "violation", "unverified"].includes(cleanString(obj.verificationVerdict))
+      ? cleanString(obj.verificationVerdict) as TurnTrace["verificationVerdict"] : null,
+    verificationReason: cleanNullableString(obj.verificationReason),
+    worldStateOutcome: ["not_used", "pending", "saved", "discarded", "save_failed"].includes(cleanString(obj.worldStateOutcome))
+      ? cleanString(obj.worldStateOutcome) as TurnTrace["worldStateOutcome"] : "not_used",
+    worldStateBeforeJson: typeof obj.worldStateBeforeJson === "string" ? obj.worldStateBeforeJson : null,
+    worldStateAfterJson: typeof obj.worldStateAfterJson === "string" ? obj.worldStateAfterJson : null,
+    settingsJson: typeof obj.settingsJson === "string" ? obj.settingsJson : null,
+    incomingMessagesJson: typeof obj.incomingMessagesJson === "string" ? obj.incomingMessagesJson : null,
+    directorMessagesJson: typeof obj.directorMessagesJson === "string" ? obj.directorMessagesJson : null,
+    initialDirective: typeof obj.initialDirective === "string" ? obj.initialDirective : null,
+    finalDirective: typeof obj.finalDirective === "string" ? obj.finalDirective : null,
+    initialResponseJson: typeof obj.initialResponseJson === "string" ? obj.initialResponseJson : null,
+  };
+}
+
+export function normalizeJevTurnDiagnostics(value: unknown): JevTurnDiagnostics | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = asRecord(value);
+  const provider = cleanString(obj.provider);
+  const status = cleanString(obj.status) as JevTurnDiagnostics["status"];
+  // Non-numeric or negative counts are treated as absent rather than as zero.
+  const nullableInt = (raw: unknown): number | null => {
+    if (raw == null) return null;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.round(n));
+  };
+  const gates = (Array.isArray(obj.gates) ? obj.gates : [])
+    .map(normalizeJevGateRecord)
+    .filter((gate): gate is JevGateRecord => gate !== null);
+  return {
+    used: obj.used === true,
+    enabled: obj.enabled === true,
+    provider: provider === "typesafe" || provider === "openrouter" ? provider : null,
+    model: cleanNullableString(obj.model),
+    resolvedModel: cleanNullableString(obj.resolvedModel),
+    status: JEV_STATUSES.includes(status) ? status : "skipped",
+    error: cleanNullableString(obj.error),
+    requestCount: integerInRange(obj.requestCount, gates.length > 0 ? 1 : 0, 0, 16),
+    inputTokens: nullableInt(obj.inputTokens),
+    outputTokens: nullableInt(obj.outputTokens),
+    costUsd: typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) ? obj.costUsd : null,
+    gatePhaseMs: nullableInt(obj.gatePhaseMs),
+    verifyPhaseMs: nullableInt(obj.verifyPhaseMs),
+    gateCount: integerInRange(obj.gateCount, gates.length, 0, Number.MAX_SAFE_INTEGER),
+    fallbackCount: integerInRange(obj.fallbackCount, gates.filter((gate) => gate.usedFallback).length, 0, Number.MAX_SAFE_INTEGER),
+    escalatedCount: integerInRange(obj.escalatedCount, gates.filter((gate) => gate.escalated).length, 0, Number.MAX_SAFE_INTEGER),
+    stateChars: integerInRange(obj.stateChars, 0, 0, Number.MAX_SAFE_INTEGER),
+    stateCompacted: obj.stateCompacted === true,
+    gates,
+    phases: (Array.isArray(obj.phases) ? obj.phases : [])
+      .map(normalizeJevPhaseTrace).filter((phase): phase is JevPhaseTrace => phase !== null),
+    revision: normalizeJevRevisionTrace(obj.revision),
+  };
+}
+
+export function makeJevDiagnostics(patch: Partial<JevTurnDiagnostics> = {}): JevTurnDiagnostics {
+  return {
+    used: false,
+    enabled: false,
+    provider: null,
+    model: null,
+    resolvedModel: null,
+    status: "skipped",
+    error: null,
+    requestCount: 0,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+    gatePhaseMs: null,
+    verifyPhaseMs: null,
+    gateCount: 0,
+    fallbackCount: 0,
+    escalatedCount: 0,
+    stateChars: 0,
+    stateCompacted: false,
+    gates: [],
+    phases: [],
+    revision: null,
+    ...patch,
+  };
+}
+
+export function summarizeJevDiagnostics(diagnostics: JevTurnDiagnostics | null | undefined): string | null {
+  if (!diagnostics || !diagnostics.used) return null;
+  const parts = [
+    `${diagnostics.gateCount} gate${diagnostics.gateCount === 1 ? "" : "s"}`,
+    diagnostics.requestCount ? `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}` : null,
+    diagnostics.fallbackCount ? `${diagnostics.fallbackCount} fallback${diagnostics.fallbackCount === 1 ? "" : "s"}` : null,
+    diagnostics.escalatedCount ? `${diagnostics.escalatedCount} escalated` : null,
+    diagnostics.status === "degraded" ? "degraded" : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function normalizeSettings(value: unknown): LumiWorldSettings {
   const obj = asRecord(value);
+  const includeWorldInfoEntries = typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries;
+  const includeUserPersona = typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona;
+  const includeCharacter = typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter;
   const storedSystemTemplate = cleanString(obj.systemTemplate, DEFAULT_SYSTEM_TEMPLATE);
   const storedUserTemplate = cleanString(obj.userTemplate, DEFAULT_USER_TEMPLATE);
-  const systemTemplate =
+  const legacySystemTemplate =
     !storedSystemTemplate ||
     storedSystemTemplate === LEGACY_DEFAULT_SYSTEM_TEMPLATE ||
     storedSystemTemplate === PREVIOUS_DEFAULT_SYSTEM_TEMPLATE ||
-    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE
+    storedSystemTemplate === PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE ||
+    storedSystemTemplate === PRE_THREAD_LABEL_DEFAULT_SYSTEM_TEMPLATE
       ? DEFAULT_SYSTEM_TEMPLATE
       : storedSystemTemplate;
-  const userTemplate =
+  const legacyUserTemplate =
     !storedUserTemplate ||
     storedUserTemplate === LEGACY_DEFAULT_USER_TEMPLATE ||
     storedUserTemplate === PREVIOUS_DEFAULT_USER_TEMPLATE ||
@@ -369,23 +972,60 @@ export function normalizeSettings(value: unknown): LumiWorldSettings {
       ? DEFAULT_USER_TEMPLATE
       : storedUserTemplate;
 
+  const promptPresets: PromptPreset[] = [];
+  const seenPresetIds = new Set<string>();
+  if (Array.isArray(obj.promptPresets)) {
+    for (const value of obj.promptPresets) {
+      if (promptPresets.length >= 20) break;
+      const preset = asRecord(value);
+      const id = cleanString(preset.id);
+      const name = cleanString(preset.name);
+      const system = cleanString(preset.systemTemplate) || DEFAULT_SYSTEM_TEMPLATE;
+      const user = cleanString(preset.userTemplate) || DEFAULT_USER_TEMPLATE;
+      if (!id || id === BUILTIN_PROMPT_PRESET_ID || id.length > 80 || seenPresetIds.has(id)
+        || !name || name.length > 80) continue;
+      promptPresets.push({ id, name, systemTemplate: system, userTemplate: user });
+      seenPresetIds.add(id);
+    }
+  }
+  const requestedPresetId = cleanString(obj.activePromptPresetId);
+  let activePromptPresetId = seenPresetIds.has(requestedPresetId)
+    ? requestedPresetId : BUILTIN_PROMPT_PRESET_ID;
+  // Older settings had one editable pair. Preserve that work as the first
+  // named preset instead of discarding it when the built-in pair is selected.
+  if (!requestedPresetId && !Array.isArray(obj.promptPresets)
+    && (legacySystemTemplate !== DEFAULT_SYSTEM_TEMPLATE || legacyUserTemplate !== DEFAULT_USER_TEMPLATE)) {
+    promptPresets.push({ id: "imported", name: "Previous custom prompt",
+      systemTemplate: legacySystemTemplate, userTemplate: legacyUserTemplate });
+    activePromptPresetId = "imported";
+  }
+  const selectedPreset = promptPresets.find((preset) => preset.id === activePromptPresetId);
+  const systemTemplate = selectedPreset?.systemTemplate ?? DEFAULT_SYSTEM_TEMPLATE;
+  const userTemplate = selectedPreset?.userTemplate ?? DEFAULT_USER_TEMPLATE;
+
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_SETTINGS.enabled,
     connectionId: cleanNullableString(obj.connectionId),
     modelOverride: cleanString(obj.modelOverride),
+    strongConnectionId: cleanNullableString(obj.strongConnectionId),
+    strongModelOverride: cleanString(obj.strongModelOverride),
     temperature: numberInRange(obj.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
-    maxTokens: integerInRange(obj.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, MAX_CONTROLLER_OUTPUT_TOKENS),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, MAX_DIRECTOR_TIMEOUT_MS),
     maxInputChars: integerInRange(obj.maxInputChars, DEFAULT_SETTINGS.maxInputChars, 4000, 500000),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_SETTINGS.historyMessageLimit, 0, MAX_CHAT_HISTORY_MESSAGES),
-    includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : DEFAULT_SETTINGS.includeWorldInfoEntries,
-    includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : DEFAULT_SETTINGS.includeUserPersona,
-    includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : DEFAULT_SETTINGS.includeCharacter,
+    includeWorldInfoEntries,
+    includeUserPersona,
+    includeCharacter,
     generationTypes: normalizeGenerationTypes(obj.generationTypes),
     additionalNotes: cleanString(obj.additionalNotes),
     systemTemplate,
     userTemplate,
+    activePromptPresetId,
+    promptPresets,
     runLogLimit: integerInRange(obj.runLogLimit, DEFAULT_SETTINGS.runLogLimit, 0, 50),
+    jev: normalizeJevSettings(obj.jev, obj.jev && typeof obj.jev === "object"
+      ? { includeWorldInfoEntries, includeUserPersona, includeCharacter }
+      : DEFAULT_SETTINGS),
   };
 }
 
@@ -407,6 +1047,7 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         action: cleanNullableString(obj.action),
         generationType: cleanNullableString(obj.generationType),
         durationMs: obj.durationMs == null ? null : numberInRange(obj.durationMs, 0, 0, Number.MAX_SAFE_INTEGER),
+        directorDurationMs: obj.directorDurationMs == null ? null : numberInRange(obj.directorDurationMs, 0, 0, Number.MAX_SAFE_INTEGER),
         connectionId: cleanNullableString(obj.connectionId),
         connectionName: cleanNullableString(obj.connectionName),
         model: cleanNullableString(obj.model),
@@ -416,6 +1057,8 @@ export function normalizeRunLog(value: unknown, limit = DEFAULT_RUN_LOG_LIMIT): 
         worldInfoFetchedCount: obj.worldInfoFetchedCount == null ? null : integerInRange(obj.worldInfoFetchedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFallbackTaggedCount: obj.worldInfoFallbackTaggedCount == null ? null : integerInRange(obj.worldInfoFallbackTaggedCount, 0, 0, Number.MAX_SAFE_INTEGER),
         worldInfoFetchError: cleanNullableString(obj.worldInfoFetchError),
+        jev: normalizeJevTurnDiagnostics(obj.jev),
+        trace: normalizeTurnTrace(obj.trace),
       };
     })
     .filter((item): item is RunLogEntry => !!item)
@@ -680,6 +1323,25 @@ export function selectChatHistoryMessagesForController(messages: LlmMessageLike[
   return messages.filter(isChatHistoryMessage).slice(-cappedLimit);
 }
 
+export function latestPlayerChatMessage(messages: LlmMessageLike[]): LlmMessageLike | null {
+  return messages.filter((message) => message.role === "user" && isChatHistoryMessage(message)).at(-1) ?? null;
+}
+
+/** Preserve the latest saved player action even when the normal chat-history window trims it. */
+export function currentUserContextMessages(messages: LlmMessageLike[], maxChars: number): LlmMessageLike[] {
+  const latest = latestPlayerChatMessage(messages);
+  const actionCap = Math.max(500, Math.min(40000, Math.floor(maxChars * 0.35)));
+  const lastAction = latest ? serializeMessageContent(latest.content).trim() : "";
+  const out: LlmMessageLike[] = [];
+  if (lastAction) {
+    const marker = "\n[... middle of long player message omitted ...]\n";
+    const action = lastAction.length <= actionCap ? lastAction
+      : `${lastAction.slice(0, Math.floor((actionCap - marker.length) * 0.6))}${marker}${lastAction.slice(-Math.floor((actionCap - marker.length) * 0.4))}`;
+    out.push({ role: "user", content: `Latest completed player chat action (preserve its actor, target, and events exactly):\n${action}` });
+  }
+  return out;
+}
+
 export function selectControllerMessagesForController(
   messages: LlmMessageLike[],
   settings: LumiWorldSettings,
@@ -779,13 +1441,16 @@ export function buildControllerMessages(
     chatId: context.chatId,
     connectionId: context.connectionId,
     timestamp: context.timestamp || new Date().toISOString(),
-    maxDirectiveChars: String(MAX_DIRECTIVE_CHARS),
+    maxDirectiveChars: "no fixed limit",
     // Notes are sent as their own controller-only message; keep the legacy token empty to avoid duplication.
     additionalNotes: "",
     user: identity.userName,
     char: identity.characterName,
   };
-  const renderedSystem = renderTemplate(settings.systemTemplate, vars);
+  const renderedSystem = [
+    renderTemplate(settings.systemTemplate, vars),
+    "Current-scene authority: Only marked chat history establishes what has happened, where the scene is, and who is present. Character, persona, and World Info context are background reference, not a record of current events. Derived scene state is advisory and must yield to the chat if stale. The latest completed player chat action already happened exactly as written: preserve its actor, target, objects, and outcome. Start after that action; never rewind it, redirect it to another target, or give its objects to another character without a new on-scene event. If other context conflicts with chat, follow the chat.",
+  ].join("\n\n");
   const renderedUser = renderTemplate(settings.userTemplate, vars);
   const messages: LlmMessageLike[] = [{ role: "system", content: renderedSystem }];
   if (additionalNotes) {
@@ -824,17 +1489,16 @@ function findJsonObject(value: string): unknown | null {
   }
 }
 
-function normalizeDirectiveText(value: string, maxChars: number): string | null {
+function normalizeDirectiveText(value: string): string | null {
   const normalized = value
     .replace(/\r/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (!normalized) return null;
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+  return normalized;
 }
 
-export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
+export function parseControllerDirective(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const stripped = stripCodeFence(raw);
   const parsed = findJsonObject(stripped);
@@ -853,12 +1517,13 @@ export function parseControllerDirective(raw: unknown, maxChars = MAX_DIRECTIVE_
       "content",
     ];
     for (const key of keys) {
-      if (typeof obj[key] === "string") return normalizeDirectiveText(obj[key] as string, maxChars);
+      if (typeof obj[key] === "string") return normalizeDirectiveText(obj[key] as string);
     }
+    if ("thread_label" in obj) return null;
     const firstString = Object.values(obj).find((value): value is string => typeof value === "string" && value.trim().length > 0);
-    if (firstString) return normalizeDirectiveText(firstString, maxChars);
+    if (firstString) return normalizeDirectiveText(firstString);
   }
-  return normalizeDirectiveText(stripped, maxChars);
+  return normalizeDirectiveText(stripped);
 }
 
 function readStringAtPath(value: unknown, path: Array<string | number>): string | null {
@@ -982,14 +1647,25 @@ export function describeEmptyControllerResponse(response: unknown): string {
   ].join(" ");
 }
 
-export function parseControllerDirectiveFromResponse(response: unknown, maxChars = MAX_DIRECTIVE_CHARS): string | null {
-  return parseControllerDirective(extractControllerResponseText(response), maxChars);
+export function parseControllerDirectiveFromResponse(response: unknown): string | null {
+  return parseControllerDirective(extractControllerResponseText(response));
+}
+
+/** Optional structured thread name; plain-text Director replies do not create threads. */
+export function parseControllerThreadLabelFromResponse(response: unknown): string | null {
+  const raw = extractControllerResponseText(response);
+  if (!raw) return null;
+  const parsed = findJsonObject(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const label = (parsed as Record<string, unknown>).thread_label;
+  return typeof label === "string" ? label : null;
 }
 
 export function buildInjectedDirective(directive: string): string {
   return [
     "[LumiWorld Director]",
     "Use this private world-state directive to guide the next visible reply. Do not mention LumiWorld, the controller, or this note.",
+    "The saved chat history is authoritative for the current scene and completed player actions. Treat this note as a suggestion only where it agrees with that history. Do not change the player's actor, target, objects, or completed outcome, and do not import a different scene from character background or an opening message.",
     "",
     directive.trim(),
   ].join("\n");

@@ -1,8 +1,13 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
-import { DEFAULT_SETTINGS, VISIBLE_GENERATION_TYPES, normalizeSettings, type LumiWorldSettings, type ConnectionOption } from "./shared";
+import {
+  BUILTIN_PROMPT_PRESET_ID, DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
+  type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord, type JevPhaseTrace,
+  type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type RunLogEntry,
+} from "./shared";
+import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0-experimental";
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 const LABELS: Record<string, string> = {
   normal: "New reply", continue: "Continue", regenerate: "Regenerate", swipe: "Swipe", impersonate: "Impersonate",
@@ -17,6 +22,21 @@ const CSS = `
 .lw-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:12px; color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
 .lw-icon svg { width:25px; height:25px; }
 .lw-title { margin:0; font-size:22px; line-height:1.2; font-weight:650; letter-spacing:-.5px; }
+.lw-title-row { display:flex; align-items:center; gap:8px; }
+.lw-tabs { position:sticky; top:0; z-index:2; display:flex; gap:2px; margin:2px 0 16px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-surface-raised); backdrop-filter:blur(8px); }
+.lw-tab { position:relative; flex:1 1 0; display:flex; align-items:center; justify-content:center; min-width:0; min-height:34px; padding:6px 10px; border:0; border-radius:7px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,color .15s; }
+.lw-tab-content { display:inline-flex; align-items:center; gap:7px; min-width:0; max-width:100%; }
+.lw-tab-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lw-tab-dot { flex:none; width:6px; height:6px; border-radius:50%; }
+.lw-tab:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-tab[aria-selected="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
+.lw-tab:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+
+.lw-view-head { display:grid; gap:6px; margin:0 0 16px; }
+.lw-view-title { margin:0; font-size:15px; font-weight:650; letter-spacing:-.2px; }
+.lw-view-intro { margin:0; color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
+.lw-panel-view { display:grid; gap:0; }
+.lw-panel-view[hidden] { display:none; }
 .lw-status { display:flex; align-items:center; gap:6px; margin-top:4px; color:var(--lumiverse-text-muted); font-size:12px; }
 .lw-status::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--lumiverse-text-muted); }
 .lw-status[data-tone="success"]::before { background:var(--lumiverse-success); }
@@ -38,9 +58,12 @@ const CSS = `
 .lw-input, .lw-textarea, .lw-select { width:100%; min-height:38px; padding:9px 11px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:inherit; }
 .lw-input::placeholder, .lw-textarea::placeholder { color:var(--lumiverse-text-muted); opacity:1; }
 .lw-input:disabled { cursor:not-allowed; }
+.lw-template[readonly] { opacity:.75; cursor:default; }
 .lw-textarea { min-height:90px; resize:vertical; }
 .lw-template { min-height:200px; font:12px/1.6 var(--lumiverse-font-mono,monospace); }
 .lw-actions { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+.lw-preset-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }
+.lw-preset-actions .lw-button { flex:1 1 140px; }
 .lw-test-hint { text-align:center; font-size:11px; }
 .lw-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:38px; padding:8px 12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); color:var(--lumiverse-text); background:var(--lumiverse-fill-subtle); font:inherit; font-weight:600; cursor:pointer; }
 .lw-button:hover:not(:disabled) { background:var(--lumiverse-fill-hover); }
@@ -83,9 +106,118 @@ const CSS = `
 .lw-footer-status { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .lw-loading { padding:16px 0; color:var(--lumiverse-text-muted); }
 .lw-root :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:3px; }
+/* --- Pills ---------------------------------------------------------- */
+.lw-badge { display:inline-flex; align-items:center; gap:5px; min-height:20px; padding:1px 8px; border:1px solid var(--lumiverse-border); border-radius:999px; color:var(--lumiverse-text-muted); background:var(--lumiverse-fill-subtle); font-size:10.5px; font-weight:550; letter-spacing:.01em; white-space:nowrap; }
+.lw-badge[data-tone="success"] { border-color:var(--lumiverse-success); color:var(--lumiverse-success); }
+.lw-badge[data-tone="warning"] { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
+.lw-badge[data-tone="error"] { border-color:var(--lumiverse-danger); color:var(--lumiverse-danger); }
+.lw-badge[data-tone="primary"] { border-color:var(--lumiverse-primary-muted); color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); }
+.lw-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--lumiverse-text-muted); }
+.lw-badge[data-tone="success"] .lw-dot { background:var(--lumiverse-success); }
+.lw-badge[data-tone="warning"] .lw-dot { background:var(--lumiverse-warning); }
+.lw-badge[data-tone="error"] .lw-dot { background:var(--lumiverse-danger); }
+.lw-badge[data-tone="primary"] .lw-dot { background:var(--lumiverse-primary); }
+
+/* --- Jev panel ------------------------------------------------------ */
+.lw-panel { display:grid; gap:14px; margin:0 0 16px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius-lg,12px); background:var(--lumiverse-surface-raised); }
+.lw-panel[data-active="true"] { border-color:var(--lumiverse-primary-muted); }
+.lw-panel-soon { color:var(--lumiverse-text-muted); font-size:12px; line-height:1.55; }
+.lw-stack { display:grid; gap:12px; }
+.lw-control-card { display:grid; gap:12px; padding:12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-fill-subtle); }
+.lw-control-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.lw-control-title { font-size:12px; font-weight:600; }
+
+/* --- Segmented provider control ------------------------------------- */
+.lw-segments { display:flex; gap:4px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); }
+.lw-segment { flex:1 1 0; min-width:0; min-height:30px; padding:5px 10px; border:0; border-radius:6px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12px; font-weight:550; cursor:pointer; transition:background .15s,color .15s; }
+.lw-segment:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-segment[aria-pressed="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
+.lw-segment:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+.lw-provider-note { font-size:11px; }
+.lw-provider-note a { color:var(--lumiverse-primary-text); }
+
+/* --- Key row -------------------------------------------------------- */
+.lw-key-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; }
+
+/* --- Gates ---------------------------------------------------------- */
+.lw-gate-body { display:grid; gap:6px; }
+.lw-cat-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
+.lw-cat-head:first-child { margin-top:0; }
+.lw-cat-title { display:flex; align-items:baseline; gap:7px; font-size:11px; font-weight:650; letter-spacing:.07em; text-transform:uppercase; color:var(--lumiverse-text-muted); }
+.lw-cat-head .lw-button { min-height:24px; padding:1px 8px; font-size:10.5px; font-weight:600; }
+.lw-gate { display:grid; gap:0; margin-bottom:2px; border:1px solid transparent; border-radius:9px; }
+.lw-gate[data-on="true"] { border-color:var(--lumiverse-border); background:var(--lumiverse-fill-subtle); }
+.lw-gate[data-open="true"] { border-color:var(--lumiverse-primary-muted); background:var(--lumiverse-surface-raised); }
+.lw-gate[data-custom="true"][data-on="true"] { box-shadow:inset 3px 0 0 var(--lumiverse-primary); }
+.lw-gate-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:10px; padding:7px 10px; }
+.lw-gate-copy { display:grid; gap:1px; min-width:0; }
+.lw-gate-name { font-size:12.5px; font-weight:550; }
+.lw-gate[data-on="false"] .lw-gate-name { color:var(--lumiverse-text-muted); font-weight:450; }
+.lw-gate-meta { color:var(--lumiverse-text-muted); font-size:10.5px; }
+.lw-gate-meta code { font-family:var(--lumiverse-font-mono,monospace); font-size:10.5px; }
+.lw-gate-caret { display:grid; place-items:center; width:22px; height:22px; padding:0; border:1px solid var(--lumiverse-border); border-radius:6px; color:var(--lumiverse-text-muted); background:var(--lumiverse-fill-subtle); font:inherit; font-size:10px; cursor:pointer; }
+.lw-gate-caret:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
+.lw-gate-caret:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
+.lw-gate-sheet { display:grid; gap:10px; padding:2px 14px 13px; }
+.lw-sheet-label { display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:11px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--lumiverse-text-muted); }
+.lw-sheet-copy { color:var(--lumiverse-text-muted); font-size:11.5px; line-height:1.5; }
+
+/* --- Diagnostics ---------------------------------------------------- */
+.lw-diag { display:grid; gap:12px; }
+.lw-diag-outcome { padding:10px 12px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); font-size:12px; line-height:1.5; }
+.lw-diag-time { color:var(--lumiverse-text-muted); font-size:11px; }
+.lw-diag-strip { display:flex; flex-wrap:wrap; gap:5px; }
+.lw-diag-unused { border-top:1px solid var(--lumiverse-border); padding-top:10px; }
+.lw-diag-unused > summary { color:var(--lumiverse-text-muted); cursor:pointer; font-size:12px; font-weight:600; }
+.lw-diag-unused > .lw-hint { margin:8px 0; }
+.lw-diag-unused .lw-diag-list { margin-top:8px; }
+.lw-diag-list { display:grid; gap:4px; max-height:360px; overflow:auto; }
+.lw-diag-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:4px 10px; padding:8px 10px; border:1px solid var(--lumiverse-border); border-radius:8px; background:var(--lumiverse-fill-subtle); }
+.lw-diag-row[data-flag="true"] { border-left:3px solid var(--lumiverse-warning); }
+.lw-diag-row[data-on="false"] { opacity:.65; }
+.lw-diag-head { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; min-width:0; }
+.lw-diag-name { font-size:12px; font-weight:600; }
+.lw-diag-value { flex:none; padding:1px 7px; border:1px solid var(--lumiverse-border); border-radius:6px; background:var(--lumiverse-input-bg); font-family:var(--lumiverse-font-mono,monospace); font-size:10.5px; }
+.lw-diag-row[data-flag="true"] .lw-diag-value { border-color:var(--lumiverse-warning); color:var(--lumiverse-warning); }
+.lw-diag-meta { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
+.lw-diag-note { grid-column:1 / -1; color:var(--lumiverse-text-muted); font-size:11px; line-height:1.45; }
+.lw-diag-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.lw-diag-toolbar .lw-button { min-height:28px; padding:4px 9px; font-size:11px; }
+.lw-diag-step { display:grid; gap:8px; padding:10px; border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill-subtle); }
+.lw-diag-step:not([open]) > :not(summary), .lw-diag-raw:not([open]) > :not(summary), .lw-diag-evidence:not([open]) > :not(summary) { display:none; }
+.lw-diag-step > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; list-style:none; cursor:pointer; font-size:12px; font-weight:650; }
+.lw-diag-step > summary::-webkit-details-marker { display:none; }
+.lw-diag-step-title { min-width:0; }
+.lw-diag-step-meta { color:var(--lumiverse-text-muted); font-size:10.5px; font-weight:450; text-align:right; }
+.lw-diag-step .lw-diag-list { max-height:420px; }
+.lw-diag-raw { border-top:1px solid var(--lumiverse-border); padding-top:7px; }
+.lw-diag-raw > summary, .lw-diag-evidence > summary { color:var(--lumiverse-text-muted); cursor:pointer; font-size:11px; }
+.lw-diag-raw pre, .lw-diag-evidence pre { max-height:300px; margin:7px 0 0; padding:9px; overflow:auto; border-radius:6px; background:var(--lumiverse-input-bg); color:var(--lumiverse-text); font:10.5px/1.5 var(--lumiverse-font-mono,monospace); white-space:pre-wrap; overflow-wrap:anywhere; }
+.lw-diag-evidence { grid-column:1 / -1; }
+.lw-diag-step .lw-diag-row { background:var(--lumiverse-surface-raised); }
+.lw-diag-copy-status { color:var(--lumiverse-text-muted); font-size:11px; }
+.lw-gate-reset { justify-self:start; }
+
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
+
+const GATE_FALLBACKS: readonly GateFallback[] = [
+  "run", "skip", "accept", "retry", "patch", "soften", "drop", "hold", "none", "ignore",
+];
+
+const GATE_FALLBACK_LABELS: Record<GateFallback, string> = {
+  run: "Run the Director ungated",
+  skip: "Skip the Director",
+  accept: "Accept the draft",
+  retry: "Regenerate once",
+  patch: "Rewrite the part that infringes",
+  soften: "Soften the directive",
+  drop: "Drop the claim",
+  hold: "Hold the beat",
+  none: "Record only",
+  ignore: "Ignore the answer",
+};
 
 type MountedHandle = { destroy(): void };
 type Notice = { tone: "info" | "success" | "warning" | "error"; text: string };
@@ -132,6 +264,87 @@ function button(label: string, handler: () => void, primary = false): HTMLButton
   return node;
 }
 
+function textInput(value: string, placeholder: string, ariaLabel: string, onInput: (next: string) => void): HTMLInputElement {
+  const input = el("input", "lw-input");
+  input.type = "text";
+  input.value = value;
+  input.placeholder = placeholder;
+  input.setAttribute("aria-label", ariaLabel);
+  input.addEventListener("input", () => onInput(input.value));
+  return input;
+}
+
+const CHEVRON_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 4 4-4 4"/></svg>';
+
+interface CollapsibleOptions {
+  title: string;
+  badge?: string;
+  badgeTone?: "neutral" | "primary" | "success" | "warning" | "error";
+  expanded: boolean;
+  onToggle: (expanded: boolean) => void;
+  className?: string;
+}
+
+/**
+ * A self-owned collapsible section.
+ *
+ * The host's `mountCollapsibleSection` is preferred when the drawer can mount it,
+ * but its chrome is subject to host registration timing, so this stands in as the
+ * default and gives LumiWorld full control over the header, badge, and body.
+ */
+function collapsible(options: CollapsibleOptions, build: (body: HTMLElement) => void): HTMLElement {
+  const details = el("details", `lw-details${options.className ? ` ${options.className}` : ""}`);
+  details.open = options.expanded;
+  details.addEventListener("toggle", () => options.onToggle(details.open));
+
+  const summary = el("summary");
+  const copy = el("span", "lw-summary-copy");
+  copy.append(el("span", undefined, options.title));
+  summary.append(copy);
+  if (options.badge) {
+    const badge = el("span", "lw-badge", options.badge);
+    if (options.badgeTone && options.badgeTone !== "neutral") badge.dataset.tone = options.badgeTone;
+    summary.append(badge);
+  }
+  details.append(summary);
+
+  const body = el("div", "lw-details-body");
+  build(body);
+  details.append(body);
+  return details;
+}
+
+/** A small status pill: a coloured dot plus a label. */
+function pill(text: string, tone: "neutral" | "success" | "warning" | "error" | "primary" = "neutral"): HTMLElement {
+  const badge = el("span", "lw-badge");
+  if (tone !== "neutral") badge.dataset.tone = tone;
+  badge.append(el("span", "lw-dot"), el("span", undefined, text));
+  return badge;
+}
+
+/**
+ * A segmented control. The host's `mountSelect` renders a collapsed dropdown;
+ * two options read better as visible segments.
+ */
+function segmented(
+  value: string,
+  options: Array<{ value: string; label: string }>,
+  ariaLabel: string,
+  onChange: (next: string) => void,
+): HTMLElement {
+  const group = el("div", "lw-segments");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", ariaLabel);
+  for (const option of options) {
+    const node = el("button", "lw-segment", option.label);
+    node.type = "button";
+    node.setAttribute("aria-pressed", String(option.value === value));
+    node.addEventListener("click", () => { if (option.value !== value) onChange(option.value); });
+    group.append(node);
+  }
+  return group;
+}
+
 function activeChat(ctx: SpindleFrontendContext): { chatId: string | null; characterId: string | null } {
   try { return ctx.getActiveChat(); }
   catch { return { chatId: null, characterId: null }; }
@@ -149,9 +362,29 @@ export function setup(ctx: SpindleFrontendContext) {
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let testPending = false;
+  let jevTestPending = false;
+  let jevKeyDraft = "";
   let advancedOpen = false;
   let templatesOpen = false;
+  let pendingPresetDeleteId: string | null = null;
   let notesOpen = false;
+  let jevOpen = false;
+  let jevAdvancedOpen = false;
+  let gatesOpen = false;
+  /** Gate ids whose detail sheet is expanded. Survives re-renders. */
+  const openGates = new Set<string>();
+  type LumiTab = "director" | "jev";
+  let activeTab: LumiTab = "director";
+  /** Header parts re-targeted on every view switch. */
+  /** The header and its switch survive every re-render. */
+  let headerElement: HTMLElement | null = null;
+  let headerTitle: HTMLElement | null = null;
+  let headerToggleSlot: HTMLElement | null = null;
+  let headerToggleHandle: MountedHandle | null = null;
+  /** Which view's setting the header switch currently drives. */
+  let headerMountedTab: LumiTab | null = null;
+  let headerMountedEnabled: boolean | null = null;
+  let diagnosticsOpen = false;
   let nextFieldId = 0;
 
   cleanups.push(ctx.dom.addStyle(CSS));
@@ -166,6 +399,13 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function destroyHandles(): void {
+    // The header toggle is rebuilt on every view switch, so it is tracked apart
+    // from the per-render handles to avoid destroying a live control twice.
+    if (headerToggleHandle) {
+      const index = handles.indexOf(headerToggleHandle);
+      if (index !== -1) handles.splice(index, 1);
+      headerToggleHandle = null;
+    }
     while (handles.length) try { handles.pop()?.destroy(); } catch { /* Host may already have detached a control. */ }
   }
 
@@ -231,7 +471,14 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function mutate(patch: Partial<LumiWorldSettings>, rerender = false): void {
+    const previous = normalizeFrontendSettings(draft);
     draft = normalizeFrontendSettings({ ...draft, ...patch });
+    // A re-render triggered by pure UI state (an opened gate sheet, a mode toggle)
+    // holds no settings change, so it must not queue a write.
+    if (JSON.stringify(previous) === JSON.stringify(draft)) {
+      if (rerender) render();
+      return;
+    }
     queue.markDirty();
     scheduleSave();
     const notesHint = drawer.root.querySelector<HTMLElement>("[data-lw-notes-hint]");
@@ -270,52 +517,66 @@ export function setup(ctx: SpindleFrontendContext) {
     return row;
   }
 
-  function connectionField(): HTMLElement {
+  function connectionField(strong = false): HTMLElement {
     const slot = el("div", "lw-control");
+    const connectionId = strong ? draft.strongConnectionId : draft.connectionId;
     const options = (state?.connections ?? []).map((connection) => ({
       value: connection.id, label: connection.name || connection.id,
       sublabel: [connection.provider, connection.model, connection.hasApiKey ? null : "No API key"].filter(Boolean).join(" · "),
       group: connection.provider || "Connections",
     }));
-    if (draft.connectionId && !options.some((option) => option.value === draft.connectionId)) {
-      options.unshift({ value: draft.connectionId, label: "Saved connection unavailable", sublabel: draft.connectionId, group: "Unavailable" });
+    if (connectionId && !options.some((option) => option.value === connectionId)) {
+      options.unshift({ value: connectionId, label: "Saved connection unavailable", sublabel: connectionId, group: "Unavailable" });
     }
+    const change = (value: string) => strong
+      ? mutate({ strongConnectionId: value || null, strongModelOverride: "" }, true)
+      : mutate({ connectionId: value || null, modelOverride: "" }, true);
+    const placeholder = strong ? "Same as default connection" : "Select connection…";
     const fallback = () => {
       const select = el("select", "lw-select");
-      select.appendChild(new Option("Select connection…", ""));
+      select.setAttribute("aria-label", strong ? "Strong Director connection" : "Director connection");
+      select.appendChild(new Option(placeholder, ""));
       for (const option of options) select.appendChild(new Option(option.label, option.value));
-      select.value = draft.connectionId ?? "";
-      select.addEventListener("change", () => mutate({ connectionId: select.value || null, modelOverride: "" }, true));
+      select.value = connectionId ?? "";
+      select.addEventListener("change", () => change(select.value));
       slot.replaceChildren(select);
     };
     if (ctx.components?.mountSelect) queueMount(() => ctx.components.mountSelect(slot, {
-      value: draft.connectionId ?? "", options, placeholder: "Select connection…",
+      value: connectionId ?? "", options, placeholder,
       searchPlaceholder: "Search connections…", emptyMessage: state?.connectionError || "No LLM connections found.",
-      clearable: true, clearLabel: "No connection", ariaLabel: "Director connection",
-      onChange: (value: string) => mutate({ connectionId: value || null, modelOverride: "" }, true),
+      clearable: true, clearLabel: strong ? "Same as default connection" : "No connection",
+      ariaLabel: strong ? "Strong Director connection" : "Director connection",
+      onChange: change,
     }), fallback);
     else fallback();
-    return field("Connection", slot);
+    return field(strong ? "Strong connection" : "Connection", slot);
   }
 
-  function modelField(): HTMLElement {
+  function modelField(strong = false): HTMLElement {
     const slot = el("div", "lw-control");
-    const selected = state?.connections.find((item) => item.id === draft.connectionId);
+    const selected = state?.connections.find((item) => item.id === (strong ? draft.strongConnectionId || draft.connectionId : draft.connectionId));
+    const value = strong ? draft.strongModelOverride : draft.modelOverride;
+    const placeholder = strong && !draft.strongConnectionId ? draft.modelOverride || selected?.model : selected?.model;
+    const change = (next: string) => strong ? mutate({ strongModelOverride: next }) : mutate({ modelOverride: next });
     const fallback = () => {
       const input = el("input", "lw-input"); input.type = "text";
-      input.placeholder = selected?.model || "Model ID"; input.value = draft.modelOverride; input.disabled = !selected;
-      input.setAttribute("aria-label", "Director model");
-      input.addEventListener("input", () => mutate({ modelOverride: input.value }));
+      input.placeholder = placeholder || "Model ID"; input.value = value; input.disabled = !selected;
+      input.setAttribute("aria-label", strong ? "Strong Director model" : "Director model");
+      input.addEventListener("input", () => change(input.value));
       slot.replaceChildren(input);
     };
     if (selected && ctx.components?.mountModelCombobox) queueMount(() => ctx.components.mountModelCombobox(slot, {
-      value: draft.modelOverride, connection: { kind: "llm", id: selected.id },
-      appearance: "standard", placeholder: selected.model || "Model ID",
-      browseHint: selected.model ? `Connection default: ${selected.model}` : "Choose a model for this connection.",
-      onChange: (value: string) => mutate({ modelOverride: value }),
+      value, connection: { kind: "llm", id: selected.id },
+      appearance: "standard", placeholder: placeholder || "Model ID",
+      browseHint: placeholder ? `Current default: ${placeholder}` : "Choose a model for this connection.",
+      onChange: change,
     }), fallback);
     else fallback();
-    return field("Model", slot, selected?.model ? "Leave blank to use the connection’s default." : selected ? "Choose a model for this connection." : "Select a connection to choose a model.");
+    const hint = strong
+      ? !selected ? "Select the default Director connection first." : draft.strongConnectionId
+        ? "Leave blank to use this connection’s default model." : "Leave blank to use the default Director model above."
+      : selected?.model ? "Leave blank to use the connection’s default." : selected ? "Choose a model for this connection." : "Select a connection to choose a model.";
+    return field(strong ? "Strong model" : "Model", slot, hint);
   }
 
   function numberField(label: string, key: keyof LumiWorldSettings, value: number, min: number, max: number, step: number, hint?: string): HTMLElement {
@@ -339,13 +600,796 @@ export function setup(ctx: SpindleFrontendContext) {
     const input = el("textarea", `lw-textarea${key === "additionalNotes" ? "" : " lw-template"}`);
     input.value = value;
     if (key === "additionalNotes") input.placeholder = "What should the Director keep in mind?";
+    else input.readOnly = draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID;
     input.spellcheck = key === "additionalNotes";
-    input.addEventListener("input", () => mutate({ [key]: input.value }));
+    input.addEventListener("input", () => key === "additionalNotes"
+      ? mutate({ additionalNotes: input.value })
+      : editPromptPreset(key, input.value));
     return field(label, input, hint);
+  }
+
+  function editPromptPreset(key: "systemTemplate" | "userTemplate", value: string): void {
+    if (draft.activePromptPresetId === BUILTIN_PROMPT_PRESET_ID) return;
+    mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === draft.activePromptPresetId
+      ? { ...preset, [key]: value } : preset) });
+  }
+
+  function createPromptPreset(): void {
+    if (draft.promptPresets.length >= 20) return;
+    const names = new Set(draft.promptPresets.map((preset) => preset.name));
+    let number = 1;
+    while (names.has(`Preset ${number}`)) number++;
+    const preset: PromptPreset = {
+      id: `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name: `Preset ${number}`,
+      systemTemplate: draft.systemTemplate,
+      userTemplate: draft.userTemplate,
+    };
+    pendingPresetDeleteId = null;
+    mutate({ promptPresets: [...draft.promptPresets, preset], activePromptPresetId: preset.id }, true);
+  }
+
+  function choosePromptPreset(id: string): void {
+    pendingPresetDeleteId = null;
+    mutate({ activePromptPresetId: id }, true);
+  }
+
+  function deletePromptPreset(id: string): void {
+    if (pendingPresetDeleteId !== id) {
+      pendingPresetDeleteId = id;
+      render();
+      return;
+    }
+    pendingPresetDeleteId = null;
+    mutate({ promptPresets: draft.promptPresets.filter((preset) => preset.id !== id),
+      activePromptPresetId: BUILTIN_PROMPT_PRESET_ID }, true);
   }
 
   function selectedConnection(): ConnectionOption | null {
     return state?.connections.find((item) => item.id === draft.connectionId) ?? null;
+  }
+
+  /* ---------------- Jev ---------------- */
+
+  function providerInfo(): typeof JEV_PROVIDERS.typesafe {
+    return JEV_PROVIDERS[draft.jev.provider];
+  }
+
+  function hasJevKey(): boolean {
+    return !!state?.hasJevKey;
+  }
+
+  function canTestJev(): boolean {
+    if (!state?.permissions.corsProxy) return false;
+    if (jevKeyDraft.trim()) return true;
+    return hasJevKey();
+  }
+
+  function selectControl(value: string, options: Array<{ value: string; label: string }>, ariaLabel: string, onChange: (next: string) => void): HTMLElement {
+    const slot = el("div", "lw-control");
+    const select = el("select", "lw-select");
+    for (const option of options) select.appendChild(new Option(option.label, option.value));
+    select.value = value;
+    select.setAttribute("aria-label", ariaLabel);
+    select.addEventListener("change", () => onChange(select.value));
+    slot.appendChild(select);
+    return slot;
+  }
+
+  function numberInput(value: number, min: number, max: number, step: number, ariaLabel: string, onChange: (next: number) => void): HTMLInputElement {
+    const input = el("input", "lw-input");
+    input.type = "number";
+    input.value = String(value);
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.setAttribute("aria-label", ariaLabel);
+    input.addEventListener("change", () => {
+      if (input.value === "") return;
+      const parsed = Number(input.value);
+      if (Number.isFinite(parsed)) onChange(Math.min(max, Math.max(min, parsed)));
+    });
+    return input;
+  }
+
+  function mutateJev(patch: Partial<JevSettings>, rerender = false): void {
+    mutate({ jev: { ...draft.jev, ...patch } }, rerender);
+  }
+
+  /** Sparse override: only properties the user actually changed are stored. */
+  function mutateGate(gateId: string, patch: Partial<GatePolicy>): void {
+    const current = draft.jev.gatePolicy[gateId] ?? {};
+    mutateJev({ gatePolicy: { ...draft.jev.gatePolicy, [gateId]: { ...current, ...patch } } });
+  }
+
+  function resetGate(gateId: string): void {
+    if (!(gateId in draft.jev.gatePolicy)) return;
+    const next = { ...draft.jev.gatePolicy };
+    delete next[gateId];
+    mutateJev({ gatePolicy: next }, true);
+  }
+
+  function effectivePolicy(definition: GateDefinition): Required<GatePolicy> {
+    const override = draft.jev.gatePolicy[definition.id] ?? {};
+    return {
+      enabled: override.enabled ?? definition.enabledByDefault,
+      threshold: override.threshold
+        ?? (definition.id === "confidence_escalation" ? draft.jev.minConfidence : definition.threshold),
+      fallback: override.fallback ?? definition.fallback,
+    };
+  }
+
+  function testJev(): void {
+    if (jevTestPending || !canTestJev()) return;
+    jevTestPending = true;
+    showNotice({ tone: "info", text: "Testing Jev…" }, 0);
+    updateJevTestButton();
+    send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
+  }
+
+  function updateJevStatus(): void {
+    const target = drawer.root.querySelector<HTMLElement>("[data-lw-jev-status]");
+    if (!target) return;
+    const tone = !draft.jev.enabled
+      ? "neutral"
+      : !state?.permissions.corsProxy || (!hasJevKey() && !jevKeyDraft.trim()) ? "warning" : "success";
+    const text = !draft.jev.enabled
+      ? "Off"
+      : !state?.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+    target.replaceChildren(pill(text, tone));
+  }
+
+  function updateJevTestButton(): void {
+    updateJevStatus();
+    const node = drawer.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]");
+    if (node) {
+      node.disabled = jevTestPending || !canTestJev();
+      node.setAttribute("aria-busy", String(jevTestPending));
+      node.textContent = jevTestPending ? "Testing Jev…" : "Test Jev";
+    }
+    const hint = drawer.root.querySelector<HTMLElement>("[data-lw-jev-hint]");
+    if (hint) {
+      hint.textContent = !state?.permissions.corsProxy
+        ? "The cors_proxy permission is required to reach Jev."
+        : jevKeyDraft.trim() ? "Sends one tiny yes/no question and stores the key if it works."
+        : hasJevKey() ? "Uses the stored key. One tiny yes/no question; your chat is not sent."
+        : "Paste an API key to test the connection.";
+    }
+  }
+
+  /**
+   * The Jev surface, laid out like the Director one: a primary connection card
+   * with the picker, the model, and the action that tests it, then an Advanced
+   * settings block for the shape of the request.
+   */
+  function jevSection(): HTMLElement {
+    const section = el("section", "lw-section");
+
+    if (!draft.jev.enabled) {
+      const panel = el("div", "lw-panel");
+      panel.dataset.active = "false";
+      const card = el("div", "lw-control-card");
+      card.append(el("div", "lw-panel-soon",
+        "Jev is off. LumiWorld runs exactly as the Director-only baseline: one Director call per selected reply type, no network calls beyond your own connection."));
+      panel.append(card);
+      section.append(panel);
+      return section;
+    }
+
+    // --- Connection: the analogue of the Director's connection card -----------
+    const core = el("section", "lw-setup");
+    core.setAttribute("aria-label", "Jev connection");
+
+    const providerHead = el("div", "lw-control-head");
+    const providerCopy = el("div");
+    providerCopy.append(el("div", "lw-control-title", "Provider"));
+    const note = el("div", "lw-provider-note");
+    const link = el("a", undefined, `${providerInfo().label} API keys`) as HTMLAnchorElement;
+    link.href = providerInfo().keyUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer noopener";
+    note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
+    providerCopy.append(note);
+    providerHead.append(providerCopy);
+    core.append(providerHead);
+    core.append(segmented(
+      draft.jev.provider,
+      JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
+      "Jev provider",
+      (value) => mutateJev({ provider: value as JevProvider, model: "" }, true),
+    ));
+
+    const fields = el("div", "lw-fields");
+    fields.append(field("Model", textInput(
+      draft.jev.model, providerInfo().defaultModel, "Jev model",
+      (value) => mutateJev({ model: value }),
+    ), `Blank uses ${providerInfo().defaultModel}.`));
+    core.append(fields);
+
+    // Credential sits inside the connection card, the way the Director's model
+    // field sits inside its own, rather than in a separate box.
+    const credentialHead = el("div", "lw-control-head");
+    credentialHead.append(el("div", "lw-control-title", "API key"));
+    credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
+    core.append(credentialHead);
+
+    const keyRow = el("div", "lw-key-row");
+    const keyInput = el("input", "lw-input");
+    keyInput.type = "password";
+    keyInput.autocomplete = "off";
+    keyInput.spellcheck = false;
+    keyInput.value = jevKeyDraft;
+    keyInput.placeholder = hasJevKey() ? "A key is stored — paste to replace" : "Paste your API key";
+    keyInput.setAttribute("aria-label", "Jev API key");
+    keyInput.addEventListener("input", () => { jevKeyDraft = keyInput.value; updateJevTestButton(); });
+    const clear = button("Clear", () => {
+      jevKeyDraft = "";
+      send({ type: "clear_jev_key", provider: draft.jev.provider });
+    });
+    clear.disabled = !hasJevKey();
+    keyRow.append(keyInput, clear);
+    core.append(keyRow);
+    core.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
+
+    const actions = el("div", "lw-actions");
+    const test = button("Test Jev", testJev, true);
+    test.dataset.lwJevTest = "";
+    const hint = el("div", "lw-hint lw-test-hint");
+    hint.dataset.lwJevHint = "";
+    actions.append(test, hint);
+    core.append(actions);
+    section.append(core);
+
+    const context = el("section", "lw-section");
+    context.setAttribute("aria-label", "Jev context");
+    context.append(el("h2", "lw-section-title", "Include in Jev state"));
+    context.append(el("p", "lw-hint", "Choose what Jev sees when deciding. These switches are independent of the Director's context switches."));
+    const contextRows = el("div", "lw-context");
+    contextRows.append(
+      switchField("Character", draft.jev.includeCharacter, (includeCharacter) => mutateJev({ includeCharacter })),
+      switchField("User persona", draft.jev.includeUserPersona, (includeUserPersona) => mutateJev({ includeUserPersona })),
+      switchField("Activated World Info", draft.jev.includeWorldInfoEntries, (includeWorldInfoEntries) => mutateJev({ includeWorldInfoEntries })),
+    );
+    context.append(contextRows);
+    section.append(context);
+
+    // --- Advanced settings: the shape of the batched request ------------------
+    const advanced = el("details", "lw-details");
+    advanced.open = jevAdvancedOpen;
+    advanced.addEventListener("toggle", () => { jevAdvancedOpen = advanced.open; });
+    const summary = el("summary");
+    const summaryCopy = el("span", "lw-summary-copy");
+    summaryCopy.append(
+      el("span", undefined, "Advanced settings"),
+      el("span", "lw-hint", "Request shape & confidence floor"),
+    );
+    summary.append(summaryCopy);
+    advanced.append(summary);
+
+    const advancedBody = el("div", "lw-details-body");
+    const advancedFields = el("div", "lw-fields");
+    advancedFields.append(
+      field("State cap (chars)", numberInput(
+        draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
+        (value) => mutateJev({ maxStateChars: value }),
+      ), "Jev allows 32k tokens for the state."),
+      field("History messages", numberInput(
+        draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages",
+        (value) => mutateJev({ historyMessageLimit: value }),
+      )),
+      field("Timeout (ms)", numberInput(
+        draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout",
+        (value) => mutateJev({ timeoutMs: value }),
+      )),
+      field("Confidence floor", numberInput(
+        draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor",
+        (value) => mutateJev({ minConfidence: value }),
+      ), "Applies to every gate. Decisions below it use their fallback."),
+    );
+    advancedBody.append(advancedFields);
+    advancedBody.append(el("div", "lw-hint",
+      "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
+    advanced.append(advancedBody);
+    section.append(advanced);
+
+    return section;
+  }
+
+  function gatesSection(): HTMLElement {
+    const definitions = GATE_CATALOG;
+    const enabled = definitions.filter((definition) => effectivePolicy(definition).enabled).length;
+    // A hand-tuned gate keeps a marker so a non-default setup is visible at a glance.
+    const customised = definitions.filter((definition) => definition.id in draft.jev.gatePolicy).length;
+
+    return collapsible({
+      title: "Decisions",
+      badge: `${enabled}/${definitions.length}`,
+      expanded: gatesOpen,
+      onToggle: (open) => { gatesOpen = open; },
+      className: "lw-gates",
+    }, (body) => {
+      body.classList.add("lw-gate-body");
+      body.append(el("p", "lw-hint",
+        "Enabled decisions travel in one batched request per phase, so adding more costs no round trips. A decision that cannot answer uses its own fallback."));
+
+      for (const category of GATE_CATEGORY_ORDER) {
+        const group = definitions.filter((definition) => definition.category === category);
+        if (group.length === 0) continue;
+        const on = group.filter((definition) => effectivePolicy(definition).enabled).length;
+
+        const head = el("div", "lw-cat-head");
+        const title = el("span", "lw-cat-title");
+        title.append(
+          el("span", undefined, GATE_CATEGORY_LABELS[category]),
+          el("span", "lw-cat-count", `${on}/${group.length}`),
+        );
+        const all = button(on === group.length ? "Disable all" : "Enable all", () => {
+          const next = { ...draft.jev.gatePolicy };
+          for (const definition of group) next[definition.id] = { ...next[definition.id], enabled: on !== group.length };
+          mutateJev({ gatePolicy: next }, true);
+        });
+        all.title = on === group.length ? `Turn off every ${GATE_CATEGORY_LABELS[category]} decision` : `Turn on every ${GATE_CATEGORY_LABELS[category]} decision`;
+        head.append(title, all);
+        body.append(head);
+
+        for (const definition of group) body.append(gateCard(definition));
+      }
+
+      if (customised > 0) {
+        const footer = el("div", "lw-cat-head");
+        const cleared = button(`Reset ${customised} changed decision${customised === 1 ? "" : "s"} to defaults`, () => {
+          mutateJev({ gatePolicy: {} }, true);
+        });
+        cleared.className = "lw-button lw-button-primary";
+        footer.append(cleared);
+        body.append(footer);
+      }
+    });
+  }
+
+  /**
+   * One gate, collapsed to a single line: switch, name, shape, and a caret that
+   * reveals the floor and fallback. Collapsed rows exist so 36 gates stay
+   * scannable instead of becoming a wall of selects.
+   */
+  function gateCard(definition: GateDefinition): HTMLElement {
+    const policy = effectivePolicy(definition);
+    const isOpen = openGates.has(definition.id);
+    const isCustom = definition.id in draft.jev.gatePolicy;
+    const card = el("div", "lw-gate");
+    card.dataset.lwGate = definition.id;
+    card.dataset.on = String(policy.enabled);
+    card.dataset.open = String(isOpen);
+    card.dataset.custom = String(isCustom);
+
+    const switchSlot = el("div", "lw-control");
+    const switchFallback = () => {
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = policy.enabled;
+      input.setAttribute("aria-label", definition.label);
+      input.addEventListener("change", () => mutateGate(definition.id, { enabled: input.checked }));
+      switchSlot.replaceChildren(input);
+    };
+    if (typeof ctx.components?.mountSwitch === "function") {
+      queueMount(() => ctx.components!.mountSwitch!(switchSlot, {
+        checked: policy.enabled,
+        size: "sm",
+        ariaLabel: definition.label,
+        onChange: (checked: boolean) => mutateGate(definition.id, { enabled: checked }),
+      }), switchFallback);
+    } else switchFallback();
+
+    const copy = el("div", "lw-gate-copy");
+    const meta = el("div", "lw-gate-meta");
+    const shape = definition.codeOnly
+      ? definition.appliesWhen ?? "Evaluated in code"
+      : `${definition.primitiveLabel} · ${definition.phase === "gate" ? "before the Director" : "verifies the draft"}`;
+    meta.append(el("span", undefined, shape));
+    if (isCustom) meta.append(document.createTextNode(" · "), el("code", undefined, "custom"));
+    copy.append(el("div", "lw-gate-name", definition.label), meta);
+
+    const caret = el("button", "lw-gate-caret", isOpen ? "▾" : "▸");
+    caret.type = "button";
+    caret.setAttribute("aria-expanded", String(isOpen));
+    caret.setAttribute("aria-label", `${isOpen ? "Hide" : "Show"} ${definition.label} settings`);
+    caret.addEventListener("click", () => {
+      if (isOpen) openGates.delete(definition.id);
+      else openGates.add(definition.id);
+      mutate({}, true);
+    });
+
+    const row = el("div", "lw-gate-row");
+    row.append(switchSlot, copy, caret);
+    card.append(row);
+
+    if (isOpen) card.append(gateSheet(definition, policy, isCustom));
+    return card;
+  }
+
+  /** The expanded controls for one gate: confidence floor, fallback, and reset. */
+  function gateSheet(definition: GateDefinition, policy: Required<GatePolicy>, isCustom: boolean): HTMLElement {
+    const sheet = el("div", "lw-gate-sheet");
+
+    if (definition.codeOnly) {
+      sheet.append(el("div", "lw-sheet-copy", definition.rationale));
+      if (isCustom) sheet.append(gateReset(definition));
+      return sheet;
+    }
+
+    sheet.append(el("div", "lw-sheet-copy", definition.rationale));
+    if (definition.id === "model_route") {
+      sheet.append(el("div", "lw-hint", "Set the default and optional strong Director models on the Director tab. Without a strong target, both choices use the default model."));
+    }
+
+    const floorHead = el("div", "lw-sheet-label");
+    const value = el("button", "lw-diag-value", policy.threshold.toFixed(2));
+    value.type = "button";
+    value.title = "Click to type an exact floor";
+    let editing = false;
+    value.addEventListener("click", () => {
+      if (editing) return;
+      editing = true;
+      const input = numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
+        (next) => mutateGate(definition.id, { threshold: next }));
+      input.className = "lw-input";
+      value.replaceWith(input);
+      input.focus();
+      input.select();
+    });
+    floorHead.append(el("span", undefined, "Confidence floor"), value);
+    sheet.append(floorHead);
+
+    const track = el("div", "lw-control");
+    const sliderFallback = () => {
+      track.replaceChildren(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
+        (next) => mutateGate(definition.id, { threshold: next })));
+    };
+    if (typeof ctx.components?.mountRangeSlider === "function") {
+      queueMount(() => ctx.components!.mountRangeSlider!(track, {
+        min: 0, max: 1, step: 0.05, value: policy.threshold,
+        onCommit: (next: number) => mutateGate(definition.id, { threshold: next }),
+      }), sliderFallback);
+    } else sliderFallback();
+    const guidanceGate = definition.phase === "gate"
+      && !["smart_trigger", "context_filter", "model_route"].includes(definition.id);
+    sheet.append(track);
+    sheet.append(el("div", "lw-hint", guidanceGate
+      ? "Answers below this are left out of the Director's guidance."
+      : "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
+    if (guidanceGate) {
+      sheet.append(el("div", "lw-hint", "The Director still runs without this decision."));
+    } else {
+      const fallbackHead = el("div", "lw-sheet-label");
+      fallbackHead.append(el("span", undefined, "When it cannot answer"));
+      sheet.append(fallbackHead, selectControl(
+        policy.fallback,
+        GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
+        `${definition.label} fallback`,
+        (next) => mutateGate(definition.id, { fallback: next as GateFallback }),
+      ));
+    }
+
+    if (isCustom) sheet.append(gateReset(definition));
+    return sheet;
+  }
+
+  function gateReset(definition: GateDefinition): HTMLElement {
+    const reset = button("Reset to default", () => resetGate(definition.id));
+    reset.className = "lw-button lw-gate-reset";
+    return reset;
+  }
+
+  function latestTurnRun(): RunLogEntry | null {
+    return (state?.runs ?? []).find((run) => run.channel === "director" && run.generationType !== "test"
+      && !run.status.startsWith("test_") && !(run.status === "timeout" && !run.generationType && !run.trace)) ?? null;
+  }
+
+  function diagnosticsSection(): HTMLElement {
+    const run = latestTurnRun();
+    const generationOutcome = run?.trace?.generationOutcome;
+    const badge = !run ? undefined : run.trace?.directiveDisposition === "withheld" ? "note withheld"
+      : run.trace?.verificationVerdict === "unverified" && run.status === "success" ? "unverified"
+      : generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded"
+      ? generationOutcome : run.status === "success"
+      ? run.jev?.status === "degraded" ? "degraded" : run.jev?.fallbackCount ? "partial" : "completed"
+      : run.status;
+    return collapsible({
+      title: "Last turn", badge,
+      badgeTone: run?.trace?.directiveDisposition === "withheld" || generationOutcome === "failed" || generationOutcome === "stopped" || generationOutcome === "superseded" ? "error"
+        : run?.status === "success" ? run.jev?.status === "degraded" || run.jev?.fallbackCount ? "warning" : "success"
+        : run?.status === "error" || run?.status === "timeout" ? "error" : "warning",
+      expanded: diagnosticsOpen,
+      onToggle: (open) => { diagnosticsOpen = open; },
+    }, (body) => {
+      if (run) body.append(diagnosticsPanel(run));
+      else body.append(el("p", "lw-hint", "Generate a reply to see the full turn trace here."));
+    });
+  }
+
+  function rawTraceSection(title: string, value: string | null | undefined): HTMLElement | null {
+    if (value == null) return null;
+    const details = el("details", "lw-diag-raw");
+    details.append(el("summary", undefined, title));
+    let display = value;
+    try { display = JSON.stringify(JSON.parse(value), null, 2); } catch { /* Plain text directive. */ }
+    details.append(el("pre", undefined, display));
+    return details;
+  }
+
+  function traceStep(title: string, meta: string, open = false): HTMLDetailsElement {
+    const details = el("details", "lw-diag-step") as HTMLDetailsElement;
+    details.open = open;
+    const summary = el("summary");
+    summary.append(el("span", "lw-diag-step-title", title), el("span", "lw-diag-step-meta", meta));
+    details.append(summary);
+    return details;
+  }
+
+  function phaseStep(phase: JevPhaseTrace, skipped: boolean, open: boolean): HTMLElement {
+    const title = phase.stage === "before_director" ? "1 · Before Director"
+      : phase.stage === "verify_draft" ? "3 · Check draft" : "5 · Check revision";
+    const flags = phase.gates.filter((gate) => gate.usedFallback).length;
+    const meta = [
+      `${phase.gates.length} decisions`,
+      `${phase.requestCount} request${phase.requestCount === 1 ? "" : "s"}`,
+      flags ? `${flags} fallback` : null,
+      phase.error ? "error" : null,
+    ].filter(Boolean).join(" · ");
+    const step = traceStep(title, meta, open);
+    const metrics = el("div", "lw-diag-strip");
+    metrics.append(el("span", "lw-badge", `${phase.durationMs}ms`));
+    if (phase.resolvedModel) metrics.append(el("span", "lw-badge", phase.resolvedModel));
+    if (phase.inputTokens !== null) metrics.append(el("span", "lw-badge", `${phase.inputTokens} in / ${phase.outputTokens ?? 0} out`));
+    metrics.append(el("span", "lw-badge", `${phase.stateChars} state chars`));
+    if (phase.stateCompacted) metrics.append(el("span", "lw-badge", "state compacted"));
+    if (phase.costUsd !== null) metrics.append(el("span", "lw-badge", `$${phase.costUsd.toFixed(6)}`));
+    step.append(metrics);
+    if (phase.error) step.append(el("div", "lw-notice", phase.error));
+    if (phase.requestCount === 0 && !phase.error) step.append(el("p", "lw-hint", "No request was needed for this pass."));
+    if (skipped && phase.stage === "before_director" && phase.gates.length > 1) {
+      step.append(el("p", "lw-hint", "Other answers arrived in the same request but did not affect this reply."));
+    }
+    const list = el("div", "lw-diag-list");
+    for (const gate of phase.gates) {
+      list.append(gateResultRow(gate, false, skipped && phase.stage === "before_director" && gate.gateId !== "smart_trigger"));
+    }
+    step.append(list);
+    const request = rawTraceSection(phase.requestCount ? "Full Jev request" : "Prepared Jev payload", phase.requestJson);
+    const response = rawTraceSection("Raw Jev response attempts", phase.responseJson);
+    if (request) step.append(request);
+    if (response) step.append(response);
+    return step;
+  }
+
+  function copyReport(run: RunLogEntry): string {
+    const expanded = JSON.parse(JSON.stringify(run)) as Record<string, any>;
+    const expand = (holder: Record<string, any>, field: string, target: string): void => {
+      const raw = holder[field];
+      if (typeof raw !== "string") return;
+      try { holder[target] = JSON.parse(raw); } catch { holder[target] = raw; }
+      delete holder[field];
+    };
+    if (expanded.trace) {
+      expand(expanded.trace, "settingsJson", "settings");
+      expand(expanded.trace, "incomingMessagesJson", "incomingMessages");
+      expand(expanded.trace, "directorMessagesJson", "directorMessages");
+      expand(expanded.trace, "initialResponseJson", "initialResponse");
+      expand(expanded.trace, "worldStateBeforeJson", "worldStateBefore");
+      expand(expanded.trace, "worldStateAfterJson", "worldStateAfter");
+    }
+    for (const phase of expanded.jev?.phases ?? []) {
+      expand(phase, "requestJson", "request");
+      expand(phase, "responseJson", "responseAttempts");
+    }
+    if (expanded.jev?.revision) {
+      expand(expanded.jev.revision, "promptJson", "prompt");
+      expand(expanded.jev.revision, "responseJson", "response");
+    }
+    return JSON.stringify({ format: "LumiWorld full turn trace", run: expanded }, null, 2);
+  }
+
+  async function copyTurn(button: HTMLButtonElement, status: HTMLElement, run: RunLogEntry): Promise<void> {
+    try {
+      const report = copyReport(run);
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(report);
+      else {
+        const input = el("textarea") as HTMLTextAreaElement;
+        input.value = report; input.style.position = "fixed"; input.style.opacity = "0";
+        document.body.append(input); input.select();
+        let copied = false;
+        try { copied = document.execCommand("copy"); }
+        finally { input.remove(); }
+        if (!copied) throw new Error("Clipboard unavailable");
+      }
+      status.textContent = "Copied";
+      button.textContent = "Copied";
+    } catch {
+      status.textContent = "Could not copy. Check clipboard access.";
+    }
+  }
+
+  function diagnosticsPanel(run: RunLogEntry): HTMLElement {
+    const diagnostics = run.jev ?? null;
+    const skippedByJev = diagnostics?.status === "skipped";
+    const wrap = el("div", "lw-diag");
+    const generationOutcome = run.trace?.generationOutcome;
+    const outcome = run.trace?.directiveDisposition === "withheld" ? "LumiWorld withheld the Director note. The main reply used its original prompt."
+      : generationOutcome === "failed" ? "The visible reply failed after LumiWorld prepared this turn."
+      : generationOutcome === "stopped" ? "The visible reply was stopped after LumiWorld prepared this turn."
+        : generationOutcome === "superseded" ? "A newer generation replaced this turn."
+          : run.trace?.dryRun && run.status === "success" ? "Preview prepared a Director note; no live reply was changed."
+            : run.status === "success" ? "Director note added to the main prompt."
+      : skippedByJev ? "Jev chose not to run the Director. No LumiWorld note was added to the main prompt."
+        : run.status === "timeout" ? "The Director timed out. No LumiWorld note was added."
+          : run.status === "error" ? "The Director failed. No LumiWorld note was added."
+            : "No LumiWorld note was added to the main prompt.";
+    wrap.append(el("div", "lw-diag-outcome", outcome));
+
+    const toolbar = el("div", "lw-diag-toolbar");
+    if (run.timestamp >= Date.UTC(2000, 0, 1)) toolbar.append(el("div", "lw-diag-time", `Recorded ${new Date(run.timestamp).toLocaleString()}`));
+    const copy = el("button", "lw-button", "Copy all") as HTMLButtonElement;
+    copy.type = "button";
+    const copyStatus = el("span", "lw-diag-copy-status");
+    copyStatus.setAttribute("role", "status");
+    copy.addEventListener("click", () => { void copyTurn(copy, copyStatus, run); });
+    toolbar.append(copy, copyStatus); wrap.append(toolbar);
+    wrap.append(el("p", "lw-hint", "Copy all includes chat text and private prompts. Review it before sharing."));
+
+    const strip = el("div", "lw-diag-strip");
+    if (run.generationType) strip.append(el("span", "lw-badge", run.generationType));
+    if (run.trace?.dryRun) strip.append(el("span", "lw-badge", "preview"));
+    if (run.trace?.directiveDisposition) strip.append(el("span", "lw-badge", `note ${run.trace.directiveDisposition}`));
+    if (run.trace?.verificationVerdict) strip.append(el("span", "lw-badge", `verification ${run.trace.verificationVerdict}`));
+    if (generationOutcome) strip.append(el("span", "lw-badge", `reply ${generationOutcome}`));
+    if (run.trace?.worldStateOutcome && run.trace.worldStateOutcome !== "not_used") strip.append(el("span", "lw-badge", `scene state ${run.trace.worldStateOutcome}`));
+    if (run.connectionName || run.connectionId || run.model) strip.append(el("span", "lw-badge", [run.connectionName ?? run.connectionId, run.model].filter(Boolean).join(" · ")));
+    if (run.durationMs !== null && run.durationMs !== undefined) strip.append(el("span", "lw-badge", `${run.durationMs}ms total`));
+    if (run.directorDurationMs !== null && run.directorDurationMs !== undefined) strip.append(el("span", "lw-badge", `${run.directorDurationMs}ms Director`));
+    if (diagnostics) {
+      if (diagnostics.provider) strip.append(el("span", "lw-badge", diagnostics.provider));
+      if (diagnostics.model && diagnostics.model !== diagnostics.resolvedModel) strip.append(el("span", "lw-badge", `requested ${diagnostics.model}`));
+      if (diagnostics.resolvedModel) strip.append(el("span", "lw-badge", diagnostics.resolvedModel));
+      strip.append(el("span", "lw-badge", `${diagnostics.requestCount} Jev request${diagnostics.requestCount === 1 ? "" : "s"}`));
+      strip.append(el("span", "lw-badge", `${diagnostics.gateCount} recorded decisions`));
+      if (diagnostics.fallbackCount) strip.append(pill(`${diagnostics.fallbackCount} fallback${skippedByJev ? " · unused answers included" : ""}`, "warning"));
+      if (diagnostics.escalatedCount) strip.append(el("span", "lw-badge", `${diagnostics.escalatedCount} escalated${skippedByJev ? " · unused answers included" : ""}`));
+      if (diagnostics.inputTokens !== null) strip.append(el("span", "lw-badge", `${diagnostics.inputTokens} in / ${diagnostics.outputTokens ?? 0} out`));
+      if (diagnostics.costUsd !== null) strip.append(el("span", "lw-badge", `$${diagnostics.costUsd.toFixed(6)} Jev`));
+      if (diagnostics.stateCompacted) strip.append(el("span", "lw-badge", "state compacted"));
+    } else strip.append(el("span", "lw-badge", "Jev not used"));
+    wrap.append(strip);
+    if (run.error) {
+      const notice = el("div", "lw-notice", run.error); notice.dataset.tone = "warning"; wrap.append(notice);
+    }
+    if (run.trace?.generationError) {
+      const notice = el("div", "lw-notice", run.trace.generationError); notice.dataset.tone = "warning"; wrap.append(notice);
+    }
+    if (run.trace?.verificationReason) {
+      const notice = el("div", "lw-notice", run.trace.verificationReason);
+      notice.dataset.tone = run.trace.verificationVerdict === "clean" ? "success" : "warning";
+      wrap.append(notice);
+    }
+    if (diagnostics?.error && diagnostics.error !== run.error) {
+      const notice = el("div", "lw-notice", diagnostics.error); notice.dataset.tone = "warning"; wrap.append(notice);
+    }
+
+    const incoming = rawTraceSection("Full incoming messages", run.trace?.incomingMessagesJson);
+    if (incoming) wrap.append(incoming);
+    const settings = rawTraceSection("Settings used for this turn", run.trace?.settingsJson);
+    if (settings) wrap.append(settings);
+    const phases = diagnostics?.phases ?? [];
+    if (phases.length) {
+      const before = phases.find((phase) => phase.stage === "before_director");
+      if (before) wrap.append(phaseStep(before, skippedByJev, !phases.some((phase) => phase.stage === "verify_revision")));
+    } else if (diagnostics?.gates.length) {
+      const legacy = traceStep("Jev decisions", `${diagnostics.gates.length} recorded`, true);
+      legacy.append(el("p", "lw-hint", "This older turn did not save separate pass details."));
+      if (skippedByJev && diagnostics.gates.length > 1) legacy.append(el("p", "lw-hint", "Other Jev answers were not used after the skip decision."));
+      const list = el("div", "lw-diag-list");
+      for (const gate of diagnostics.gates) list.append(gateResultRow(gate,
+        gate.gateId === "confidence_escalation" || gate.gateId === "budget_degradation",
+        skippedByJev && gate.gateId !== "smart_trigger"));
+      legacy.append(list); wrap.append(legacy);
+    } else if (diagnostics?.gateCount) wrap.append(el("p", "lw-hint", "Decision details were not saved for this turn."));
+
+    if (run.trace?.directorMessagesJson || run.trace?.initialDirective || run.directivePreview) {
+      const draft = traceStep("2 · Director draft", run.trace?.initialDirective ? "returned" : "no draft");
+      if (run.trace?.initialDirective) draft.append(el("div", "lw-diag-outcome", run.trace.initialDirective));
+      else if (run.directivePreview) draft.append(el("div", "lw-diag-outcome", run.directivePreview));
+      const prompt = rawTraceSection("Full Director prompt", run.trace?.directorMessagesJson);
+      const response = rawTraceSection("Raw Director response", run.trace?.initialResponseJson);
+      if (prompt) draft.append(prompt);
+      if (response) draft.append(response);
+      wrap.append(draft);
+    }
+    const draftCheck = phases.find((phase) => phase.stage === "verify_draft");
+    if (draftCheck) wrap.append(phaseStep(draftCheck, false, false));
+    if (diagnostics?.revision) {
+      const revision = diagnostics.revision;
+      const step = traceStep("4 · Director revision", `${revision.action} · ${revision.status} · ${revision.durationMs}ms`, true);
+      step.append(el("p", "lw-hint", revision.reason));
+      if (revision.error) step.append(el("div", "lw-notice", revision.error));
+      if (revision.revisedDirective) step.append(el("div", "lw-diag-outcome", revision.revisedDirective));
+      if (revision.unresolved) step.append(el("p", "lw-hint", "The final check did not confidently clear the key guardrails after the one allowed revision."));
+      const prompt = rawTraceSection("Full revision prompt", revision.promptJson);
+      const response = rawTraceSection("Raw revision response", revision.responseJson);
+      if (prompt) step.append(prompt);
+      if (response) step.append(response);
+      wrap.append(step);
+    }
+    const revisionCheck = phases.find((phase) => phase.stage === "verify_revision");
+    if (revisionCheck) wrap.append(phaseStep(revisionCheck, false, true));
+
+    const final = traceStep("Final outcome", [run.status, generationOutcome ? `reply ${generationOutcome}` : null].filter(Boolean).join(" · "), true);
+    if (run.trace?.finalDirective) final.append(el("div", "lw-diag-outcome", run.trace.finalDirective));
+    else if (run.trace?.directiveDisposition !== "withheld" && run.directivePreview) final.append(el("div", "lw-diag-outcome", run.directivePreview));
+    if (run.worldInfoActivatedCount !== null && run.worldInfoActivatedCount !== undefined) {
+      final.append(el("p", "lw-hint", `World Info: ${run.worldInfoActivatedCount} activated, ${run.worldInfoFetchedCount ?? 0} fetched, ${run.worldInfoFallbackTaggedCount ?? 0} fallback tagged.`));
+    }
+    if (run.worldInfoFetchError) final.append(el("p", "lw-hint", run.worldInfoFetchError));
+    const beforeState = rawTraceSection("Scene state before", run.trace?.worldStateBeforeJson);
+    const afterState = rawTraceSection("Scene state after Director", run.trace?.worldStateAfterJson);
+    if (beforeState) final.append(beforeState);
+    if (afterState) final.append(afterState);
+    if (run.trace?.finalReply !== null && run.trace?.finalReply !== undefined) {
+      const reply = rawTraceSection(run.trace.generationOutcome === "stopped" ? "Partial visible reply" : "Final visible reply", run.trace.finalReply);
+      if (reply) final.append(reply);
+    } else if (run.trace?.generationOutcome === "pending") final.append(el("p", "lw-hint", "Waiting for the visible reply to finish."));
+    if (run.trace?.messageId) final.append(el("p", "lw-hint", `Saved message: ${run.trace.messageId}`));
+    const computed = diagnostics?.gates.filter((gate) => gate.gateId === "confidence_escalation" || gate.gateId === "budget_degradation") ?? [];
+    if (computed.length) {
+      const list = el("div", "lw-diag-list");
+      for (const gate of computed) list.append(gateResultRow(gate, true));
+      final.append(list);
+    }
+    wrap.append(final);
+    return wrap;
+  }
+
+  function gateResultRow(record: JevGateRecord, informational = false, unused = false): HTMLElement {
+    const flagged = !informational && !unused && (record.usedFallback || record.escalated);
+    const row = el("div", "lw-diag-row");
+    row.dataset.flag = String(flagged);
+    row.dataset.on = String(!informational && !unused);
+
+    const head = el("div", "lw-diag-head");
+    head.append(el("span", "lw-diag-name", record.label), el("span", "lw-diag-value", describeGateValue(record)));
+
+    const meta = el("div", "lw-diag-meta");
+    if (record.confidence !== null) {
+      const confidence = el("span", "lw-badge", `${record.confidenceDerived ? "~" : ""}${record.confidence.toFixed(2)}`);
+      if (!unused && record.confidence < record.threshold) {
+        confidence.dataset.tone = "warning";
+        confidence.title = `Below the ${record.threshold.toFixed(2)} floor`;
+      }
+      meta.append(confidence);
+    }
+    if (record.usedFallback && !informational && !unused) {
+      const guidanceGate = record.phase === "gate"
+        && !["smart_trigger", "context_filter", "model_route"].includes(record.gateId);
+      const fallbackLabel = guidanceGate || record.fallback === "run" && record.gateId !== "smart_trigger"
+        ? "Decision ignored"
+        : GATE_FALLBACK_LABELS[record.fallback];
+      const fallback = el("span", "lw-badge", fallbackLabel);
+      fallback.dataset.tone = "warning";
+      meta.append(fallback);
+    } else if (!informational && !unused && directorGuidanceFromGates([record])) {
+      meta.append(el("span", "lw-badge", "Sent to Director"));
+    }
+    row.append(head, meta);
+    if (record.note && !unused) row.append(el("span", "lw-diag-note", record.note));
+    const evidence = el("details", "lw-diag-evidence");
+    evidence.append(el("summary", undefined, "Full decision evidence"),
+      el("pre", undefined, JSON.stringify(record, null, 2)));
+    row.append(evidence);
+    return row;
+  }
+
+  function describeGateValue(record: JevGateRecord): string {
+    if (record.value === null) return "no answer";
+    if (typeof record.value === "boolean") return record.value ? "yes" : "no";
+    return String(record.value);
   }
 
   function canTest(): boolean {
@@ -409,30 +1453,289 @@ export function setup(ctx: SpindleFrontendContext) {
     target.hidden = !target.childElementCount;
   }
 
+  /**
+   * The master toggle belongs to the drawer header, and it follows the active
+   * view: Director's switch on the Director view, Jev's on the Jev view. A header
+   * that kept saying "Enable Director" while the Jev view was open would silently
+   * control something off-screen.
+   */
+  /**
+   * Builds the header once and re-attaches it on every render.
+   *
+   * Rebuilding it per render does not work: the master switch lives inside it and
+   * must survive a view switch, and a fresh brand element appended alongside the
+   * stored one duplicates the title.
+   */
+  function buildHeader(): HTMLElement {
+    if (headerElement) return headerElement;
+
+    const header = el("header", "lw-header");
+    const brand = el("div", "lw-brand");
+    const icon = el("div", "lw-icon"); icon.innerHTML = ICON; icon.setAttribute("aria-hidden", "true");
+    const title = el("div");
+    headerTitle = el("h1", "lw-title", "Director");
+    const status = el("span", "lw-status");
+    status.dataset.lwHeaderStatus = "";
+    title.append(headerTitle, status);
+    brand.append(icon, title);
+
+    headerToggleSlot = el("div", "lw-control");
+    header.append(brand, headerToggleSlot);
+    headerElement = header;
+    refreshHeader();
+    return header;
+  }
+
+  /** Re-points the header title, status, and master toggle at the active view. */
+  function refreshHeader(): void {
+    if (!headerTitle || !headerToggleSlot) return;
+    const jev = activeTab === "jev";
+
+    headerTitle.textContent = jev ? "Jev" : "Director";
+
+    // Saved settings arrive after the header is first built. Rebuild if their
+    // switch value differs from the control mounted with the initial defaults.
+    const enabled = jev ? draft.jev.enabled : draft.enabled;
+    if (headerMountedTab !== activeTab || headerMountedEnabled !== enabled) {
+      if (headerToggleHandle) {
+        const index = handles.indexOf(headerToggleHandle);
+        if (index !== -1) handles.splice(index, 1);
+        try { headerToggleHandle.destroy(); } catch { /* Host may already have detached it. */ }
+        headerToggleHandle = null;
+      }
+      headerToggleSlot.replaceChildren();
+
+      const onChange = jev
+        ? (next: boolean) => { headerMountedEnabled = next; mutateJev({ enabled: next }, true); }
+        : (next: boolean) => { headerMountedEnabled = next; mutate({ enabled: next }); };
+      const slot = headerToggleSlot;
+      const fallback = () => {
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = enabled;
+        input.setAttribute("aria-label", jev ? "Enable Jev" : "Enable Director");
+        input.addEventListener("change", () => onChange(input.checked));
+        slot.replaceChildren(input);
+      };
+      // Mounted directly rather than through the render's pending queue: the
+      // header is rebuilt on a view switch, which is not a render.
+      let mounted = false;
+      if (typeof ctx.components?.mountSwitch === "function") {
+        try {
+          headerToggleHandle = ctx.components.mountSwitch(slot, {
+            checked: enabled, size: "md",
+            ariaLabel: jev ? "Enable Jev" : "Enable Director",
+            onChange,
+          });
+          mounted = true;
+        } catch {
+          headerToggleHandle = null;
+        }
+      }
+      if (!mounted) fallback();
+      // The switch outlives individual renders, so it is deliberately kept out of
+      // the per-render handle list and destroyed only when it is replaced.
+      headerMountedTab = activeTab;
+      headerMountedEnabled = enabled;
+    }
+
+    updateHeaderStatus();
+  }
+
+  /** The tagline under the header describes whichever view is on screen. */
+  function refreshIntro(): void {
+    const intro = drawer.root.querySelector<HTMLElement>("[data-lw-intro]");
+    if (!intro) return;
+    intro.textContent = activeTab === "jev"
+      ? "Gate the Director with cheap structured decisions, and see what it decided."
+      : "Guide your next reply with a private Director note.";
+  }
+
+  /** Keeps the header status line honest for whichever view is active. */
+  function updateHeaderStatus(): void {
+    const badge = drawer.root.querySelector<HTMLElement>("[data-lw-header-status]");
+    if (!badge || !state) return;
+    if (activeTab === "jev") {
+      const ready = draft.jev.enabled && !!state.permissions.corsProxy && (hasJevKey() || !!jevKeyDraft.trim());
+      badge.textContent = !draft.jev.enabled ? "Disabled"
+        : !state.permissions.corsProxy ? "Needs permission"
+        : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+      badge.dataset.tone = !draft.jev.enabled ? "neutral" : ready ? "success" : "warning";
+      return;
+    }
+    const ready = draft.enabled && !!state.permissions.interceptor && canTest() && draft.generationTypes.length > 0;
+    badge.textContent = !draft.enabled ? "Disabled" : ready ? "Ready for replies" : "Setup needed";
+    badge.dataset.tone = ready ? "success" : draft.enabled ? "warning" : "neutral";
+  }
+
+  /**
+   * A segmented view switcher for the single drawer tab.
+   *
+   * The host allows one tab per extension here, so the Director and Jev surfaces
+   * live as two views inside it. Views are hidden rather than re-rendered, which
+   * keeps typed-but-unsaved input (a pasted Jev key) alive when switching.
+   */
+  function viewTabs(): HTMLElement {
+    const list = el("div", "lw-tabs");
+    list.setAttribute("role", "tablist");
+    list.setAttribute("aria-label", "LumiWorld views");
+
+    const entries: Array<{ id: LumiTab; label: string; hint: string }> = [
+      { id: "director", label: "Director", hint: "Connection, triggers, and context" },
+      { id: "jev", label: "Jev", hint: "Gate setup and last-turn decisions" },
+    ];
+
+    for (const entry of entries) {
+      const tab = el("button", "lw-tab");
+      tab.type = "button";
+      tab.id = `lw-tab-${entry.id}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(activeTab === entry.id));
+      tab.setAttribute("aria-controls", `lw-view-${entry.id}`);
+      tab.tabIndex = activeTab === entry.id ? 0 : -1;
+      tab.title = entry.hint;
+
+      // Label and marker sit in one inline row so the marker reads as part of the
+      // label rather than as a detached light at the tab's edge.
+      const content = el("span", "lw-tab-content");
+      content.append(el("span", "lw-tab-label", entry.label));
+
+      const marker = tabMarker(entry.id);
+      if (marker) {
+        const dot = el("span", "lw-tab-dot");
+        dot.style.background = marker.tone === "warning" ? "var(--lumiverse-warning)"
+          : marker.tone === "success" ? "var(--lumiverse-success)"
+          : "var(--lumiverse-text-muted)";
+        dot.title = marker.label;
+        dot.setAttribute("aria-hidden", "true");
+        content.append(dot);
+      }
+      tab.append(content);
+
+      tab.addEventListener("click", () => activateView(entry.id));
+      tab.addEventListener("keydown", (event) => {
+        const key = (event as KeyboardEvent).key;
+        if (key !== "ArrowRight" && key !== "ArrowLeft" && key !== "Home" && key !== "End") return;
+        event.preventDefault();
+        const index = entries.findIndex((candidate) => candidate.id === activeTab);
+        const next = key === "Home" ? 0
+          : key === "End" ? entries.length - 1
+          : key === "ArrowRight" ? (index + 1) % entries.length
+          : (index - 1 + entries.length) % entries.length;
+        activateView(entries[next]!.id);
+        drawer.root.querySelector<HTMLElement>(`#lw-tab-${entries[next]!.id}`)?.focus();
+      });
+
+      list.append(tab);
+    }
+    return list;
+  }
+
+  /**
+   * What, if anything, a view tab needs to flag.
+   *
+   * Returns null when there is nothing to act on: a disabled feature is a choice,
+   * not a problem, and a working feature needs no badge.
+   */
+  function tabMarker(tab: LumiTab): { tone: "off" | "warning" | "success"; label: string } | null {
+    if (!state) return null;
+
+    if (tab === "director") {
+      // The header already states whether the Director is ready, so the tab only
+      // flags the case that actually blocks a generation.
+      if (!draft.enabled) return null;
+      if (!state.permissions.interceptor) return { tone: "warning", label: "Interceptor permission is not granted" };
+      if (!draft.generationTypes.length) return { tone: "warning", label: "No reply types are selected" };
+      if (!canTest()) return { tone: "warning", label: "Choose a connection and model" };
+      return null;
+    }
+
+    // Jev's state is not stated anywhere else on screen, so its marker is always
+    // present and simply changes tone: off, on but blocked, or on and working.
+    if (!draft.jev.enabled) return { tone: "off", label: "Jev is off" };
+    if (!state.permissions.corsProxy) return { tone: "warning", label: "cors_proxy permission is not granted" };
+    if (hasJevKey() || jevKeyDraft.trim()) return { tone: "success", label: "Jev is active" };
+    return { tone: "warning", label: "Add a Jev API key" };
+  }
+
+  /** Switches views in place. Settings opened in one view stay expanded in the other. */
+  function activateView(tab: LumiTab): void {
+    activeTab = tab;
+    for (const buttonNode of drawer.root.querySelectorAll<HTMLElement>('[role="tab"]')) {
+      buttonNode.setAttribute("aria-selected", String(buttonNode.id === `lw-tab-${tab}`));
+      buttonNode.tabIndex = buttonNode.id === `lw-tab-${tab}` ? 0 : -1;
+    }
+    for (const view of drawer.root.querySelectorAll<HTMLElement>("[data-lw-view]")) {
+      view.hidden = view.dataset.lwView !== tab;
+    }
+    // Focused controls inside a hidden view would leave the caret stranded.
+    activeElementInside(drawer.root)?.blur();
+    refreshHeader();
+    refreshIntro();
+  }
+
+  function activeElementInside(root: HTMLElement): HTMLElement | null {
+    const active = document.activeElement as HTMLElement | null;
+    return active && root.contains(active) ? active : null;
+  }
+
   function render(): void {
     destroyHandles(); pending = []; nextFieldId = 0;
     const root = el("div", "lw-root");
     const shell = el("div", "lw-shell"); root.append(shell); drawer.root.replaceChildren(root);
-    const header = el("header", "lw-header");
-    const brand = el("div", "lw-brand"); const icon = el("div", "lw-icon"); icon.innerHTML = ICON; icon.setAttribute("aria-hidden", "true");
-    const title = el("div"); title.append(el("h1", "lw-title", "Director"));
-    const directorStatus = el("span", "lw-status"); directorStatus.dataset.lwDirectorStatus = "";
-    title.append(directorStatus); brand.append(icon, title); header.append(brand);
-    if (state) header.append(switchField("Enable Director", draft.enabled, (enabled) => mutate({ enabled })));
-    shell.append(header);
-    shell.append(el("p", "lw-intro", "Guide your next reply with a private Director note."));
-    const notices = el("div"); notices.dataset.lwNotice = ""; shell.append(notices);
-    const warnings = el("div"); warnings.dataset.lwWarnings = ""; shell.append(warnings);
+
+    shell.append(buildHeader());
+    const intro = el("p", "lw-intro");
+    intro.dataset.lwIntro = "";
+    shell.append(intro);
+
+    const notices = el("div"); notices.dataset.lwNotice = "";
+    const warnings = el("div"); warnings.dataset.lwWarnings = "";
+    shell.append(notices, warnings);
     updateWarnings();
-    if (!state) { shell.append(el("div", "lw-loading", "Loading Director settings…")); updateDirectorStatus(); renderNotice(); return; }
+    if (!state) { shell.append(el("div", "lw-loading", "Loading LumiWorld settings…")); updateDirectorStatus(); renderNotice(); return; }
+
+    shell.append(viewTabs());
+
+    const directorView = renderDirectorView();
+    const jevView = renderJevView();
+    shell.append(directorView, jevView);
+
+    const footer = el("footer", "lw-footer");
+    footer.append(el("span", undefined, `LumiWorld ${VERSION}`));
+    const footerStatus = el("div", "lw-footer-status");
+    const saveStatus = el("span", "lw-save"); saveStatus.dataset.lwSaveStatus = "";
+    saveStatus.setAttribute("role", "status");
+    const retry = button("Retry save", () => scheduleSave(0)); retry.dataset.lwRetry = "";
+    footerStatus.append(saveStatus, retry); footer.append(footerStatus); shell.append(footer);
+
+    flushMounts();
+    activateView(activeTab);
+    updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateJevTestButton(); renderNotice();
+  }
+
+  /** Director surface: connection, what it runs for, and what it sees. */
+  function renderDirectorView(): HTMLElement {
+    const view = el("div", "lw-panel-view");
+    view.dataset.lwView = "director";
+    view.setAttribute("role", "tabpanel");
+    view.setAttribute("aria-labelledby", "lw-tab-director");
 
     const core = el("section", "lw-setup"); core.setAttribute("aria-label", "Director connection");
+    core.append(el("h2", "lw-section-title", "Default Director · cheap route"));
     const fields = el("div", "lw-fields"); fields.append(connectionField(), modelField()); core.append(fields);
     const actions = el("div", "lw-actions");
     const test = button("Test Director", testDirector, true); test.dataset.lwTest = "";
     const testHint = el("div", "lw-hint lw-test-hint"); testHint.dataset.lwTestHint = "";
     testHint.id = "lw-test-hint"; test.setAttribute("aria-describedby", testHint.id);
-    actions.append(test, testHint); core.append(actions); shell.append(core);
+    actions.append(test, testHint); core.append(actions); view.append(core);
+
+    const strong = el("section", "lw-setup"); strong.setAttribute("aria-label", "Strong Director target");
+    strong.append(el("h2", "lw-section-title", "Strong Director · optional"));
+    strong.append(el("p", "lw-hint", "Used when Jev’s model routing chooses strong. Leave both fields blank to use the default Director model."));
+    const strongFields = el("div", "lw-fields");
+    strongFields.append(connectionField(true), modelField(true)); strong.append(strongFields);
+    view.append(strong);
 
     const generation = el("section", "lw-section");
     const options = el("fieldset", "lw-options");
@@ -444,7 +1747,7 @@ export function setup(ctx: SpindleFrontendContext) {
         ? [...draft.generationTypes, type] : draft.generationTypes.filter((item) => item !== type) }));
       label.append(input, el("span", undefined, LABELS[type])); options.append(label);
     }
-    generation.append(options); shell.append(generation);
+    generation.append(options); view.append(generation);
 
     const context = el("section", "lw-section"); context.append(el("h2", "lw-section-title", "Include in context"));
     const contextRows = el("div", "lw-context");
@@ -452,7 +1755,7 @@ export function setup(ctx: SpindleFrontendContext) {
       switchField("Character", draft.includeCharacter, (includeCharacter) => mutate({ includeCharacter })),
       switchField("User persona", draft.includeUserPersona, (includeUserPersona) => mutate({ includeUserPersona })),
       switchField("Activated World Info", draft.includeWorldInfoEntries, (includeWorldInfoEntries) => mutate({ includeWorldInfoEntries })),
-    ); context.append(contextRows); shell.append(context);
+    ); context.append(contextRows); view.append(context);
 
     const notes = el("details", "lw-details"); notes.open = notesOpen;
     notes.addEventListener("toggle", () => { notesOpen = notes.open; });
@@ -463,42 +1766,90 @@ export function setup(ctx: SpindleFrontendContext) {
     notesSummary.append(notesCopy); notes.append(notesSummary);
     const notesBody = el("div", "lw-details-body");
     notesBody.append(textAreaField("Private guidance", "additionalNotes", draft.additionalNotes));
-    notes.append(notesBody); shell.append(notes);
+    notes.append(notesBody); view.append(notes);
 
+    // Director request settings and templates belong here rather than in Jev.
     const advanced = el("details", "lw-details"); advanced.open = advancedOpen;
     advanced.addEventListener("toggle", () => { advancedOpen = advanced.open; });
     const advancedSummary = el("summary"); const advancedCopy = el("span", "lw-summary-copy");
-    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Response limits & prompt templates"));
+    advancedCopy.append(el("span", undefined, "Advanced settings"), el("span", "lw-hint", "Request settings & prompt templates"));
     advancedSummary.append(advancedCopy); advanced.append(advancedSummary);
     const advancedBody = el("div", "lw-details-body");
     const parameters = el("div", "lw-fields");
     parameters.append(
       numberField("Temperature", "temperature", draft.temperature, 0, 2, .05),
-      numberField("Max tokens", "maxTokens", draft.maxTokens, 64, Number.MAX_SAFE_INTEGER, 1),
       numberField("Timeout (ms)", "timeoutMs", draft.timeoutMs, 1000, 300000, 1000, "Lumiverse limits interceptors to five minutes."),
       numberField("History messages", "historyMessageLimit", draft.historyMessageLimit, 0, Number.MAX_SAFE_INTEGER, 1),
       numberField("Prompt cap (chars)", "maxInputChars", draft.maxInputChars, 4000, 500000, 1000),
       numberField("Run log limit", "runLogLimit", draft.runLogLimit, 0, 50, 1),
     ); advancedBody.append(parameters);
-    advanced.append(advancedBody); shell.append(advanced);
+    advanced.append(advancedBody); view.append(advanced);
 
     const templates = el("details", "lw-details"); templates.open = templatesOpen;
     templates.addEventListener("toggle", () => { templatesOpen = templates.open; });
     templates.append(el("summary", undefined, "Prompt templates"));
     const templateBody = el("div", "lw-details-body");
+    const activePreset = draft.promptPresets.find((preset) => preset.id === draft.activePromptPresetId);
+    templateBody.append(field("Active preset", selectControl(
+      draft.activePromptPresetId,
+      [{ value: BUILTIN_PROMPT_PRESET_ID, label: "Built-in default" },
+        ...draft.promptPresets.map((preset) => ({ value: preset.id, label: preset.name }))],
+      "Prompt preset",
+      choosePromptPreset,
+    )));
+    const presetActions = el("div", "lw-preset-actions");
+    const create = button("New preset from current", createPromptPreset);
+    create.disabled = draft.promptPresets.length >= 20;
+    presetActions.append(create);
+    if (activePreset) {
+      presetActions.append(button("Use built-in defaults", () => choosePromptPreset(BUILTIN_PROMPT_PRESET_ID)));
+      presetActions.append(button(pendingPresetDeleteId === activePreset.id ? "Confirm delete preset" : "Delete preset",
+        () => deletePromptPreset(activePreset.id)));
+    }
+    templateBody.append(presetActions);
+    if (activePreset) {
+      const name = textInput(activePreset.name, "Name this preset", "Preset name", () => {});
+      name.maxLength = 80;
+      name.addEventListener("change", () => {
+        const next = name.value.trim();
+        if (!next) { name.value = activePreset.name; return; }
+        mutate({ promptPresets: draft.promptPresets.map((preset) => preset.id === activePreset.id
+          ? { ...preset, name: next } : preset) }, true);
+      });
+      templateBody.append(field("Preset name", name));
+    } else {
+      templateBody.append(el("p", "lw-hint", "The built-in templates are always available. Create a preset to edit a copy."));
+    }
     templateBody.append(textAreaField("System template", "systemTemplate", draft.systemTemplate),
       textAreaField("User template", "userTemplate", draft.userTemplate));
     templates.append(templateBody); advancedBody.append(templates);
 
-    const footer = el("footer", "lw-footer");
-    footer.append(el("span", undefined, `LumiWorld ${VERSION}`));
-    const footerStatus = el("div", "lw-footer-status");
-    const saveStatus = el("span", "lw-save"); saveStatus.dataset.lwSaveStatus = "";
-    saveStatus.setAttribute("role", "status");
-    const retry = button("Retry save", () => scheduleSave(0)); retry.dataset.lwRetry = "";
-    footerStatus.append(saveStatus, retry); footer.append(footerStatus); shell.append(footer);
+    return view;
+  }
 
-    flushMounts(); updateDirectorStatus(); updateSaveStatus(); updateTestButton(); renderNotice();
+  /** Jev surface: what Jev is, how each gate behaves, and what it decided. */
+  function renderJevView(): HTMLElement {
+    const view = el("div", "lw-panel-view");
+    view.dataset.lwView = "jev";
+    view.setAttribute("role", "tabpanel");
+    view.setAttribute("aria-labelledby", "lw-tab-jev");
+
+    const head = el("div", "lw-view-head");
+    const copy = el("div", "lw-row-copy");
+    const line = el("div", "lw-title-row");
+    line.append(el("h2", "lw-view-title", "Jev"));
+    const statusSlot = el("span");
+    statusSlot.dataset.lwJevStatus = "";
+    line.append(statusSlot);
+    copy.append(line, el("p", "lw-view-intro",
+      "Jev decides whether a turn needs the Director, then verifies the draft before it reaches your reply."));
+    head.append(copy);
+    view.append(head);
+
+    view.append(jevSection());
+    view.append(gatesSection());
+    view.append(diagnosticsSection());
+    return view;
   }
 
   cleanups.push(ctx.onBackendMessage((payload) => {
@@ -509,6 +1860,14 @@ export function setup(ctx: SpindleFrontendContext) {
       if (drawer.root.contains(document.activeElement) && document.activeElement?.matches("input,textarea,select,[role=combobox]")) {
         updateWarnings(); updateDirectorStatus(); updateSaveStatus(); updateTestButton();
       } else render();
+      return;
+    }
+    if (message.type === "run_logged") {
+      if (state) {
+        state = { ...state, runs: [message.run, ...state.runs.filter((run) => run.id !== message.run.id)]
+          .sort((left, right) => right.timestamp - left.timestamp).slice(0, state.settings.runLogLimit) };
+        if (!drawer.root.contains(document.activeElement) || !document.activeElement?.matches("input,textarea,select,[role=combobox]")) render();
+      }
       return;
     }
     if (message.type === "settings_saved") {
@@ -530,6 +1889,18 @@ export function setup(ctx: SpindleFrontendContext) {
       testPending = false; updateTestButton();
       showNotice(message.ok
         ? { tone: "success", text: `Test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` }
+        : { tone: "error", text: message.error }, 15000);
+      return;
+    }
+    if (message.type === "jev_test_result") {
+      jevTestPending = false;
+      if (message.ok) jevKeyDraft = "";
+      updateJevTestButton();
+      showNotice(message.ok
+        ? {
+            tone: "success",
+            text: `Jev answered on ${message.provider} / ${message.model} in ${message.latencyMs}ms (signal: ${message.answer}${message.confidence !== null ? `, confidence ${message.confidence.toFixed(2)}` : ""}).`,
+          }
         : { tone: "error", text: message.error }, 15000);
       return;
     }

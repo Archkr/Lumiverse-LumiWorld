@@ -1,14 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_SYSTEM_TEMPLATE,
+  ENCLAVE_KEY_PATTERN,
+  jevSecretKey,
   KeyedOperationLock,
   MAX_DIRECTOR_TIMEOUT_MS,
+  PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_SYSTEM_TEMPLATE,
   PREVIOUS_DEFAULT_USER_TEMPLATE,
   PRE_CONTEXT_DEFAULT_USER_TEMPLATE,
   PRE_REBRAND_DEFAULT_SYSTEM_TEMPLATE,
   appendRunLog,
   buildControllerMessages,
+  currentUserContextMessages,
   buildInjectedDirective,
   describeEmptyControllerResponse,
   extractControllerResponseText,
@@ -17,6 +22,7 @@ import {
   normalizeSettings,
   parseControllerDirective,
   parseControllerDirectiveFromResponse,
+  parseControllerThreadLabelFromResponse,
   resolveControllerTarget,
   resolveWorldInfoContextMessages,
   extractActivatedWorldInfoEntries,
@@ -28,6 +34,23 @@ import {
   type LlmMessageLike,
   type RunLogEntry,
 } from "./shared";
+
+describe("Jev enclave key", () => {
+  test("uses a key the host's enclave accepts", () => {
+    // The host rejects anything outside alphanumeric, underscore, dash, and dot.
+    // A colon separator silently broke every read and write.
+    for (const provider of ["typesafe", "openrouter"] as const) {
+      const key = jevSecretKey(provider);
+      expect(key).toMatch(ENCLAVE_KEY_PATTERN);
+      expect(key).not.toContain(":");
+      expect(key.length).toBeLessThanOrEqual(128);
+    }
+  });
+
+  test("namespaces the key per provider so one provider cannot overwrite the other", () => {
+    expect(jevSecretKey("typesafe")).not.toBe(jevSecretKey("openrouter"));
+  });
+});
 
 describe("settings normalization", () => {
   test("clamps numeric settings and restores empty templates", () => {
@@ -54,7 +77,7 @@ describe("settings normalization", () => {
     expect(settings.connectionId).toBe("conn-1");
     expect(settings.modelOverride).toBe("controller-model");
     expect(settings.temperature).toBe(2);
-    expect(settings.maxTokens).toBe(64);
+    expect("maxTokens" in settings).toBe(false);
     expect(settings.timeoutMs).toBe(1000);
     expect(settings.maxInputChars).toBe(4000);
     expect(settings.historyMessageLimit).toBe(0);
@@ -66,6 +89,119 @@ describe("settings normalization", () => {
     expect(settings.systemTemplate).toBe(DEFAULT_SETTINGS.systemTemplate);
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
     expect(settings.runLogLimit).toBe(50);
+    // A settings file written before v0.5 must load with Jev off.
+    expect(settings.jev).toEqual(DEFAULT_SETTINGS.jev);
+    expect(settings.jev.enabled).toBe(false);
+  });
+
+  test("normalizes the Jev section and clamps its numeric fields", () => {
+    const settings = normalizeSettings({
+      jev: {
+        enabled: true,
+        provider: "openrouter",
+        model: "  typesafe/jev-1.13  ",
+        baseUrlOverride: "  https://example.test/api/  ",
+        timeoutMs: 999999,
+        maxStateChars: 5,
+        historyMessageLimit: 900,
+        minConfidence: 4,
+        retryOnRateLimit: false,
+        worldStateEnabled: false,
+        gatePolicy: {},
+      },
+    });
+
+    expect(settings.jev.enabled).toBe(true);
+    expect(settings.jev.provider).toBe("openrouter");
+    expect(settings.jev.model).toBe("typesafe/jev-1.13");
+    expect(settings.jev.baseUrlOverride).toBe("https://example.test/api");
+    expect(settings.jev.timeoutMs).toBe(60000);
+    expect(settings.jev.maxStateChars).toBe(2000);
+    expect(settings.jev.historyMessageLimit).toBe(24);
+    expect(settings.jev.minConfidence).toBe(1);
+    expect(settings.jev.retryOnRateLimit).toBe(false);
+    expect(settings.jev.worldStateEnabled).toBe(false);
+  });
+
+  test("migrates old Jev context from Director settings, then keeps explicit Jev switches independent", () => {
+    const legacy = normalizeSettings({
+      includeCharacter: false, includeUserPersona: true, includeWorldInfoEntries: true,
+      jev: { enabled: true },
+    });
+    expect([legacy.jev.includeCharacter, legacy.jev.includeUserPersona, legacy.jev.includeWorldInfoEntries])
+      .toEqual([false, true, true]);
+    const independent = normalizeSettings({
+      ...legacy,
+      includeCharacter: true, includeUserPersona: false, includeWorldInfoEntries: false,
+    });
+    expect([independent.jev.includeCharacter, independent.jev.includeUserPersona, independent.jev.includeWorldInfoEntries])
+      .toEqual([false, true, true]);
+  });
+
+  test("falls back to TypeSafe for an unknown Jev provider", () => {
+    expect(normalizeSettings({ jev: { provider: "nonsense" } }).jev.provider).toBe("typesafe");
+  });
+
+  test("drops malformed gate policy entries", () => {
+    const settings = normalizeSettings({
+      jev: {
+        gatePolicy: {
+          smart_trigger: { enabled: false, threshold: 0.8, fallback: "skip" },
+          rounded: { threshold: 9 },
+          bad_fallback: { fallback: "explode" },
+          empty: {},
+          "  ": { enabled: true },
+        },
+      },
+    });
+
+    expect(settings.jev.gatePolicy.smart_trigger).toEqual({ enabled: false, threshold: 0.8, fallback: "skip" });
+    expect(settings.jev.gatePolicy.rounded).toEqual({ threshold: 1 });
+    expect(settings.jev.gatePolicy.bad_fallback).toBeUndefined();
+    expect(settings.jev.gatePolicy.empty).toBeUndefined();
+    expect(Object.keys(settings.jev.gatePolicy)).toEqual(["smart_trigger", "rounded"]);
+  });
+
+  test("normalizes the optional strong Director target", () => {
+    const settings = normalizeSettings({
+      strongConnectionId: "  conn-strong  ",
+      strongModelOverride: "  big-model  ",
+    });
+    expect(settings.strongConnectionId).toBe("conn-strong");
+    expect(settings.strongModelOverride).toBe("big-model");
+    const cleared = normalizeSettings({ strongConnectionId: "   ", strongModelOverride: "" });
+    expect(cleared.strongConnectionId).toBeNull();
+    expect(cleared.strongModelOverride).toBe("");
+  });
+
+  test("preserves a previous custom prompt as a named preset", () => {
+    const migrated = normalizeSettings({
+      systemTemplate: "Legacy system {{prompt}}",
+      userTemplate: "Legacy user {{prompt}}",
+    });
+    expect(migrated.activePromptPresetId).toBe("imported");
+    expect(migrated.promptPresets).toEqual([{
+      id: "imported", name: "Previous custom prompt",
+      systemTemplate: "Legacy system {{prompt}}", userTemplate: "Legacy user {{prompt}}",
+    }]);
+    expect(migrated.systemTemplate).toBe("Legacy system {{prompt}}");
+  });
+
+  test("switches prompt pairs while keeping the built-in pair immutable", () => {
+    const presets = [
+      { id: "a", name: "A", systemTemplate: "System A", userTemplate: "User A {{prompt}}" },
+      { id: "b", name: "B", systemTemplate: "System B", userTemplate: "User B {{prompt}}" },
+    ];
+    const a = normalizeSettings({ promptPresets: presets, activePromptPresetId: "a" });
+    const b = normalizeSettings({ ...a, activePromptPresetId: "b" });
+    const builtin = normalizeSettings({ ...b, activePromptPresetId: "builtin",
+      systemTemplate: "Attempted overwrite", userTemplate: "Attempted overwrite" });
+    expect([a.systemTemplate, a.userTemplate]).toEqual(["System A", "User A {{prompt}}"]);
+    expect([b.systemTemplate, b.userTemplate]).toEqual(["System B", "User B {{prompt}}"]);
+    expect([builtin.systemTemplate, builtin.userTemplate]).toEqual([
+      DEFAULT_SETTINGS.systemTemplate, DEFAULT_SETTINGS.userTemplate,
+    ]);
+    expect(builtin.promptPresets).toEqual(presets);
   });
 
   test("migrates previous built-in controller templates", () => {
@@ -88,8 +224,23 @@ describe("settings normalization", () => {
     expect(settings.userTemplate).toBe(DEFAULT_SETTINGS.userTemplate);
   });
 
-  test("does not cap controller max tokens at legacy 4096", () => {
-    expect(normalizeSettings({ maxTokens: 32768 }).maxTokens).toBe(32768);
+  test("upgrades the previous built-in template to request structured thread names", () => {
+    const previous = PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE
+      .replace('{"director_note":"...","thread_label":"optional short name of the specific story thread developed"}', '{"director_note":"..."}')
+      .replace("Omit thread_label when no specific thread can be named. Plain text is acceptable if needed. Keep the note under {{maxDirectiveChars}} characters.",
+        "Plain text is acceptable if needed. Keep it under {{maxDirectiveChars}} characters.");
+    const settings = normalizeSettings({ systemTemplate: previous });
+    expect(settings.activePromptPresetId).toBe("builtin");
+    expect(settings.systemTemplate).toBe(DEFAULT_SYSTEM_TEMPLATE);
+  });
+
+  test("migrates the built-in capped template and ignores its old token setting", () => {
+    const settings = normalizeSettings({
+      systemTemplate: PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE,
+      maxTokens: 420,
+    });
+    expect(settings.systemTemplate).toBe(DEFAULT_SYSTEM_TEMPLATE);
+    expect("maxTokens" in settings).toBe(false);
   });
 
   test("uses Lumiverse's real five-minute interceptor ceiling", () => {
@@ -217,6 +368,24 @@ describe("message serialization and prompt trimming", () => {
     const selected = selectChatHistoryMessagesForController(messages, 2);
     expect(selected.map((message) => message.content)).toEqual(["recent user", "recent assistant"]);
     expect(selectChatHistoryMessagesForController(messages, 0)).toEqual([]);
+  });
+
+  test("keeps the latest marked player action outside trimmed history and excludes unmarked user blocks", () => {
+    const messages: LlmMessageLike[] = [
+      { role: "user", content: "I photograph Shido.", __isChatHistory: true },
+      { role: "assistant", content: "The room reacts.", __isChatHistory: true },
+      { role: "user", content: "Do not move my character for me." },
+      { role: "user", content: "<my_self_reasoning>Internal prompt block</my_self_reasoning>" },
+      { role: "user", content: "World Info text", __isWorldInfoEntry: true },
+    ];
+    expect(selectChatHistoryMessagesForController(messages, 1)).toHaveLength(1);
+    const current = currentUserContextMessages(messages, 10000);
+    expect(current.map((message) => String(message.content))).toEqual([
+      expect.stringContaining("I photograph Shido."),
+    ]);
+    expect(JSON.stringify(current)).not.toContain("Do not move my character for me.");
+    expect(JSON.stringify(current)).not.toContain("Internal prompt block");
+    expect(JSON.stringify(current)).not.toContain("World Info text");
   });
 
   test("builds controller input from resolved context blocks and recent chat history", () => {
@@ -347,9 +516,11 @@ describe("controller prompt and directive parsing", () => {
       { generationType: "swipe", chatId: "chat-1", connectionId: "conn-1", timestamp: "now", user: "Alice", char: "Bob" },
     );
 
-    expect(messages[0].content).toBe("System sees swipe for Alice");
+    expect(messages[0].content).toContain("System sees swipe for Alice");
+    expect(messages[0].content).toContain("Only marked chat history establishes what has happened");
     expect(messages[1].content).toContain("Prompt=hello");
     expect(messages[1].content).toContain("Chat=chat-1");
+    expect(messages[1].content).toContain("Max=no fixed limit");
     expect(messages[1].content).toContain("Char=Bob");
   });
 
@@ -386,6 +557,15 @@ describe("controller prompt and directive parsing", () => {
     expect(parseControllerDirective('{"director_note":"The lights fail."}')).toBe("The lights fail.");
     expect(parseControllerDirective("```json\n{\"directive\":\"Fog rolls in.\"}\n```")).toBe("Fog rolls in.");
     expect(parseControllerDirective("Let the floorboards creak once.")).toBe("Let the floorboards creak once.");
+    expect(parseControllerDirective('{"thread_label":"Nia suspects Woodman"}')).toBeNull();
+    expect(parseControllerThreadLabelFromResponse({ content: '{"director_note":"Let Nia press her question.","thread_label":"Nia suspects Woodman"}' })).toBe("Nia suspects Woodman");
+    expect(parseControllerThreadLabelFromResponse({ content: "Let Nia press her question." })).toBeNull();
+  });
+
+  test("keeps a Director note longer than the former 2200-character limit", () => {
+    const note = "Advance the scene. ".repeat(300);
+    expect(parseControllerDirective(JSON.stringify({ director_note: note }))).toBe(note.trim());
+    expect(parseControllerDirectiveFromResponse({ choices: [{ message: { content: JSON.stringify({ director_note: note }) } }] })).toBe(note.trim());
   });
 
   test("extracts controller text from common provider response shapes", () => {
@@ -417,6 +597,7 @@ describe("controller prompt and directive parsing", () => {
     const injected = buildInjectedDirective("The lock clicks from the other side.");
     expect(injected).toContain("[LumiWorld Director]");
     expect(injected).toContain("Do not mention LumiWorld");
+    expect(injected).toContain("saved chat history is authoritative");
     expect(injected).toContain("The lock clicks");
   });
 });
@@ -460,5 +641,106 @@ describe("run log retention", () => {
       worldInfoFetchError: "one entry was missing",
     });
     expect("worldInfoContent" in (runs[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  test("round-trips Jev gate diagnostics and drops malformed records", () => {
+    const runs = normalizeRunLog([
+      {
+        id: "run-jev",
+        timestamp: 20,
+        status: "success",
+        jev: {
+          used: true,
+          enabled: true,
+          provider: "typesafe",
+          model: "jev-latest",
+          resolvedModel: "jev-1.13.0",
+          status: "ok",
+          error: null,
+          requestCount: 2,
+          inputTokens: 240,
+          outputTokens: 24,
+          costUsd: 0.00001,
+          gatePhaseMs: 120,
+          verifyPhaseMs: 90,
+          gateCount: 2,
+          fallbackCount: 1,
+          escalatedCount: 0,
+          stateChars: 900,
+          stateCompacted: false,
+          gates: [
+            {
+              gateId: "smart_trigger", label: "Smart Director triggering", primitive: "noul", phase: "gate",
+              value: true, probability: 0.95, confidence: 0.95, confidenceDerived: true,
+              threshold: 0.6, escalated: false, usedFallback: false, fallback: "run",
+            },
+            { gateId: "healthy" },
+            {
+              gateId: "continuity_guard", label: "Continuity guard", primitive: "choice", phase: "verify",
+              value: "violation", probability: 0.8, confidence: 0.8, confidenceDerived: false,
+              threshold: 0.5, escalated: true, usedFallback: true, fallback: "soften",
+              probabilities: { violation: 0.8, consistent: 0.2 }, note: "escalated",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const jev = runs[0]?.jev;
+    expect(jev?.used).toBe(true);
+    expect(jev?.status).toBe("ok");
+    expect(jev?.resolvedModel).toBe("jev-1.13.0");
+    expect(jev?.inputTokens).toBe(240);
+    expect(jev?.stateChars).toBe(900);
+    // The malformed record is dropped rather than failing the whole entry.
+    expect(jev?.gates).toHaveLength(2);
+    expect(jev?.gates[0]?.value).toBe(true);
+    expect(jev?.gates[1]?.probabilities).toEqual({ violation: 0.8, consistent: 0.2 });
+    expect(jev?.gates[1]?.fallback).toBe("soften");
+  });
+
+  test("treats a corrupt Jev block as absent", () => {
+    const runs = normalizeRunLog([
+      { id: "run-junk", timestamp: 30, status: "success", jev: "not an object" },
+      { id: "run-partial", timestamp: 31, status: "success", jev: { gates: "nope", inputTokens: "x" } },
+    ]);
+    // Runs are returned newest first.
+    const partial = runs.find((run) => run.id === "run-partial")?.jev;
+    expect(runs.find((run) => run.id === "run-junk")?.jev).toBeNull();
+    expect(partial?.gates).toEqual([]);
+    expect(partial?.inputTokens).toBeNull();
+    expect(partial?.status).toBe("skipped");
+    expect(partial?.requestCount).toBe(0);
+  });
+
+  test("round-trips full turn text and separate Jev passes", () => {
+    const record = {
+      gateId: "smart_trigger", label: "Smart Director triggering", primitive: "noul", phase: "gate",
+      value: true, probability: 0.9, confidence: 0.9, confidenceDerived: true,
+      threshold: 0.55, escalated: false, usedFallback: false, fallback: "run",
+    };
+    const runs = normalizeRunLog([{ id: "full-turn", timestamp: 99, status: "success", channel: "director",
+      directorDurationMs: 77,
+      trace: { chatId: "chat", generationId: "gen", dryRun: false, generationOutcome: "completed",
+        generationError: null, messageId: "message", finalReply: "visible reply", worldStateOutcome: "saved",
+        worldStateBeforeJson: '{"turn":1}', worldStateAfterJson: '{"turn":2}',
+        settingsJson: '{"jev":{"enabled":true}}', incomingMessagesJson: '[{"content":"chat text"}]',
+        directorMessagesJson: '[{"content":"prompt"}]', initialDirective: "draft",
+        finalDirective: "revised", initialResponseJson: '{"content":"draft"}' },
+      jev: { used: true, enabled: true, status: "ok", requestCount: 1, gates: [record],
+        phases: [{ stage: "before_director", questionCount: 1, requestCount: 1, durationMs: 30,
+          inputTokens: 10, outputTokens: 2, costUsd: 0.001, resolvedModel: "jev",
+          stateChars: 100, stateCompacted: false, error: null, gates: [record],
+          requestJson: '{"state":"chat text"}', responseJson: '[{"body":"response"}]' }],
+        revision: { action: "soften", reason: "conflict", status: "revised", durationMs: 20,
+          error: null, initialDirectivePreview: "draft", revisedDirectivePreview: "revised",
+          unresolved: false, promptJson: '[{"content":"repair"}]', revisedDirective: "revised",
+          responseJson: '{"content":"revised"}' } },
+    }]);
+    expect(runs[0]?.directorDurationMs).toBe(77);
+    expect(runs[0]?.trace?.finalReply).toBe("visible reply");
+    expect(runs[0]?.trace?.incomingMessagesJson).toContain("chat text");
+    expect(runs[0]?.jev?.phases[0]?.requestJson).toContain("chat text");
+    expect(runs[0]?.jev?.revision?.revisedDirective).toBe("revised");
   });
 });
