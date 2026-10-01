@@ -4,7 +4,7 @@
 
 **A private Director for your next Lumiverse reply.**
 
-[![Version](https://img.shields.io/badge/version-0.5.0--experimental-8b7cf6)](./spindle.json)
+[![Version](https://img.shields.io/badge/version-0.5.0-8b7cf6)](./spindle.json)
 [![Lumiverse](https://img.shields.io/badge/Lumiverse-%E2%89%A5%201.0.6-d4a35a)](https://github.com/prolix-oc/Lumiverse)
 [![License](https://img.shields.io/badge/license-Lumiverse%20Community%202.0-6f9f78)](./LICENSE.md)
 
@@ -15,10 +15,6 @@
 LumiWorld prepares a short piece of direction before the main model writes its next reply. It considers the recent conversation and the context you enable, then suggests how the environment, NPCs, consequences, or hidden pressures should develop.
 
 The resulting note is added to the main model’s prompt. Your chat model still writes the scene.
-
-**Version 0.5.0-experimental adds Jev**, an optional structured decision model. Jev answers fixed-choice questions before and after the Director writes its note. Some answers control whether and how the Director runs; others guide its writing or appear only in diagnostics. [The decision guide](#jev-decisions) spells out the difference. The floating widget and World Agent simulation remain removed.
-
-Jev is opt-in. With no Jev connection configured, LumiWorld behaves exactly as the Director-only baseline.
 
 > **Private means prompt context:** Director notes are intended to stay out of the visible story. They are sent to the selected models and can be inspected in Prompt Breakdown. This is not an encryption or secrecy guarantee.
 
@@ -93,7 +89,7 @@ No macro needs to be added to your character card or preset for the Director to 
 | Requirement | Value |
 |---|---|
 | Lumiverse | `1.0.6` or newer |
-| Extension version | `0.5.0-experimental` |
+| Extension version | `0.5.0` |
 | Director connection | An explicitly selected Lumiverse connection profile with a usable model |
 | Essential permissions | `interceptor` and `generation` |
 | Build output | Committed `dist/backend.js` and `dist/frontend.js` |
