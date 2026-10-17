@@ -145,7 +145,7 @@ function score(
   };
 }
 
-/** Gates that are on by default: the core loop, all of them fail-open. */
+/** Gates that are on by default: the core loop. */
 const CORE_GATES: ReadonlySet<string> = new Set([
   "smart_trigger",
   "context_filter",
@@ -765,6 +765,24 @@ export const GATE_CATALOG: readonly GateDefinition[] = withCore([
 
 export const GATE_BY_ID: ReadonlyMap<string, GateDefinition> = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
 
+const VERIFICATION_CHECKS: ReadonlyArray<{
+  id: string; clean: GateValue; blocking: GateValue[]; action: RepairAction;
+}> = [
+  { id: "player_agency", clean: false, blocking: [true], action: "patch" },
+  { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
+  { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
+  { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" },
+  { id: "director_verification", clean: "clean", blocking: ["violation"], action: "full_retry" },
+];
+
+const VERIFICATION_FALLBACKS: readonly GateFallback[] = ["retry", "patch", "soften", "drop", "accept", "ignore", "skip"];
+
+/** Only expose actions that the consumer of this decision actually implements. */
+export function supportedGateFallbacks(definition: GateDefinition): readonly GateFallback[] {
+  if (definition.id === "smart_trigger") return ["run", "skip"];
+  return VERIFICATION_CHECKS.some((check) => check.id === definition.id) ? VERIFICATION_FALLBACKS : [];
+}
+
 /** Only accepted, pre-Director craft/world choices may steer the Director. */
 export function directorGuidanceFromGates(records: JevGateRecord[]): string | null {
   const lines: string[] = [];
@@ -802,7 +820,8 @@ export function resolveGatePolicy(definition: GateDefinition, settings: JevSetti
   const override: GatePolicy | undefined = settings.gatePolicy[definition.id];
   const enabled = override?.enabled ?? definition.enabledByDefault;
   const threshold = override?.threshold ?? (definition.id === "confidence_escalation" ? settings.minConfidence : definition.threshold);
-  const fallback = override?.fallback ?? definition.fallback;
+  const supported = supportedGateFallbacks(definition);
+  const fallback = override?.fallback && supported.includes(override.fallback) ? override.fallback : definition.fallback;
   return { definition, enabled, threshold, fallback };
 }
 
@@ -973,7 +992,7 @@ export function resolveGateAnswer(
     probability: null,
     confidence: null,
     confidenceDerived: false,
-    threshold: policy.threshold,
+    threshold: Math.max(policy.threshold, resolveContext.minConfidence),
     escalated: false,
     usedFallback: false,
     fallback: policy.fallback,
@@ -1011,6 +1030,8 @@ export function resolveGateAnswer(
   }
 
   const escalated = confidence !== null && confidence < Math.max(policy.threshold, resolveContext.minConfidence);
+  const check = VERIFICATION_CHECKS.find((check) => check.id === definition.id);
+  const inconclusive = check && value !== check.clean && !check.blocking.includes(value);
   const escalatedNote = escalated
     ? `Confidence ${confidence !== null ? confidence.toFixed(2) : "unknown"} is below the ${Math.max(policy.threshold, resolveContext.minConfidence).toFixed(2)} floor, so the fallback applied.`
     : undefined;
@@ -1022,9 +1043,10 @@ export function resolveGateAnswer(
     confidence,
     confidenceDerived,
     escalated,
-    usedFallback: escalated,
+    usedFallback: escalated || Boolean(inconclusive),
     probabilities,
-    note: escalatedNote ?? (confidenceDerived ? "Noul answers carry no confidence; this value is derived from the probability." : undefined),
+    note: escalatedNote ?? (inconclusive ? "Jev's answer was inconclusive, so the configured fallback applied."
+      : confidenceDerived ? "Noul answers carry no confidence; this value is derived from the probability." : undefined),
   };
 }
 
@@ -1054,13 +1076,14 @@ export interface DirectorDecision {
 /**
  * Smart triggering is the only gate that can cancel the Director.
  *
- * When `smart_trigger` did not answer, or its confidence was too low to act on,
- * the turn runs ungated rather than silently skipping direction.
+ * An unanswered or low-confidence trigger uses its configured run/skip action.
  */
 export function shouldRunDirector(records: JevGateRecord[]): DirectorDecision {
   const trigger = gateRecordById(records, "smart_trigger");
   if (!trigger) return { run: true, reason: null };
-  if (trigger.usedFallback || trigger.value === null) return { run: true, reason: null };
+  if (trigger.usedFallback || trigger.value === null) return trigger.fallback === "skip"
+    ? { run: false, reason: "Smart Director triggering was inconclusive; its fallback skips the Director." }
+    : { run: true, reason: null };
   if (matches(trigger.value, true)) return { run: true, reason: null };
   return { run: false, reason: "Jev judged that this turn does not need Director intervention." };
 }
@@ -1142,37 +1165,48 @@ export type VerificationVerdict = "clean" | "inconclusive" | "violation" | "unve
 
 /** Only guardrails that can damage the visible scene block a Director note. */
 export function assessVerification(records: JevGateRecord[], phaseError: string | null = null): {
-  verdict: VerificationVerdict; reason: string | null; repair: RepairDecision | null;
+  verdict: VerificationVerdict; reason: string | null; repair: RepairDecision | null; withhold: boolean;
 } {
-  if (phaseError) return { verdict: "unverified", reason: phaseError, repair: null };
-  const checks: Array<{ id: string; clean: unknown; blocking: unknown[]; action: RepairAction }> = [
-    { id: "player_agency", clean: false, blocking: [true], action: "patch" },
-    { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
-    { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
-    { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" },
-  ];
-  let firstInconclusive: { reason: string; action: RepairAction } | null = null;
+  if (phaseError) return { verdict: "unverified", reason: phaseError, repair: null, withhold: false };
+  let firstInconclusive: RepairDecision | null = null;
+  let violation: RepairDecision | null = null;
+  let withholdReason: string | null = null;
+  const accepted: string[] = [];
   let found = false;
-  for (const check of checks) {
+  for (const check of VERIFICATION_CHECKS) {
     const record = gateRecordById(records, check.id);
     if (!record) continue; // Disabled or inapplicable gates do not block.
     found = true;
     if (record.usedFallback || record.value === null || record.value !== check.clean && !check.blocking.includes(record.value)) {
-      firstInconclusive ??= { reason: `${record.label} was inconclusive.`, action: check.action };
+      const reason = `${record.label} was inconclusive.`;
+      switch (record.fallback) {
+        case "accept":
+        case "ignore":
+          accepted.push(`${record.label} was inconclusive; its fallback allows the note without this check.`);
+          break;
+        case "skip":
+          withholdReason ??= `${record.label} was inconclusive; its fallback withholds the note.`;
+          break;
+        default: {
+          const action = record.fallback === "retry" ? "full_retry"
+            : record.fallback === "patch" ? "patch"
+            : record.fallback === "soften" ? "soften"
+            : record.fallback === "drop" ? "drop_claim" : check.action;
+          firstInconclusive ??= { reason, action };
+        }
+      }
     } else if (check.blocking.includes(record.value)) {
-      const reason = `${record.label} found a problem${record.usedFallback ? " with low confidence" : ""}.`;
-      if (record.usedFallback) firstInconclusive ??= { reason, action: check.action };
-      else return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: check.action, reason } };
+      violation ??= { reason: `${record.label} found a problem.`, action: check.action };
     }
   }
-  const overall = gateRecordById(records, "director_verification");
-  if (overall?.value === "violation" && !overall.usedFallback) {
-    const reason = "Overall Director verification found a problem.";
-    return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: "full_retry", reason } };
+  if (withholdReason) return { verdict: violation ? "violation" : "inconclusive", reason: withholdReason, repair: null, withhold: true };
+  if (violation) return { verdict: "violation", reason: violation.reason, repair: decideRepair(records) ?? violation, withhold: false };
+  if (firstInconclusive) return { verdict: "inconclusive", reason: firstInconclusive.reason, repair: firstInconclusive, withhold: false };
+  if (accepted.length) {
+    // Allowing a note is not evidence that its claims are safe to persist.
+    return { verdict: "unverified", reason: accepted.join(" "), repair: null, withhold: false };
   }
-  if (firstInconclusive) return { verdict: "inconclusive", reason: firstInconclusive.reason,
-    repair: { action: firstInconclusive.action, reason: firstInconclusive.reason } };
-  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null };
+  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null, withhold: false };
 }
 
 export function countJevFlags(records: JevGateRecord[]): { fallback: number; escalated: number } {

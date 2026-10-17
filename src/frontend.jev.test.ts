@@ -73,7 +73,7 @@ function flushTimers(): void {
 }
 
 /** Mounts the real drawer against a minimal host surface. */
-function mount(initial: FrontendState): Harness {
+function mount(initial: FrontendState, onBadge?: (value: string | null, root: HTMLElement) => void): Harness {
   instantTimers();
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -92,7 +92,7 @@ function mount(initial: FrontendState): Harness {
     dom: { addStyle: () => () => {} },
     log: { info: () => {}, warn: () => {}, error: () => {} },
     ui: {
-      registerDrawerTab: () => ({ root, setBadge: () => {}, destroy: () => {} }),
+      registerDrawerTab: () => ({ root, setBadge: (value: string | null) => onBadge?.(value, root), destroy: () => {} }),
     },
     components: {
       mountSwitch: (host: HTMLElement, options: { checked: boolean; ariaLabel: string; onChange: (value: boolean) => void }) => {
@@ -217,6 +217,124 @@ describe("Director prompt presets", () => {
     expect(presetSelect(harness.root).options.length).toBe(1);
     expect(presetSelect(harness.root).value).toBe("builtin");
     harness.destroy();
+  });
+});
+
+describe("Drawer scroll position", () => {
+  function scrollHost(root: HTMLElement): HTMLElement {
+    const host = document.createElement("div");
+    document.body.append(host);
+    host.append(root);
+    return host;
+  }
+
+  function clampScroll(root: HTMLElement): void {
+    // jsdom has no layout. Model the browser clamping a scroller when its
+    // content is briefly removed by the drawer or a host badge update.
+    for (let element: HTMLElement | null = root; element; element = element.parentElement) {
+      element.scrollTop = 0;
+      element.scrollLeft = 0;
+    }
+  }
+
+  test("preserves the root and host scrollers across settings and backend renders", () => {
+    const state = makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) });
+    const harness = mount(state);
+    harness.root.querySelector<HTMLButtonElement>("#lw-tab-jev")!.click();
+    const host = scrollHost(harness.root);
+    const replaceChildren = harness.root.replaceChildren.bind(harness.root);
+    harness.root.replaceChildren = (...nodes) => {
+      // The replacement already contains both completed views; it is never an
+      // empty shell while the browser calculates the host's scroll range.
+      expect((nodes[0] as HTMLElement).querySelectorAll("[data-lw-view]")).toHaveLength(2);
+      clampScroll(harness.root);
+      replaceChildren(...nodes);
+    };
+    harness.root.scrollTop = 120;
+    harness.root.scrollLeft = 10;
+    host.scrollTop = 840;
+    host.scrollLeft = 35;
+
+    providerSegments(harness.root)[1]!.click();
+    expect([harness.root.scrollTop, harness.root.scrollLeft, host.scrollTop, host.scrollLeft]).toEqual([120, 10, 840, 35]);
+    harness.push({ type: "state", state });
+    expect([harness.root.scrollTop, harness.root.scrollLeft, host.scrollTop, host.scrollLeft]).toEqual([120, 10, 840, 35]);
+    harness.destroy();
+    host.remove();
+  });
+
+  test("preserves the host scroller when saving a switch or confidence floor", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }),
+      (_badge, root) => clampScroll(root));
+    harness.root.querySelector<HTMLButtonElement>("#lw-tab-jev")!.click();
+    const host = scrollHost(harness.root);
+    host.scrollTop = 760;
+    const contextSwitch = harness.root.querySelector<HTMLInputElement>('[aria-label="Jev context"] [aria-label="Character"]')!;
+    contextSwitch.checked = false;
+    contextSwitch.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect(host.scrollTop).toBe(760);
+
+    expandGate(harness.root, "continuity_guard");
+    const floor = labelled(harness.root, "Continuity guard threshold") as HTMLInputElement;
+    floor.value = "0.5";
+    floor.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect(host.scrollTop).toBe(760);
+    harness.advanceSave();
+    const save = harness.sent.filter((entry) => entry.type === "save_settings").pop()!;
+    if (save.type !== "save_settings") throw new Error("settings were not saved");
+    harness.push({ type: "settings_saved", revision: save.revision, settings: normalizeSettings(save.settings) });
+    expect(host.scrollTop).toBe(760);
+    harness.destroy();
+    host.remove();
+  });
+
+  test("restores after host layout without overriding a later user scroll or teardown", () => {
+    const requestFrame = dom.window.requestAnimationFrame;
+    const cancelFrame = dom.window.cancelAnimationFrame;
+    let nextFrame = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    dom.window.requestAnimationFrame = (callback) => { frames.set(++nextFrame, callback); return nextFrame; };
+    dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+    let hostLayout = () => {};
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }),
+      (_badge, root) => { hostLayout = () => clampScroll(root); });
+    const host = scrollHost(harness.root);
+    try {
+      host.scrollTop = 690;
+      const change = () => {
+        const input = labelled(harness.root, "Character") as HTMLInputElement;
+        input.checked = !input.checked;
+        input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      };
+      const flushFrames = () => {
+        const pending = [...frames.values()]; frames.clear();
+        for (const callback of pending) callback(0);
+      };
+      change();
+      hostLayout();
+      expect(host.scrollTop).toBe(0);
+      // Another backend/save update before paint must not replace the original
+      // position with the host's temporary 0.
+      change();
+      hostLayout();
+      flushFrames();
+      expect(host.scrollTop).toBe(690);
+
+      change();
+      host.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true }));
+      host.scrollTop = 340;
+      flushFrames();
+      expect(host.scrollTop).toBe(340);
+
+      change();
+      harness.destroy();
+      expect(frames.size).toBe(0);
+    } finally {
+      harness.destroy();
+      host.remove();
+      dom.window.requestAnimationFrame = requestFrame;
+      dom.window.cancelAnimationFrame = cancelFrame;
+    }
   });
 });
 
@@ -762,14 +880,42 @@ describe("Jev decisions editor", () => {
     tuned.destroy();
   });
 
-  test("offers every declared fallback for a gate", () => {
+  test("offers working guard fallbacks and saves the selected action", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
     expandGate(harness.root, "continuity_guard");
     const fallback = labelled(harness.root, "Continuity guard fallback") as HTMLSelectElement;
     expect(fallback).not.toBeNull();
     expect([...fallback.options].map((option) => option.value)).toContain("soften");
-    expect([...fallback.options].map((option) => option.value)).toContain("run");
+    expect([...fallback.options].map((option) => option.value)).toEqual(["retry", "patch", "soften", "drop", "accept", "ignore", "skip"]);
     expect(fallback.value).toBe("soften");
+    fallback.value = "accept";
+    fallback.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    harness.advanceSave();
+    const save = harness.sent.findLast((message) => message.type === "save_settings");
+    expect(save?.type === "save_settings" && save.settings.jev?.gatePolicy.continuity_guard?.fallback).toBe("accept");
+    harness.destroy();
+  });
+
+  test("explains fixed fallbacks without showing unsupported choices", () => {
+    const harness = mount(makeState());
+    for (const gateId of ["context_filter", "model_route", "scene_state_tracking", "claim_extraction"]) {
+      expandGate(harness.root, gateId);
+      const card = harness.root.querySelector(`[data-lw-gate="${gateId}"]`)!;
+      expect(card.querySelector("select")).toBeNull();
+      expect(card.textContent).toContain("If this decision cannot answer");
+    }
+    harness.destroy();
+  });
+
+  test("shows the global floor's effect on a lower per-guard floor", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev,
+      gatePolicy: { continuity_guard: { threshold: 0.5 } } } }) }));
+    expandGate(harness.root, "continuity_guard");
+    expect(harness.root.querySelector('[data-lw-gate="continuity_guard"]')!.textContent).toContain("Effective floor: 0.55");
+    const threshold = labelled(harness.root, "Continuity guard threshold") as HTMLInputElement;
+    threshold.value = "0.8";
+    threshold.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    expect(harness.root.querySelector('[data-lw-gate="continuity_guard"]')!.textContent).toContain("Effective floor: 0.80");
     harness.destroy();
   });
 });

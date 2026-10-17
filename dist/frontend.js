@@ -664,6 +664,19 @@ var GATE_CATALOG = withCore([
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+var VERIFICATION_CHECKS = [
+  { id: "player_agency", clean: false, blocking: [true], action: "patch" },
+  { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
+  { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
+  { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" },
+  { id: "director_verification", clean: "clean", blocking: ["violation"], action: "full_retry" }
+];
+var VERIFICATION_FALLBACKS = ["retry", "patch", "soften", "drop", "accept", "ignore", "skip"];
+function supportedGateFallbacks(definition) {
+  if (definition.id === "smart_trigger")
+    return ["run", "skip"];
+  return VERIFICATION_CHECKS.some((check) => check.id === definition.id) ? VERIFICATION_FALLBACKS : [];
+}
 function directorGuidanceFromGates(records) {
   const lines = [];
   for (const record of records) {
@@ -686,9 +699,17 @@ function directorGuidanceFromGates(records) {
 ${lines.join(`
 `)}` : null;
 }
+function resolveGatePolicy(definition, settings) {
+  const override = settings.gatePolicy[definition.id];
+  const enabled = override?.enabled ?? definition.enabledByDefault;
+  const threshold = override?.threshold ?? (definition.id === "confidence_escalation" ? settings.minConfidence : definition.threshold);
+  const supported = supportedGateFallbacks(definition);
+  const fallback = override?.fallback && supported.includes(override.fallback) ? override.fallback : definition.fallback;
+  return { definition, enabled, threshold, fallback };
+}
 
 // src/frontend.ts
-var VERSION = "0.5.0-experimental";
+var VERSION = "0.5.1";
 var ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 var LABELS = {
   normal: "New reply",
@@ -886,18 +907,6 @@ var CSS = `
 @container director (max-width:300px) { .lw-setup { padding:12px; } .lw-option span { padding:6px 8px; } .lw-icon { width:34px; height:34px; } }
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
-var GATE_FALLBACKS2 = [
-  "run",
-  "skip",
-  "accept",
-  "retry",
-  "patch",
-  "soften",
-  "drop",
-  "hold",
-  "none",
-  "ignore"
-];
 var GATE_FALLBACK_LABELS = {
   run: "Run the Director ungated",
   skip: "Skip the Director",
@@ -1061,6 +1070,48 @@ function setup(ctx) {
     iconSvg: ICON
   });
   cleanups.push(() => drawer.destroy());
+  const drawerWindow = drawer.root.ownerDocument.defaultView;
+  let scrollRestoreFrame = null;
+  let pendingScrollPositions = null;
+  function cancelScrollRestore() {
+    if (scrollRestoreFrame !== null)
+      drawerWindow?.cancelAnimationFrame(scrollRestoreFrame);
+    scrollRestoreFrame = null;
+    pendingScrollPositions = null;
+  }
+  function preserveDrawerScroll(update) {
+    const positions = [];
+    for (let element = drawer.root;element; element = element.parentElement) {
+      positions.push(pendingScrollPositions?.find((position) => position.element === element) ?? { element, top: element.scrollTop, left: element.scrollLeft });
+    }
+    const restore = () => {
+      for (const { element, top, left } of positions) {
+        if (!element.isConnected)
+          continue;
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }
+    };
+    try {
+      update();
+    } finally {
+      restore();
+      cancelScrollRestore();
+      if (drawerWindow?.requestAnimationFrame) {
+        pendingScrollPositions = positions;
+        scrollRestoreFrame = drawerWindow.requestAnimationFrame(() => {
+          scrollRestoreFrame = null;
+          pendingScrollPositions = null;
+          restore();
+        });
+      }
+    }
+  }
+  for (const type of ["wheel", "touchmove", "pointerdown", "keydown"]) {
+    drawer.root.ownerDocument.addEventListener(type, cancelScrollRestore, { capture: true, passive: true });
+    cleanups.push(() => drawer.root.ownerDocument.removeEventListener(type, cancelScrollRestore, true));
+  }
+  cleanups.push(cancelScrollRestore);
   function send(message) {
     ctx.sendToBackend({ ...activeChat(ctx), ...message });
   }
@@ -1091,15 +1142,17 @@ function setup(ctx) {
     }
   }
   function updateSaveStatus() {
-    const badge = drawer.root.querySelector("[data-lw-save-status]");
-    if (badge) {
-      badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "All changes saved";
-      badge.dataset.tone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
-    }
-    const retry = drawer.root.querySelector("[data-lw-retry]");
-    if (retry)
-      retry.hidden = saveState !== "error";
-    drawer.setBadge(saveState === "error" ? "Error" : saveState === "saving" ? "Saving" : null);
+    preserveDrawerScroll(() => {
+      const badge = drawer.root.querySelector("[data-lw-save-status]");
+      if (badge) {
+        badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "All changes saved";
+        badge.dataset.tone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
+      }
+      const retry = drawer.root.querySelector("[data-lw-retry]");
+      if (retry)
+        retry.hidden = saveState !== "error";
+      drawer.setBadge(saveState === "error" ? "Error" : saveState === "saving" ? "Saving" : null);
+    });
   }
   function updateDirectorStatus() {
     const badge = drawer.root.querySelector("[data-lw-director-status]");
@@ -1413,12 +1466,7 @@ function setup(ctx) {
     mutateJev({ gatePolicy: next }, true);
   }
   function effectivePolicy(definition) {
-    const override = draft.jev.gatePolicy[definition.id] ?? {};
-    return {
-      enabled: override.enabled ?? definition.enabledByDefault,
-      threshold: override.threshold ?? (definition.id === "confidence_escalation" ? draft.jev.minConfidence : definition.threshold),
-      fallback: override.fallback ?? definition.fallback
-    };
+    return resolveGatePolicy(definition, draft.jev);
   }
   function testJev() {
     if (jevTestPending || !canTestJev())
@@ -1649,6 +1697,16 @@ function setup(ctx) {
     }
     const floorHead = el("div", "lw-sheet-label");
     const value = el("button", "lw-diag-value", policy.threshold.toFixed(2));
+    const effectiveFloor = el("div", "lw-hint");
+    const updateEffectiveFloor = (threshold) => {
+      effectiveFloor.textContent = `Effective floor: ${Math.max(threshold, draft.jev.minConfidence).toFixed(2)} (the higher of this decision's floor and the global floor).`;
+    };
+    const updateThreshold = (next) => {
+      mutateGate(definition.id, { threshold: next });
+      value.textContent = next.toFixed(2);
+      updateEffectiveFloor(next);
+    };
+    updateEffectiveFloor(policy.threshold);
     value.type = "button";
     value.title = "Click to type an exact floor";
     let editing = false;
@@ -1656,7 +1714,7 @@ function setup(ctx) {
       if (editing)
         return;
       editing = true;
-      const input = numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, (next) => mutateGate(definition.id, { threshold: next }));
+      const input = numberInput(effectivePolicy(definition).threshold, 0, 1, 0.05, `${definition.label} threshold`, updateThreshold);
       input.className = "lw-input";
       value.replaceWith(input);
       input.focus();
@@ -1666,7 +1724,7 @@ function setup(ctx) {
     sheet.append(floorHead);
     const track = el("div", "lw-control");
     const sliderFallback = () => {
-      track.replaceChildren(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, (next) => mutateGate(definition.id, { threshold: next })));
+      track.replaceChildren(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`, updateThreshold));
     };
     if (typeof ctx.components?.mountRangeSlider === "function") {
       queueMount(() => ctx.components.mountRangeSlider(track, {
@@ -1674,19 +1732,28 @@ function setup(ctx) {
         max: 1,
         step: 0.05,
         value: policy.threshold,
-        onCommit: (next) => mutateGate(definition.id, { threshold: next })
+        onCommit: updateThreshold
       }), sliderFallback);
     } else
       sliderFallback();
     const guidanceGate = definition.phase === "gate" && !["smart_trigger", "context_filter", "model_route"].includes(definition.id);
     sheet.append(track);
+    sheet.append(effectiveFloor);
     sheet.append(el("div", "lw-hint", guidanceGate ? "Answers below this are left out of the Director's guidance." : "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
     if (guidanceGate) {
       sheet.append(el("div", "lw-hint", "The Director still runs without this decision."));
-    } else {
+    } else if (supportedGateFallbacks(definition).length) {
       const fallbackHead = el("div", "lw-sheet-label");
-      fallbackHead.append(el("span", undefined, "When it cannot answer"));
-      sheet.append(fallbackHead, selectControl(policy.fallback, GATE_FALLBACKS2.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })), `${definition.label} fallback`, (next) => mutateGate(definition.id, { fallback: next })));
+      fallbackHead.append(el("span", undefined, "When the answer is missing or inconclusive"));
+      const verifying = definition.phase === "verify";
+      sheet.append(fallbackHead, selectControl(policy.fallback, supportedGateFallbacks(definition).map((value) => ({
+        value,
+        label: verifying && value === "skip" ? "Withhold the note" : GATE_FALLBACK_LABELS[value]
+      })), `${definition.label} fallback`, (next) => mutateGate(definition.id, { fallback: next })));
+      if (verifying)
+        sheet.append(el("div", "lw-hint", "Accept or ignore allows an inconclusive note through without saving derived scene state. Repair actions get one rewrite and recheck; if still unresolved, the note is withheld. A confident violation always requires repair. If the entire Jev request fails, the initial note continues unverified; a failed recheck withholds it."));
+    } else {
+      sheet.append(el("div", "lw-hint", definition.id === "context_filter" ? "If this decision cannot answer, the Director keeps its available context." : definition.id === "model_route" ? "If this decision cannot answer, the Director uses its normal model." : "If this decision cannot answer, its answer is ignored."));
     }
     if (isCustom)
       sheet.append(gateReset(definition));
@@ -2033,7 +2100,8 @@ function setup(ctx) {
     }
     if (record.usedFallback && !informational && !unused) {
       const guidanceGate = record.phase === "gate" && !["smart_trigger", "context_filter", "model_route"].includes(record.gateId);
-      const fallbackLabel = guidanceGate || record.fallback === "run" && record.gateId !== "smart_trigger" ? "Decision ignored" : GATE_FALLBACK_LABELS[record.fallback];
+      const definition = GATE_CATALOG.find((gate) => gate.id === record.gateId);
+      const fallbackLabel = guidanceGate || definition && !supportedGateFallbacks(definition).length ? "Decision ignored" : record.phase === "verify" && record.fallback === "skip" ? "Withhold the note" : GATE_FALLBACK_LABELS[record.fallback];
       const fallback = el("span", "lw-badge", fallbackLabel);
       fallback.dataset.tone = "warning";
       meta.append(fallback);
@@ -2294,13 +2362,15 @@ function setup(ctx) {
     return active && root.contains(active) ? active : null;
   }
   function render() {
+    preserveDrawerScroll(renderContents);
+  }
+  function renderContents() {
     destroyHandles();
     pending = [];
     nextFieldId = 0;
     const root = el("div", "lw-root");
     const shell = el("div", "lw-shell");
     root.append(shell);
-    drawer.root.replaceChildren(root);
     shell.append(buildHeader());
     const intro = el("p", "lw-intro");
     intro.dataset.lwIntro = "";
@@ -2310,9 +2380,11 @@ function setup(ctx) {
     const warnings = el("div");
     warnings.dataset.lwWarnings = "";
     shell.append(notices, warnings);
-    updateWarnings();
+    renderWarnings(warnings);
+    warnings.hidden = !warnings.childElementCount;
     if (!state) {
       shell.append(el("div", "lw-loading", "Loading LumiWorld settings…"));
+      drawer.root.replaceChildren(root);
       updateDirectorStatus();
       renderNotice();
       return;
@@ -2332,6 +2404,7 @@ function setup(ctx) {
     footerStatus.append(saveStatus, retry);
     footer.append(footerStatus);
     shell.append(footer);
+    drawer.root.replaceChildren(root);
     flushMounts();
     activateView(activeTab);
     updateDirectorStatus();

@@ -646,6 +646,170 @@ describe("v0.5 Jev turn flow", () => {
     expect(latestRun().jev.revision.unresolved).toBe(true);
   });
 
+  for (const fallback of ["accept", "ignore"] as const) {
+    test(`honours Continuity ${fallback} without repairing or committing an inconclusive draft`, async () => {
+      stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+        continuity_guard: { fallback },
+      } }) });
+      answerCleanTurn();
+      const clean = jevAnswerFor;
+      jevAnswerFor = (gateId) => gateId === "continuity_guard"
+        ? fallback === "accept"
+          ? { type: "choice", choice: "uncertain", probabilities: { uncertain: 0.9 }, confidence: 0.9 }
+          : { type: "choice", choice: "consistent", probabilities: { consistent: 0.4 }, confidence: 0.4 }
+        : clean(gateId);
+      const chatId = `chat-continuity-${fallback}`;
+      const generationId = `gen-continuity-${fallback}`;
+      beginGeneration(chatId, generationId);
+
+      const result = await runJevTurn(chatId);
+
+      expect(directorRuns(result)).toBe(true);
+      expect(generations).toBe(1);
+      expect(jevRequests).toHaveLength(2);
+      expect(latestRun().trace.verificationVerdict).toBe("unverified");
+      expect(latestRun().trace.directiveDisposition).toBe("injected");
+      expect(latestRun().trace.worldStateOutcome).toBe("not_used");
+      expect(latestRun().jev.revision).toBeNull();
+      emitEvent("GENERATION_ENDED", { chatId, generationId, content: "The scene continues." }, "user-jev");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(stored.has(`chats/${chatId}/world.json`)).toBe(false);
+    });
+
+    test(`honours Continuity ${fallback} on an inconclusive recheck after one repair`, async () => {
+      stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+        continuity_guard: { fallback },
+      } }) });
+      answerCleanTurn();
+      const clean = jevAnswerFor;
+      let checks = 0;
+      jevAnswerFor = (gateId) => gateId === "continuity_guard"
+        ? ++checks === 1
+          ? { type: "choice", choice: "violation", probabilities: { violation: 0.95 }, confidence: 0.95 }
+          : { type: "choice", choice: "uncertain", probabilities: { uncertain: 0.9 }, confidence: 0.9 }
+        : clean(gateId);
+      const chatId = `chat-continuity-recheck-${fallback}`;
+      const generationId = `gen-continuity-recheck-${fallback}`;
+      beginGeneration(chatId, generationId);
+
+      const result = await runJevTurn(chatId);
+
+      expect(directorRuns(result)).toBe(true);
+      expect(generations).toBe(2);
+      expect(jevRequests).toHaveLength(3);
+      expect(latestRun().trace.verificationVerdict).toBe("unverified");
+      expect(latestRun().trace.directiveDisposition).toBe("injected");
+      expect(latestRun().trace.worldStateOutcome).toBe("not_used");
+      expect(latestRun().jev.revision.unresolved).toBe(true);
+      emitEvent("GENERATION_ENDED", { chatId, generationId, content: "The scene continues." }, "user-jev");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(stored.has(`chats/${chatId}/world.json`)).toBe(false);
+    });
+  }
+
+  test("honours Continuity skip by withholding an inconclusive draft without a repair", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+      continuity_guard: { fallback: "skip" },
+    } }) });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => gateId === "continuity_guard" ? undefined : clean(gateId);
+
+    const result = await runJevTurn();
+
+    expect(result).toEqual(jevMessages);
+    expect(generations).toBe(1);
+    expect(jevRequests).toHaveLength(2);
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().trace.finalDirective).toBeNull();
+    expect(latestRun().jev.revision).toBeNull();
+  });
+
+  for (const [fallback, action] of [
+    ["retry", "full_retry"], ["patch", "patch"], ["soften", "soften"], ["drop", "drop_claim"],
+  ] as const) {
+    test(`uses Continuity ${fallback} to request the selected repair action`, async () => {
+      stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+        continuity_guard: { fallback },
+      } }) });
+      answerCleanTurn();
+      const clean = jevAnswerFor;
+      let checks = 0;
+      jevAnswerFor = (gateId) => gateId === "continuity_guard" && ++checks === 1
+        ? { type: "choice", choice: "consistent", probabilities: { consistent: 0.4 }, confidence: 0.4 }
+        : clean(gateId);
+
+      const result = await runJevTurn();
+
+      expect(directorRuns(result)).toBe(true);
+      expect(generations).toBe(2);
+      expect(jevRequests).toHaveLength(3);
+      expect(latestRun().jev.revision.action).toBe(action);
+      expect(generatedMessages[1]!.at(-1)!.content).toContain(`Repair it with this action: ${action}.`);
+      expect(latestRun().trace.verificationVerdict).toBe("clean");
+    });
+  }
+
+  test("does not let Continuity accept bypass a confident violation", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+      continuity_guard: { fallback: "accept" },
+    } }) });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => gateId === "continuity_guard"
+      ? { type: "choice", choice: "violation", probabilities: { violation: 0.95 }, confidence: 0.95 }
+      : clean(gateId);
+
+    const result = await runJevTurn();
+
+    expect(result).toEqual(jevMessages);
+    expect(generations).toBe(2);
+    expect(jevRequests).toHaveLength(3);
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().trace.verificationVerdict).toBe("violation");
+  });
+
+  test("withholds a repaired note when the recheck fails even with Continuity accept", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+      continuity_guard: { fallback: "accept" },
+    } }) });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    jevAnswerFor = (gateId) => {
+      if (gateId !== "continuity_guard") return clean(gateId);
+      corsShouldThrow = true;
+      return { type: "choice", choice: "violation", probabilities: { violation: 0.95 }, confidence: 0.95 };
+    };
+
+    const result = await runJevTurn();
+
+    expect(result).toEqual(jevMessages);
+    expect(generations).toBe(2);
+    expect(latestRun().trace.directiveDisposition).toBe("withheld");
+    expect(latestRun().trace.verificationVerdict).toBe("unverified");
+    expect(latestRun().trace.verificationReason).toContain("network unreachable");
+  });
+
+  test("accepts a clean overall recheck with the four specific guards disabled", async () => {
+    stored.set("global/settings.json", { ...baseSettings, jev: jevSettings({ gatePolicy: {
+      player_agency: { enabled: false }, continuity_guard: { enabled: false },
+      duplicate_suppression: { enabled: false }, intensity_boundary: { enabled: false },
+    } }) });
+    answerCleanTurn();
+    const clean = jevAnswerFor;
+    let checks = 0;
+    jevAnswerFor = (gateId) => gateId === "director_verification" && ++checks === 1
+      ? { type: "choice", choice: "violation", probabilities: { violation: 0.95 }, confidence: 0.95 }
+      : clean(gateId);
+
+    const result = await runJevTurn();
+
+    expect(directorRuns(result)).toBe(true);
+    expect(generations).toBe(2);
+    expect(latestRun().trace.verificationVerdict).toBe("clean");
+    expect(latestRun().jev.revision.unresolved).toBe(false);
+  });
+
   test("excludes unmarked user blocks from the Director and protects the latest player action", async () => {
     answerCleanTurn();
     await messageHandler!({ type: "refresh_state", chatId: "chat-notes" }, "user-jev");

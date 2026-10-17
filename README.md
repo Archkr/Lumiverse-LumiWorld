@@ -4,7 +4,7 @@
 
 **A private Director for your next Lumiverse reply.**
 
-[![Version](https://img.shields.io/badge/version-0.5.0-8b7cf6)](./spindle.json)
+[![Version](https://img.shields.io/badge/version-0.5.1-8b7cf6)](./spindle.json)
 [![Lumiverse](https://img.shields.io/badge/Lumiverse-%E2%89%A5%201.0.6-d4a35a)](https://github.com/prolix-oc/Lumiverse)
 [![License](https://img.shields.io/badge/license-Lumiverse%20Community%202.0-6f9f78)](./LICENSE.md)
 
@@ -89,7 +89,7 @@ No macro needs to be added to your character card or preset for the Director to 
 | Requirement | Value |
 |---|---|
 | Lumiverse | `1.0.6` or newer |
-| Extension version | `0.5.0` |
+| Extension version | `0.5.1` |
 | Director connection | An explicitly selected Lumiverse connection profile with a usable model |
 | Essential permissions | `interceptor` and `generation` |
 | Build output | Committed `dist/backend.js` and `dist/frontend.js` |
@@ -155,8 +155,8 @@ Character context sent to the Director and Jev contains only the card's name, de
 
 1. **Before the Director:** LumiWorld sends the applicable enabled pre-Director questions in one batch. Smart triggering can skip the Director only on a confident **no**. Context filtering can trim the Director's input. Model routing can select a configured strong target. Other confident answers become a separate guidance message in the Director's prompt.
 2. **Director draft:** The Director writes one private note. A guidance answer describes a direction, such as “tighten the pace”; it does not force a specific NPC action or guarantee the model follows it.
-3. **After the Director:** If Jev is available, LumiWorld sends the applicable verification questions in another batch with the draft note. A key guardrail violation or inconclusive answer triggers **one** repair with the original draft included, followed by another Jev verification batch. If repair fails or a key check remains unresolved, the note is withheld.
-4. **Visible reply and state:** Only a cleared private note enters the chat model's prompt. Derived scene state is saved only after a verified visible generation successfully ends; previews, cancelled generations, failed generations, and withheld notes do not commit it.
+3. **After the Director:** If Jev is available, LumiWorld sends the applicable verification questions in another batch with the draft note. A confirmed guardrail violation triggers **one** repair with the original draft included, followed by another Jev verification batch. Missing, low-confidence, or inconclusive answers use the guard's selected fallback. Repair actions get the same single rewrite and recheck; if repair fails or a guard still requires repair, the note is withheld.
+4. **Visible reply and state:** A verified note or one allowed by its fallback enters the chat model's prompt. Derived scene state is saved only after a verified visible generation successfully ends; accepting an inconclusive check, previews, cancelled generations, failed generations, and withheld notes do not commit it.
 
 Usually that is **one Jev request if the Director is skipped, or two if it runs**. A repair adds a Jev recheck and another Director generation. A rate-limit or transient-error retry can add a network attempt. A failed or unconfigured Jev call falls back to the Director path.
 
@@ -169,9 +169,9 @@ Usually that is **one Jev request if the Director is skipped, or two if it runs*
 | **Score** | A number on a five-level scale, usually `0–4`, plus reported confidence. | Emotional release: from “hold tension” to “release it now.” |
 
 An answer is acted on only when its confidence reaches **both** the global floor and that decision's floor: the effective floor is the higher number. Defaults are `0.55` globally, `0.60` for yes/no questions, and `0.50` for Choice and Score. You can raise a decision's floor when you want to trust it less often. A missing answer also falls back. Low-confidence craft/world guidance is omitted from the Director prompt; it does not cause an extra Director call.
-Continuity and repetition checks use a stricter `0.70` default floor. An uncertain result on either check triggers the single repair pass; if it is still uncertain, the Director note is withheld.
+Continuity and repetition checks use a stricter `0.70` default floor. Their default fallback triggers the single repair pass; if still uncertain, the Director note is withheld. Setting a guard to `0.50` while leaving the global floor at `0.55` still requires `0.55` confidence; each expanded card displays its effective floor. An explicit “uncertain” or “borderline” answer also uses the fallback, even at high confidence.
 
-For the three direct controls, an uncertain Smart trigger **runs the Director**, an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. An uncertain key guardrail prompts one repair; if the recheck remains inconclusive, the note is withheld. Other uncertain answers remain advisory.
+For the three direct controls, an uncertain Smart trigger **runs the Director** by default, with an option to skip it; an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. The five verification guards offer supported fallback actions: regenerate, patch, soften, drop a claim through a rewrite, accept the draft, ignore the answer, or withhold the note. Accept and ignore allow an inconclusive note through without saving derived scene state. These choices apply only to inconclusive answers; a confirmed violation still requires repair. Other uncertain answers are ignored, and their cards explain that fixed behavior without an action picker.
 
 **Confidence caveat:** Jev does not report confidence for yes/no answers, so LumiWorld derives it from the probability. If a Choice or Score response omits confidence, the current code treats it as `1.00`. The displayed answer and a **partial** turn badge do not mean every answer affected the result: check **Sent to Director**, **Decision ignored**, and the per-decision notes.
 
@@ -247,7 +247,7 @@ For example, Jev might return **Pacing control: tighten, confidence 0.82** and *
 | 35 | Confidence escalation | Marks reported answers below their effective confidence floor. Missing answers use a fallback but are not themselves low-confidence escalations. | On |
 | 36 | Graceful degradation | Records a failed/unavailable Jev phase and lets the Director proceed without Jev's judgment. | On |
 
-**Current limits to keep in mind:** The guidance entries influence the Director's prompt; they do not perform their named action in code. User-intent arbitration, claim extraction, and contradiction localization are recorded but not consumed. Time/clock and NPC entry/exit do not update saved state, because the state commit currently receives verification records rather than those pre-Director answers. The two calculated records are appended by code even if their switches are turned off. The fallback picker is not a general action engine: changing its label does not make every listed fallback action executable for every gate. These are implementation limits, not hidden Jev reasoning.
+**Current limits to keep in mind:** The guidance entries influence the Director's prompt; they do not perform their named action in code. User-intent arbitration, claim extraction, and contradiction localization are recorded but not consumed. Time/clock and NPC entry/exit do not update saved state, because the state commit currently receives verification records rather than those pre-Director answers. The two calculated records are appended by code even if their switches are turned off. Fallback pickers appear only where their actions are implemented; an unsupported action saved by an older version resolves to the gate's default. These are implementation limits, not hidden Jev reasoning.
 
 ### Setting it up and reading a turn
 

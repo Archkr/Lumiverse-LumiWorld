@@ -14,6 +14,7 @@ import {
   resolveGateAnswer,
   resolveGatePolicy,
   shouldRunDirector,
+  supportedGateFallbacks,
   wantsStrongDirectorModel,
   withConfidenceGate,
   withDegradationGate,
@@ -333,7 +334,67 @@ describe("decision helpers", () => {
     expect(assessVerification([{ ...safe[0]!, value: true }]).verdict).toBe("violation");
     expect(assessVerification([{ ...safe[1]!, value: "uncertain" }]).verdict).toBe("inconclusive");
     expect(assessVerification(safe, "Jev timed out").verdict).toBe("unverified");
-    expect(assessVerification([...safe, record({ gateId: "director_verification", value: "clean", usedFallback: true })]).verdict).toBe("clean");
+    expect(assessVerification([...safe, record({ gateId: "director_verification", value: "clean", usedFallback: true, fallback: "accept" })]).verdict).toBe("unverified");
+  });
+
+  test("uses the selected fallback for missing, weak, and explicitly uncertain guard answers", () => {
+    const actions = { retry: "full_retry", patch: "patch", soften: "soften", drop: "drop_claim" } as const;
+    for (const fallback of supportedGateFallbacks(GATE_BY_ID.get("continuity_guard")!)) {
+      const policy = resolveGatePolicy(GATE_BY_ID.get("continuity_guard")!, settings({
+        gatePolicy: { continuity_guard: { fallback } },
+      }));
+      for (const answer of [undefined,
+        { type: "choice", choice: "consistent", probabilities: { consistent: 0.6 }, confidence: 0.6 },
+        { type: "choice", choice: "uncertain", probabilities: { uncertain: 0.95 }, confidence: 0.95 },
+      ] as Array<JevAnswer | undefined>) {
+        const resolved = resolveGateAnswer(policy, answer, { minConfidence: 0.55 });
+        expect(resolved.usedFallback).toBe(true);
+        const assessment = assessVerification([resolved]);
+        if (fallback === "accept" || fallback === "ignore") {
+          expect(assessment.verdict).toBe("unverified");
+          expect(assessment.repair).toBeNull();
+          expect(assessment.withhold).toBe(false);
+        } else if (fallback === "skip") {
+          expect(assessment.withhold).toBe(true);
+          expect(assessment.repair).toBeNull();
+        } else {
+          expect(assessment.repair?.action).toBe(actions[fallback as keyof typeof actions]);
+          expect(assessment.withhold).toBe(false);
+        }
+      }
+    }
+  });
+
+  test("a fail-open fallback cannot override another guard's confirmed violation", () => {
+    const assessment = assessVerification([
+      record({ gateId: "continuity_guard", value: "uncertain", usedFallback: true, fallback: "accept" }),
+      record({ gateId: "player_agency", value: true, fallback: "accept" }),
+    ]);
+    expect(assessment.verdict).toBe("violation");
+    expect(assessment.repair?.action).toBe("patch");
+  });
+
+  test("supports an explicit skip for an inconclusive smart trigger", () => {
+    expect(shouldRunDirector([record({ gateId: "smart_trigger", value: false, usedFallback: true, fallback: "skip" })]).run).toBe(false);
+  });
+
+  test("a clean overall verification can clear a note when other guards are disabled", () => {
+    expect(assessVerification([record({ gateId: "director_verification", value: "clean" })]).verdict).toBe("clean");
+  });
+
+  test("unsupported saved fallback actions resolve to the gate's working default", () => {
+    const definition = GATE_BY_ID.get("continuity_guard")!;
+    expect(resolveGatePolicy(definition, settings({ gatePolicy: { continuity_guard: { fallback: "hold" } } })).fallback).toBe("soften");
+    expect(supportedGateFallbacks(GATE_BY_ID.get("model_route")!)).toEqual([]);
+  });
+
+  test("records the effective floor when the global floor is higher", () => {
+    const policy = resolveGatePolicy(GATE_BY_ID.get("continuity_guard")!, settings({
+      gatePolicy: { continuity_guard: { threshold: 0.5 } },
+    }));
+    const result = resolveGateAnswer(policy, { type: "choice", choice: "consistent", probabilities: { consistent: 0.52 }, confidence: 0.52 }, { minConfidence: 0.55 });
+    expect(result.threshold).toBe(0.55);
+    expect(result.usedFallback).toBe(true);
   });
 });
 

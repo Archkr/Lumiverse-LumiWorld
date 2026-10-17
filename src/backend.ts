@@ -1220,9 +1220,10 @@ async function handleInterceptor(
       let assessment = assessVerification(verifyRecords, phase.error);
       turnTrace.verificationVerdict = assessment.verdict;
       turnTrace.verificationReason = assessment.reason;
+      if (assessment.withhold) withheldReason = assessment.reason ?? "A verification fallback withheld the Director note.";
       if (assessment.repair) {
-        // Exactly one bounded repair attempt. A failed or unresolved repair
-        // withholds the note rather than sending the known problem downstream.
+        // Exactly one bounded repair attempt. The recheck can explicitly allow
+        // an inconclusive note; a further repair request still withholds it.
         const repaired = await regenerateDirective(userId, settings, target, prepared, directive, assessment.repair, verifyRecords);
         jevDiagnostics.revision = {
           action: assessment.repair.action, reason: assessment.repair.reason,
@@ -1250,7 +1251,9 @@ async function handleInterceptor(
           turnTrace.verificationVerdict = assessment.verdict;
           turnTrace.verificationReason = assessment.reason;
           jevDiagnostics.revision.unresolved = assessment.verdict !== "clean";
-          if (assessment.verdict !== "clean") withheldReason = assessment.reason ?? "The revised note could not be verified.";
+          if (assessment.withhold || assessment.repair || recheck.error) {
+            withheldReason = assessment.reason ?? "The revised note could not be verified.";
+          }
         } else {
           withheldReason = repaired.error ?? "The Director could not repair the note.";
           turnTrace.verificationVerdict = "inconclusive";

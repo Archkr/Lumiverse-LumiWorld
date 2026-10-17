@@ -1473,6 +1473,19 @@ var GATE_CATALOG = withCore([
   }
 ]);
 var GATE_BY_ID = new Map(GATE_CATALOG.map((gate) => [gate.id, gate]));
+var VERIFICATION_CHECKS = [
+  { id: "player_agency", clean: false, blocking: [true], action: "patch" },
+  { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
+  { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
+  { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" },
+  { id: "director_verification", clean: "clean", blocking: ["violation"], action: "full_retry" }
+];
+var VERIFICATION_FALLBACKS = ["retry", "patch", "soften", "drop", "accept", "ignore", "skip"];
+function supportedGateFallbacks(definition) {
+  if (definition.id === "smart_trigger")
+    return ["run", "skip"];
+  return VERIFICATION_CHECKS.some((check) => check.id === definition.id) ? VERIFICATION_FALLBACKS : [];
+}
 function directorGuidanceFromGates(records) {
   const lines = [];
   for (const record of records) {
@@ -1499,7 +1512,8 @@ function resolveGatePolicy(definition, settings) {
   const override = settings.gatePolicy[definition.id];
   const enabled = override?.enabled ?? definition.enabledByDefault;
   const threshold = override?.threshold ?? (definition.id === "confidence_escalation" ? settings.minConfidence : definition.threshold);
-  const fallback = override?.fallback ?? definition.fallback;
+  const supported = supportedGateFallbacks(definition);
+  const fallback = override?.fallback && supported.includes(override.fallback) ? override.fallback : definition.fallback;
   return { definition, enabled, threshold, fallback };
 }
 function resolveAllGatePolicies(settings) {
@@ -1609,7 +1623,7 @@ function resolveGateAnswer(policy, rawAnswer, resolveContext) {
     probability: null,
     confidence: null,
     confidenceDerived: false,
-    threshold: policy.threshold,
+    threshold: Math.max(policy.threshold, resolveContext.minConfidence),
     escalated: false,
     usedFallback: false,
     fallback: policy.fallback
@@ -1643,6 +1657,8 @@ function resolveGateAnswer(policy, rawAnswer, resolveContext) {
     confidence = rawAnswer.confidence ?? REPORTED_CONFIDENCE;
   }
   const escalated = confidence !== null && confidence < Math.max(policy.threshold, resolveContext.minConfidence);
+  const check = VERIFICATION_CHECKS.find((check) => check.id === definition.id);
+  const inconclusive = check && value !== check.clean && !check.blocking.includes(value);
   const escalatedNote = escalated ? `Confidence ${confidence !== null ? confidence.toFixed(2) : "unknown"} is below the ${Math.max(policy.threshold, resolveContext.minConfidence).toFixed(2)} floor, so the fallback applied.` : undefined;
   return {
     ...base,
@@ -1651,9 +1667,9 @@ function resolveGateAnswer(policy, rawAnswer, resolveContext) {
     confidence,
     confidenceDerived,
     escalated,
-    usedFallback: escalated,
+    usedFallback: escalated || Boolean(inconclusive),
     probabilities,
-    note: escalatedNote ?? (confidenceDerived ? "Noul answers carry no confidence; this value is derived from the probability." : undefined)
+    note: escalatedNote ?? (inconclusive ? "Jev's answer was inconclusive, so the configured fallback applied." : confidenceDerived ? "Noul answers carry no confidence; this value is derived from the probability." : undefined)
   };
 }
 function resolveGateAnswers(plan, answers, minConfidence) {
@@ -1667,7 +1683,7 @@ function shouldRunDirector(records) {
   if (!trigger)
     return { run: true, reason: null };
   if (trigger.usedFallback || trigger.value === null)
-    return { run: true, reason: null };
+    return trigger.fallback === "skip" ? { run: false, reason: "Smart Director triggering was inconclusive; its fallback skips the Director." } : { run: true, reason: null };
   if (matches(trigger.value, true))
     return { run: true, reason: null };
   return { run: false, reason: "Jev judged that this turn does not need Director intervention." };
@@ -1724,42 +1740,46 @@ function decideRepair(records) {
 }
 function assessVerification(records, phaseError = null) {
   if (phaseError)
-    return { verdict: "unverified", reason: phaseError, repair: null };
-  const checks = [
-    { id: "player_agency", clean: false, blocking: [true], action: "patch" },
-    { id: "continuity_guard", clean: "consistent", blocking: ["violation"], action: "soften" },
-    { id: "duplicate_suppression", clean: "new", blocking: ["repeats", "near_duplicate"], action: "full_retry" },
-    { id: "intensity_boundary", clean: "within_range", blocking: ["out_of_range"], action: "soften" }
-  ];
+    return { verdict: "unverified", reason: phaseError, repair: null, withhold: false };
   let firstInconclusive = null;
+  let violation = null;
+  let withholdReason = null;
+  const accepted = [];
   let found = false;
-  for (const check of checks) {
+  for (const check of VERIFICATION_CHECKS) {
     const record = gateRecordById(records, check.id);
     if (!record)
       continue;
     found = true;
     if (record.usedFallback || record.value === null || record.value !== check.clean && !check.blocking.includes(record.value)) {
-      firstInconclusive ??= { reason: `${record.label} was inconclusive.`, action: check.action };
+      const reason = `${record.label} was inconclusive.`;
+      switch (record.fallback) {
+        case "accept":
+        case "ignore":
+          accepted.push(`${record.label} was inconclusive; its fallback allows the note without this check.`);
+          break;
+        case "skip":
+          withholdReason ??= `${record.label} was inconclusive; its fallback withholds the note.`;
+          break;
+        default: {
+          const action = record.fallback === "retry" ? "full_retry" : record.fallback === "patch" ? "patch" : record.fallback === "soften" ? "soften" : record.fallback === "drop" ? "drop_claim" : check.action;
+          firstInconclusive ??= { reason, action };
+        }
+      }
     } else if (check.blocking.includes(record.value)) {
-      const reason = `${record.label} found a problem${record.usedFallback ? " with low confidence" : ""}.`;
-      if (record.usedFallback)
-        firstInconclusive ??= { reason, action: check.action };
-      else
-        return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: check.action, reason } };
+      violation ??= { reason: `${record.label} found a problem.`, action: check.action };
     }
   }
-  const overall = gateRecordById(records, "director_verification");
-  if (overall?.value === "violation" && !overall.usedFallback) {
-    const reason = "Overall Director verification found a problem.";
-    return { verdict: "violation", reason, repair: decideRepair(records) ?? { action: "full_retry", reason } };
-  }
+  if (withholdReason)
+    return { verdict: violation ? "violation" : "inconclusive", reason: withholdReason, repair: null, withhold: true };
+  if (violation)
+    return { verdict: "violation", reason: violation.reason, repair: decideRepair(records) ?? violation, withhold: false };
   if (firstInconclusive)
-    return {
-      verdict: "inconclusive",
-      reason: firstInconclusive.reason,
-      repair: { action: firstInconclusive.action, reason: firstInconclusive.reason }
-    };
-  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null };
+    return { verdict: "inconclusive", reason: firstInconclusive.reason, repair: firstInconclusive, withhold: false };
+  if (accepted.length) {
+    return { verdict: "unverified", reason: accepted.join(" "), repair: null, withhold: false };
+  }
+  return { verdict: found ? "clean" : "unverified", reason: found ? null : "No key verification checks ran.", repair: null, withhold: false };
 }
 function countJevFlags(records) {
   return {
@@ -3542,6 +3562,8 @@ async function handleInterceptor(messages, context) {
       let assessment = assessVerification(verifyRecords, phase.error);
       turnTrace.verificationVerdict = assessment.verdict;
       turnTrace.verificationReason = assessment.reason;
+      if (assessment.withhold)
+        withheldReason = assessment.reason ?? "A verification fallback withheld the Director note.";
       if (assessment.repair) {
         const repaired = await regenerateDirective(userId, settings, target, prepared, directive, assessment.repair, verifyRecords);
         jevDiagnostics.revision = {
@@ -3575,8 +3597,9 @@ async function handleInterceptor(messages, context) {
           turnTrace.verificationVerdict = assessment.verdict;
           turnTrace.verificationReason = assessment.reason;
           jevDiagnostics.revision.unresolved = assessment.verdict !== "clean";
-          if (assessment.verdict !== "clean")
+          if (assessment.withhold || assessment.repair || recheck.error) {
             withheldReason = assessment.reason ?? "The revised note could not be verified.";
+          }
         } else {
           withheldReason = repaired.error ?? "The Director could not repair the note.";
           turnTrace.verificationVerdict = "inconclusive";

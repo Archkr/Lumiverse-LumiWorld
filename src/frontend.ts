@@ -4,10 +4,10 @@ import {
   type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord, type JevPhaseTrace,
   type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type RunLogEntry,
 } from "./shared";
-import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates } from "./gates";
+import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates, resolveGatePolicy, supportedGateFallbacks } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
-const VERSION = "0.5.0-experimental";
+const VERSION = "0.5.1";
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 const LABELS: Record<string, string> = {
   normal: "New reply", continue: "Continue", regenerate: "Regenerate", swipe: "Swipe", impersonate: "Impersonate",
@@ -202,10 +202,6 @@ const CSS = `
 @media (prefers-reduced-motion:reduce) { .lw-root * { scroll-behavior:auto!important; transition:none!important; } }
 `;
 
-const GATE_FALLBACKS: readonly GateFallback[] = [
-  "run", "skip", "accept", "retry", "patch", "soften", "drop", "hold", "none", "ignore",
-];
-
 const GATE_FALLBACK_LABELS: Record<GateFallback, string> = {
   run: "Run the Director ungated",
   skip: "Skip the Director",
@@ -394,6 +390,57 @@ export function setup(ctx: SpindleFrontendContext) {
   });
   cleanups.push(() => drawer.destroy());
 
+  const drawerWindow = drawer.root.ownerDocument.defaultView;
+  type ScrollPosition = { element: HTMLElement; top: number; left: number };
+  let scrollRestoreFrame: number | null = null;
+  let pendingScrollPositions: ScrollPosition[] | null = null;
+
+  function cancelScrollRestore(): void {
+    if (scrollRestoreFrame !== null) drawerWindow?.cancelAnimationFrame(scrollRestoreFrame);
+    scrollRestoreFrame = null;
+    pendingScrollPositions = null;
+  }
+
+  /** Lumiverse usually scrolls an ancestor of the extension root, not the root itself. */
+  function preserveDrawerScroll(update: () => void): void {
+    const positions: ScrollPosition[] = [];
+    for (let element: HTMLElement | null = drawer.root; element; element = element.parentElement) {
+      // Multiple host updates can arrive before the next paint. Keep the first
+      // position until then instead of recording a temporarily clamped value.
+      positions.push(pendingScrollPositions?.find((position) => position.element === element)
+        ?? { element, top: element.scrollTop, left: element.scrollLeft });
+    }
+    const restore = () => {
+      for (const { element, top, left } of positions) {
+        if (!element.isConnected) continue;
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }
+    };
+    try { update(); }
+    finally {
+      restore();
+      cancelScrollRestore();
+      // Shared controls and host badge updates can finish their layout after our
+      // synchronous render. Restore once more before paint, unless the user has
+      // already started another interaction.
+      if (drawerWindow?.requestAnimationFrame) {
+        pendingScrollPositions = positions;
+        scrollRestoreFrame = drawerWindow.requestAnimationFrame(() => {
+          scrollRestoreFrame = null;
+          pendingScrollPositions = null;
+          restore();
+        });
+      }
+    }
+  }
+
+  for (const type of ["wheel", "touchmove", "pointerdown", "keydown"]) {
+    drawer.root.ownerDocument.addEventListener(type, cancelScrollRestore, { capture: true, passive: true });
+    cleanups.push(() => drawer.root.ownerDocument.removeEventListener(type, cancelScrollRestore, true));
+  }
+  cleanups.push(cancelScrollRestore);
+
   function send(message: FrontendToBackend): void {
     ctx.sendToBackend({ ...activeChat(ctx), ...message });
   }
@@ -422,14 +469,16 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function updateSaveStatus(): void {
-    const badge = drawer.root.querySelector<HTMLElement>("[data-lw-save-status]");
-    if (badge) {
-      badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "All changes saved";
-      badge.dataset.tone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
-    }
-    const retry = drawer.root.querySelector<HTMLButtonElement>("[data-lw-retry]");
-    if (retry) retry.hidden = saveState !== "error";
-    drawer.setBadge(saveState === "error" ? "Error" : saveState === "saving" ? "Saving" : null);
+    preserveDrawerScroll(() => {
+      const badge = drawer.root.querySelector<HTMLElement>("[data-lw-save-status]");
+      if (badge) {
+        badge.textContent = saveState === "saving" ? "Saving…" : saveState === "error" ? "Save failed" : "All changes saved";
+        badge.dataset.tone = saveState === "error" ? "error" : saveState === "saving" ? "warning" : "success";
+      }
+      const retry = drawer.root.querySelector<HTMLButtonElement>("[data-lw-retry]");
+      if (retry) retry.hidden = saveState !== "error";
+      drawer.setBadge(saveState === "error" ? "Error" : saveState === "saving" ? "Saving" : null);
+    });
   }
 
   function updateDirectorStatus(): void {
@@ -710,13 +759,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function effectivePolicy(definition: GateDefinition): Required<GatePolicy> {
-    const override = draft.jev.gatePolicy[definition.id] ?? {};
-    return {
-      enabled: override.enabled ?? definition.enabledByDefault,
-      threshold: override.threshold
-        ?? (definition.id === "confidence_escalation" ? draft.jev.minConfidence : definition.threshold),
-      fallback: override.fallback ?? definition.fallback,
-    };
+    return resolveGatePolicy(definition, draft.jev);
   }
 
   function testJev(): void {
@@ -1024,14 +1067,23 @@ export function setup(ctx: SpindleFrontendContext) {
 
     const floorHead = el("div", "lw-sheet-label");
     const value = el("button", "lw-diag-value", policy.threshold.toFixed(2));
+    const effectiveFloor = el("div", "lw-hint");
+    const updateEffectiveFloor = (threshold: number) => {
+      effectiveFloor.textContent = `Effective floor: ${Math.max(threshold, draft.jev.minConfidence).toFixed(2)} (the higher of this decision's floor and the global floor).`;
+    };
+    const updateThreshold = (next: number) => {
+      mutateGate(definition.id, { threshold: next });
+      value.textContent = next.toFixed(2);
+      updateEffectiveFloor(next);
+    };
+    updateEffectiveFloor(policy.threshold);
     value.type = "button";
     value.title = "Click to type an exact floor";
     let editing = false;
     value.addEventListener("click", () => {
       if (editing) return;
       editing = true;
-      const input = numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
-        (next) => mutateGate(definition.id, { threshold: next }));
+      const input = numberInput(effectivePolicy(definition).threshold, 0, 1, 0.05, `${definition.label} threshold`, updateThreshold);
       input.className = "lw-input";
       value.replaceWith(input);
       input.focus();
@@ -1043,31 +1095,41 @@ export function setup(ctx: SpindleFrontendContext) {
     const track = el("div", "lw-control");
     const sliderFallback = () => {
       track.replaceChildren(numberInput(policy.threshold, 0, 1, 0.05, `${definition.label} threshold`,
-        (next) => mutateGate(definition.id, { threshold: next })));
+        updateThreshold));
     };
     if (typeof ctx.components?.mountRangeSlider === "function") {
       queueMount(() => ctx.components!.mountRangeSlider!(track, {
         min: 0, max: 1, step: 0.05, value: policy.threshold,
-        onCommit: (next: number) => mutateGate(definition.id, { threshold: next }),
+        onCommit: updateThreshold,
       }), sliderFallback);
     } else sliderFallback();
     const guidanceGate = definition.phase === "gate"
       && !["smart_trigger", "context_filter", "model_route"].includes(definition.id);
     sheet.append(track);
+    sheet.append(effectiveFloor);
     sheet.append(el("div", "lw-hint", guidanceGate
       ? "Answers below this are left out of the Director's guidance."
       : "Answers below this are escalated: the decision is not acted on and its fallback applies instead."));
     if (guidanceGate) {
       sheet.append(el("div", "lw-hint", "The Director still runs without this decision."));
-    } else {
+    } else if (supportedGateFallbacks(definition).length) {
       const fallbackHead = el("div", "lw-sheet-label");
-      fallbackHead.append(el("span", undefined, "When it cannot answer"));
+      fallbackHead.append(el("span", undefined, "When the answer is missing or inconclusive"));
+      const verifying = definition.phase === "verify";
       sheet.append(fallbackHead, selectControl(
         policy.fallback,
-        GATE_FALLBACKS.map((value) => ({ value, label: GATE_FALLBACK_LABELS[value] })),
+        supportedGateFallbacks(definition).map((value) => ({ value,
+          label: verifying && value === "skip" ? "Withhold the note" : GATE_FALLBACK_LABELS[value] })),
         `${definition.label} fallback`,
         (next) => mutateGate(definition.id, { fallback: next as GateFallback }),
       ));
+      if (verifying) sheet.append(el("div", "lw-hint", "Accept or ignore allows an inconclusive note through without saving derived scene state. Repair actions get one rewrite and recheck; if still unresolved, the note is withheld. A confident violation always requires repair. If the entire Jev request fails, the initial note continues unverified; a failed recheck withholds it."));
+    } else {
+      sheet.append(el("div", "lw-hint", definition.id === "context_filter"
+        ? "If this decision cannot answer, the Director keeps its available context."
+        : definition.id === "model_route"
+          ? "If this decision cannot answer, the Director uses its normal model."
+          : "If this decision cannot answer, its answer is ignored."));
     }
 
     if (isCustom) sheet.append(gateReset(definition));
@@ -1368,8 +1430,10 @@ export function setup(ctx: SpindleFrontendContext) {
     if (record.usedFallback && !informational && !unused) {
       const guidanceGate = record.phase === "gate"
         && !["smart_trigger", "context_filter", "model_route"].includes(record.gateId);
-      const fallbackLabel = guidanceGate || record.fallback === "run" && record.gateId !== "smart_trigger"
+      const definition = GATE_CATALOG.find((gate) => gate.id === record.gateId);
+      const fallbackLabel = guidanceGate || definition && !supportedGateFallbacks(definition).length
         ? "Decision ignored"
+        : record.phase === "verify" && record.fallback === "skip" ? "Withhold the note"
         : GATE_FALLBACK_LABELS[record.fallback];
       const fallback = el("span", "lw-badge", fallbackLabel);
       fallback.dataset.tone = "warning";
@@ -1680,9 +1744,13 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function render(): void {
+    preserveDrawerScroll(renderContents);
+  }
+
+  function renderContents(): void {
     destroyHandles(); pending = []; nextFieldId = 0;
     const root = el("div", "lw-root");
-    const shell = el("div", "lw-shell"); root.append(shell); drawer.root.replaceChildren(root);
+    const shell = el("div", "lw-shell"); root.append(shell);
 
     shell.append(buildHeader());
     const intro = el("p", "lw-intro");
@@ -1692,8 +1760,13 @@ export function setup(ctx: SpindleFrontendContext) {
     const notices = el("div"); notices.dataset.lwNotice = "";
     const warnings = el("div"); warnings.dataset.lwWarnings = "";
     shell.append(notices, warnings);
-    updateWarnings();
-    if (!state) { shell.append(el("div", "lw-loading", "Loading LumiWorld settings…")); updateDirectorStatus(); renderNotice(); return; }
+    renderWarnings(warnings);
+    warnings.hidden = !warnings.childElementCount;
+    if (!state) {
+      shell.append(el("div", "lw-loading", "Loading LumiWorld settings…"));
+      drawer.root.replaceChildren(root);
+      updateDirectorStatus(); renderNotice(); return;
+    }
 
     shell.append(viewTabs());
 
@@ -1709,6 +1782,9 @@ export function setup(ctx: SpindleFrontendContext) {
     const retry = button("Retry save", () => scheduleSave(0)); retry.dataset.lwRetry = "";
     footerStatus.append(saveStatus, retry); footer.append(footerStatus); shell.append(footer);
 
+    // Keep the old content in place until its replacement is complete. An empty
+    // intermediate shell makes the host drawer clamp its scroll position to 0.
+    drawer.root.replaceChildren(root);
     flushMounts();
     activateView(activeTab);
     updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateJevTestButton(); renderNotice();
