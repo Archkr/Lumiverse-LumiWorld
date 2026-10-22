@@ -13,9 +13,9 @@ const baseSettings: LumiWorldSettings = {
   includeUserPersona: false,
 };
 
-/** Jev switched on with a stored key; individual tests narrow this further. */
+/** Jev switched on with a saved Decision connection. */
 function jevSettings(patch: Partial<JevSettings> = {}): JevSettings {
-  return { ...DEFAULT_SETTINGS.jev, enabled: true, provider: "typesafe", model: "", gatePolicy: {}, ...patch };
+  return { ...DEFAULT_SETTINGS.jev, enabled: true, connectionId: null, model: "", gatePolicy: {}, ...patch };
 }
 
 const stored = new Map<string, unknown>([
@@ -27,13 +27,22 @@ const stored = new Map<string, unknown>([
     { id: "old-world-run", timestamp: 1, status: "success", channel: "world_agent", worldAgentDay: 4, legacyDetail: "keep" },
   ]],
 ]);
-/** Mirrors the encrypted per-user enclave, including the host's key rules. */
-const enclave = new Map<string, string>();
-const ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
-function assertEnclaveKey(key: string): void {
-  if (!ENCLAVE_KEY_PATTERN.test(key)) {
-    throw new Error("Invalid enclave key: must be 1-128 characters, alphanumeric/underscore/dash/dot only");
-  }
+const defaultDecisionProfile = { id: "decision-default", name: "Story decisions", provider: "openrouter",
+  model: "~typesafe/jev-latest", is_default: true, has_api_key: true,
+  api_url: "https://provider.example", default_parameters: {}, metadata: { private: "DO_NOT_FORWARD_METADATA" },
+  created_at: 1, updated_at: 1 };
+let decisionProfiles = [{ ...defaultDecisionProfile }];
+const deniedPermissions = new Set<string>();
+const decisionCalls: any[] = [];
+const modelCalls: Array<{ id: string; userId?: string }> = [];
+function resetDecisions(): void {
+  decisionProfiles = [{ ...defaultDecisionProfile }];
+  decisionShouldThrow = false;
+  deniedPermissions.clear();
+  decisionCalls.length = 0;
+  modelCalls.length = 0;
+  decisionUsers = [];
+  (globalThis as any).spindle.host.capabilities["decisions-v1"] = 1;
 }
 const sent: BackendToFrontend[] = [];
 let interceptor: Interceptor | null = null;
@@ -46,10 +55,10 @@ let failNextSettingsSave = false;
 const jevRequests: Array<Record<string, { type: string }>> = [];
 const jevStates: unknown[] = [];
 let jevAnswerFor: (gateId: string) => unknown | undefined = () => undefined;
-let corsShouldThrow = false;
+let decisionShouldThrow = false;
 let worldInfoFetches = 0;
 /** What each host call was scoped to, for verifying the resolved user. */
-let enclaveGetUsers: Array<string | undefined> = [];
+let decisionUsers: Array<string | undefined> = [];
 let generateUsers: Array<string | undefined> = [];
 const generatedModels: string[] = [];
 const generatedMessages: any[][] = [];
@@ -65,11 +74,29 @@ function beginGeneration(chatId: string, generationId: string, userId = "user-je
 }
 let worldInfoEntryFetches = 0;
 
-function jevAnswerBody(questions: Record<string, { type: string }>): string {
+/** Native host responses contain every requested answer and complete probability maps. */
+function jevAnswerBody(questions: Record<string, { type: string; criteria?: any }>): string {
   const answers: Record<string, unknown> = {};
-  for (const gateId of Object.keys(questions)) {
-    const answer = jevAnswerFor(gateId);
-    if (answer !== undefined) answers[gateId] = answer;
+  for (const [gateId, question] of Object.entries(questions)) {
+    const override = jevAnswerFor(gateId) as any;
+    if (question.type === "noul") {
+      answers[gateId] = override ?? { type: "noul", noul: gateId === "player_agency" ? 0.02 : 0.95 };
+      continue;
+    }
+    const keys = question.type === "choice" ? Object.keys(question.criteria)
+      : question.criteria.map((_description: unknown, index: number) => String(index));
+    const value = question.type === "choice" ? override?.choice ?? keys[0] : override?.score ?? 2;
+    const selected = question.type === "choice" ? String(value) : String(Math.round(value));
+    const reported = override?.probabilities ?? { [selected]: 1 };
+    const missing = keys.filter((key: string) => !(key in reported));
+    const sum = keys.reduce((total: number, key: string) => total + (reported[key] ?? 0), 0);
+    const probabilities = Object.fromEntries(keys.map((key: string) => [key,
+      key in reported ? reported[key] : missing.length ? (1 - sum) / missing.length : 0]));
+    expect(Object.keys(probabilities)).toEqual(keys);
+    expect(Object.values(probabilities).reduce((total, probability) => total + Number(probability), 0)).toBeCloseTo(1, 5);
+    const common = { type: question.type, probabilities, confidence: override?.confidence ?? 0.95 };
+    answers[gateId] = question.type === "choice" ? { ...common, choice: value }
+      : { ...common, score: value, legend: Object.fromEntries(question.criteria.map((description: unknown, index: number) => [String(index), description])) };
   }
   return JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 120, output_tokens: 12 } });
 }
@@ -122,21 +149,33 @@ function latestRun(): any {
       stored.set(path, structuredClone(value));
     },
   },
-  enclave: {
-    // Mirrors the host's key validation. Without it the mock accepts anything and
-    // an invalid key format passes every test while failing in Lumiverse.
-    get: async (key: string, userId?: string) => { assertEnclaveKey(key); enclaveGetUsers.push(userId); return enclave.get(key) ?? null; },
-    put: async (key: string, value: string) => { assertEnclaveKey(key); enclave.set(key, value); },
-    delete: async (key: string) => { assertEnclaveKey(key); return enclave.delete(key); },
-    has: async (key: string) => { assertEnclaveKey(key); return enclave.has(key); },
-    list: async () => [...enclave.keys()],
+  host: { capabilities: { "decisions-v1": 1 } },
+  decisions: {
+    listConnections: async (options?: { userId?: string }) => { decisionUsers.push(options?.userId); return decisionProfiles; },
+    getConnection: async (id: string, options?: { userId?: string }) => {
+      decisionUsers.push(options?.userId); return decisionProfiles.find((profile) => profile.id === id) ?? null;
+    },
+    getModels: async (id: string, options?: { userId?: string }) => {
+      modelCalls.push({ id, userId: options?.userId });
+      if (!decisionProfiles.some((profile) => profile.id === id)) throw new Error("Decision connection not found");
+      return [{ id: "~typesafe/jev-latest", label: "Jev latest", protocol: "supported" },
+        { id: "together/tev1", label: "Unsupported", protocol: "unsupported" }];
+    },
+    evaluate: async (input: any) => {
+      decisionUsers.push(input.userId);
+      decisionCalls.push(input);
+      if (decisionShouldThrow) throw new Error("network unreachable");
+      jevRequests.push(input.questions);
+      jevStates.push(input.state);
+      return JSON.parse(jevAnswerBody(input.questions));
+    },
   },
   connections: {
     list: async () => [{ id: "director-connection", name: "Director", provider: "mock", model: "mock-model", has_api_key: true }],
     get: async (id: string) => id === "director-connection"
       ? { id, name: "Director", provider: "mock", model: "mock-model", has_api_key: true } : null,
   },
-  permissions: { has: () => true, onChanged: () => {}, onDenied: () => {} },
+  permissions: { has: (permission: string) => !deniedPermissions.has(permission), onChanged: () => {}, onDenied: () => {} },
   personas: { getActive: async () => activePersona },
   characters: { get: async () => activeCharacter },
   chats: { get: async () => activeCharacter ? { character_id: "character-1" } : null },
@@ -152,13 +191,6 @@ function latestRun(): any {
           ? { id, content: "A hatch is sealed with salt and iron.", comment: "The sealed hatch" } : null;
       },
     },
-  },
-  cors: async (_url: string, options: { body: string }) => {
-    if (corsShouldThrow) throw new Error("network unreachable");
-    const payload = JSON.parse(options.body) as { state: unknown; questions: Record<string, { type: string }> };
-    jevRequests.push(payload.questions);
-    jevStates.push(payload.state);
-    return { status: 200, statusText: "OK", headers: {}, body: jevAnswerBody(payload.questions) };
   },
   generate: {
     raw: async (input: any) => {
@@ -270,12 +302,11 @@ describe("v0.5 Jev turn flow", () => {
     activeCharacter = null;
     sent.length = 0;
     generations = 0;
-    corsShouldThrow = false;
+    decisionShouldThrow = false;
     worldInfoFetches = 0;
     worldInfoEntryFetches = 0;
     jevAnswerFor = () => undefined;
-    enclave.clear();
-    enclave.set("jev-api-key.typesafe", "test-key");
+    resetDecisions();
     stored.forEach((_value, key) => { if (key !== "global/runs.json") stored.delete(key); });
     stored.set("global/settings.json", { ...baseSettings, jev: jevSettings() });
     stored.set("global/runs.json", []);
@@ -435,8 +466,8 @@ describe("v0.5 Jev turn flow", () => {
     expect(run.jev.status).toBe("skipped");
   });
 
-  test("fails open and runs the Director when the proxy throws", async () => {
-    corsShouldThrow = true;
+  test("fails open and runs the Director when the Decision API throws", async () => {
+    decisionShouldThrow = true;
     const result = await runJevTurn();
     expect(directorRuns(result)).toBe(true);
     expect(generations).toBe(1);
@@ -466,22 +497,22 @@ describe("v0.5 Jev turn flow", () => {
     expect(run.jev.gates.some((gate: any) => gate.gateId === "director_verification")).toBe(false);
   });
 
-  test("runs the Director ungated when no Jev key is stored", async () => {
-    enclave.clear();
+  test("runs the Director ungated when no default Decision connection exists", async () => {
+    decisionProfiles = [];
     const result = await runJevTurn();
     expect(directorRuns(result)).toBe(true);
     expect(jevRequests).toHaveLength(0);
     expect(generations).toBe(1);
     const run = latestRun();
     expect(run.jev.status).toBe("degraded");
-    expect(run.jev.error).toMatch(/no jev api key/i);
+    expect(run.jev.error).toMatch(/no default decision connection/i);
   });
 
   test("does not fetch Jev-only World Info when Jev cannot run", async () => {
     stored.set("global/settings.json", { ...baseSettings,
       jev: jevSettings({ includeWorldInfoEntries: true }),
     });
-    enclave.clear();
+    decisionProfiles = [];
     await runJevTurn();
     expect(worldInfoFetches).toBe(0);
   });
@@ -713,7 +744,8 @@ describe("v0.5 Jev turn flow", () => {
     } }) });
     answerCleanTurn();
     const clean = jevAnswerFor;
-    jevAnswerFor = (gateId) => gateId === "continuity_guard" ? undefined : clean(gateId);
+    jevAnswerFor = (gateId) => gateId === "continuity_guard"
+      ? { type: "choice", choice: "uncertain", probabilities: { uncertain: 0.9 }, confidence: 0.9 } : clean(gateId);
 
     const result = await runJevTurn();
 
@@ -777,7 +809,7 @@ describe("v0.5 Jev turn flow", () => {
     const clean = jevAnswerFor;
     jevAnswerFor = (gateId) => {
       if (gateId !== "continuity_guard") return clean(gateId);
-      corsShouldThrow = true;
+      decisionShouldThrow = true;
       return { type: "choice", choice: "violation", probabilities: { violation: 0.95 }, confidence: 0.95 };
     };
 
@@ -1026,15 +1058,15 @@ describe("v0.5 Jev turn flow", () => {
     answerCleanTurn();
     // The drawer identified user-A, then a generation arrives for user-B.
     await messageHandler!({ type: "refresh_state", chatId: "chat-a" }, "user-a");
-    enclaveGetUsers = [];
+    decisionUsers = [];
     generateUsers = [];
     await interceptor!(jevMessages, {
       chatId: "chat-b", generationType: "normal", userId: "user-b",
     });
 
-    // The Jev key must be read for the generation's own user...
-    expect(enclaveGetUsers).toContain("user-b");
-    expect(enclaveGetUsers).not.toContain("user-a");
+    // Decision inspection and evaluation must use the generation's own user...
+    expect(decisionUsers).toContain("user-b");
+    expect(decisionUsers).not.toContain("user-a");
     // ...and the Director must be called for that user too.
     expect(generateUsers).toContain("user-b");
     expect(generateUsers).not.toContain("user-a");
@@ -1141,70 +1173,95 @@ describe("v0.5 Jev turn flow", () => {
   });
 });
 
-describe("v0.5 Jev drawer protocol", () => {
+describe("native Decision drawer protocol", () => {
   beforeEach(() => {
     jevRequests.length = 0;
     sent.length = 0;
-    corsShouldThrow = false;
+    resetDecisions();
     worldInfoFetches = 0;
     worldInfoEntryFetches = 0;
     jevAnswerFor = () => undefined;
-    enclave.clear();
-    stored.forEach((_value, key) => { if (key !== "global/runs.json") stored.delete(key); });
+    stored.clear();
     stored.set("global/settings.json", { ...baseSettings, jev: jevSettings() });
     stored.set("global/runs.json", []);
   });
 
-  test("tests the connection and stores the key on success", async () => {
+  test("tests a saved connection with a chat-free sample and no credentials", async () => {
     jevAnswerFor = () => ({ type: "noul", noul: 0.97 });
-    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() }, apiKey: "fresh-key" }, "user-jev");
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings({ enabled: false }) } }, "user-jev");
     const result = sent.find((message) => message.type === "jev_test_result");
-    expect(result?.type).toBe("jev_test_result");
-    if (result?.type === "jev_test_result" && result.ok) {
-      expect(result.model).toBe("jev-1.13.0");
-      expect(result.answer).toBe("yes");
-      expect(result.provider).toBe("TypeSafe");
-    } else {
-      throw new Error("expected a successful Jev test");
-    }
-    expect(enclave.get("jev-api-key.typesafe")).toBe("fresh-key");
-    sent.length = 0;
-    await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
-    const reloaded = sent.find((message) => message.type === "state");
-    expect(reloaded?.type === "state" && reloaded.state.hasJevKey).toBe(true);
+    expect(result?.type === "jev_test_result" && result.ok).toBe(true);
+    if (result?.type !== "jev_test_result" || !result.ok) throw new Error("expected a successful Decision test");
+    expect(result.model).toBe("jev-1.13.0");
+    expect(result.provider).toBe("openrouter");
+    expect(result.answer).toBe("yes");
+    expect(decisionCalls).toHaveLength(1);
+    expect(decisionCalls[0].connection_id).toBe("decision-default");
+    expect(decisionCalls[0].userId).toBe("user-jev");
+    expect(decisionCalls[0].state).toContain("harbour");
+    expect(JSON.stringify(decisionCalls[0])).not.toContain("observatory");
+    expect(decisionCalls[0]).not.toHaveProperty("apiKey");
+    expect(decisionCalls[0]).not.toHaveProperty("headers");
   });
 
-  test("does not store a key the provider rejected", async () => {
-    corsShouldThrow = true;
-    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() }, apiKey: "bad-key" }, "user-jev");
+  test("reports native evaluation errors", async () => {
+    decisionShouldThrow = true;
+    await messageHandler!({ type: "test_jev" }, "user-jev");
     const result = sent.find((message) => message.type === "jev_test_result");
-    expect(result?.type === "jev_test_result" && result.ok).toBe(false);
-    expect(enclave.has("jev-api-key.typesafe")).toBe(false);
+    expect(result?.type === "jev_test_result" && !result.ok && result.error).toContain("network unreachable");
   });
 
-  test("reports a missing key without calling Jev", async () => {
-    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings() } }, "user-jev");
+  test("does not fall back to the default when an explicit connection is missing", async () => {
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings({ connectionId: "deleted" }) } }, "user-jev");
     const result = sent.find((message) => message.type === "jev_test_result");
-    expect(result?.type === "jev_test_result" && result.ok).toBe(false);
-    if (result?.type === "jev_test_result" && !result.ok) expect(result.error).toMatch(/no jev api key/i);
-    expect(jevRequests).toHaveLength(0);
+    expect(result?.type === "jev_test_result" && !result.ok && result.error).toContain("selected Decision connection is unavailable");
+    expect(decisionCalls).toHaveLength(0);
   });
 
-  test("clears a stored key", async () => {
-    enclave.set("jev-api-key.typesafe", "existing");
-    await messageHandler!({ type: "clear_jev_key", provider: "typesafe" }, "user-jev");
-    expect(enclave.has("jev-api-key.typesafe")).toBe(false);
+  test("uses an exact model override on an explicit connection", async () => {
+    jevAnswerFor = () => ({ type: "noul", noul: 0.9 });
+    await messageHandler!({ type: "test_jev", settings: { jev: jevSettings({ connectionId: "decision-default", model: "~typesafe/jev-custom" }) } }, "user-jev");
+    expect(decisionCalls[0].model).toBe("~typesafe/jev-custom");
+    expect(decisionCalls[0].connection_id).toBe("decision-default");
   });
 
-  test("reports gateway state without exposing the key", async () => {
-    enclave.set("jev-api-key.typesafe", "existing");
-    await messageHandler!({ type: "refresh_state", chatId: "chat-jev" }, "user-jev");
+  test("reports missing credentials in Lumiverse without exposing endpoint or metadata", async () => {
+    decisionProfiles[0]!.has_api_key = false;
+    await messageHandler!({ type: "test_jev" }, "user-jev");
+    const result = sent.find((message) => message.type === "jev_test_result");
+    expect(result?.type === "jev_test_result" && !result.ok && result.error).toContain("Lumiverse Decision connections");
+    expect(decisionCalls).toHaveLength(0);
     const state = sent.find((message) => message.type === "state");
-    expect(state?.type).toBe("state");
-    if (state?.type !== "state") throw new Error("expected a state message");
-    expect(state.state.hasJevKey).toBe(true);
-    expect(state.state.jevProviderInfo.id).toBe("typesafe");
-    expect(state.state.jevEndpoint).toBe("https://api.typesafe.ai/v1/systemone");
-    expect(JSON.stringify(state.state)).not.toContain("existing");
+    expect(state?.type === "state" && state.state.decisionConnections[0]?.hasApiKey).toBe(false);
+    expect(JSON.stringify(state)).not.toContain("DO_NOT_FORWARD_METADATA");
+    expect(JSON.stringify(state)).not.toContain("https://provider.example");
+  });
+
+  for (const unavailable of ["permission", "capability"] as const) {
+    test(`does not call native evaluation without ${unavailable}`, async () => {
+      if (unavailable === "permission") deniedPermissions.add("decisions");
+      else (globalThis as any).spindle.host.capabilities["decisions-v1"] = 0;
+      await messageHandler!({ type: "test_jev" }, "user-jev");
+      const result = sent.find((message) => message.type === "jev_test_result");
+      expect(result?.type === "jev_test_result" && result.ok).toBe(false);
+      expect(decisionCalls).toHaveLength(0);
+      expect(decisionUsers).toHaveLength(0);
+    });
+  }
+
+  test("discovers models with the selected connection and user", async () => {
+    await messageHandler!({ type: "get_decision_models", connectionId: null }, "user-catalog");
+    expect(modelCalls).toEqual([{ id: "decision-default", userId: "user-catalog" }]);
+    const result = sent.find((message) => message.type === "decision_models");
+    expect(result?.type === "decision_models" && result.connectionId).toBeNull();
+    expect(result?.type === "decision_models" && result.models[0]?.id).toBe("~typesafe/jev-latest");
+    expect(decisionCalls).toHaveLength(0);
+  });
+
+  test("does not discover another profile's models for a missing explicit connection", async () => {
+    await messageHandler!({ type: "get_decision_models", connectionId: "deleted" }, "user-catalog");
+    const result = sent.find((message) => message.type === "decision_models");
+    expect(result?.type === "decision_models" && result.error).toContain("not found");
+    expect(result?.type === "decision_models" && result.models).toEqual([]);
   });
 });

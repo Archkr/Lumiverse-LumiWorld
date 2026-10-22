@@ -1,13 +1,13 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import {
-  BUILTIN_PROMPT_PRESET_ID, DEFAULT_SETTINGS, JEV_PROVIDERS, JEV_PROVIDER_IDS, VISIBLE_GENERATION_TYPES, normalizeSettings,
+  BUILTIN_PROMPT_PRESET_ID, DEFAULT_SETTINGS, VISIBLE_GENERATION_TYPES, normalizeSettings,
   type GateDefinition, type GateFallback, type GatePolicy, type JevGateRecord, type JevPhaseTrace,
-  type JevProvider, type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type RunLogEntry,
+  type JevSettings, type JevTurnDiagnostics, type LumiWorldSettings, type PromptPreset, type ConnectionOption, type DecisionModelOption, type RunLogEntry,
 } from "./shared";
 import { GATE_CATALOG, GATE_CATEGORY_LABELS, GATE_CATEGORY_ORDER, directorGuidanceFromGates, resolveGatePolicy, supportedGateFallbacks } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 const LABELS: Record<string, string> = {
   normal: "New reply", continue: "Continue", regenerate: "Regenerate", swipe: "Swipe", impersonate: "Impersonate",
@@ -126,18 +126,6 @@ const CSS = `
 .lw-control-card { display:grid; gap:12px; padding:12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-fill-subtle); }
 .lw-control-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .lw-control-title { font-size:12px; font-weight:600; }
-
-/* --- Segmented provider control ------------------------------------- */
-.lw-segments { display:flex; gap:4px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); }
-.lw-segment { flex:1 1 0; min-width:0; min-height:30px; padding:5px 10px; border:0; border-radius:6px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12px; font-weight:550; cursor:pointer; transition:background .15s,color .15s; }
-.lw-segment:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
-.lw-segment[aria-pressed="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
-.lw-segment:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
-.lw-provider-note { font-size:11px; }
-.lw-provider-note a { color:var(--lumiverse-primary-text); }
-
-/* --- Key row -------------------------------------------------------- */
-.lw-key-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; }
 
 /* --- Gates ---------------------------------------------------------- */
 .lw-gate-body { display:grid; gap:6px; }
@@ -318,29 +306,6 @@ function pill(text: string, tone: "neutral" | "success" | "warning" | "error" | 
   return badge;
 }
 
-/**
- * A segmented control. The host's `mountSelect` renders a collapsed dropdown;
- * two options read better as visible segments.
- */
-function segmented(
-  value: string,
-  options: Array<{ value: string; label: string }>,
-  ariaLabel: string,
-  onChange: (next: string) => void,
-): HTMLElement {
-  const group = el("div", "lw-segments");
-  group.setAttribute("role", "group");
-  group.setAttribute("aria-label", ariaLabel);
-  for (const option of options) {
-    const node = el("button", "lw-segment", option.label);
-    node.type = "button";
-    node.setAttribute("aria-pressed", String(option.value === value));
-    node.addEventListener("click", () => { if (option.value !== value) onChange(option.value); });
-    group.append(node);
-  }
-  return group;
-}
-
 function activeChat(ctx: SpindleFrontendContext): { chatId: string | null; characterId: string | null } {
   try { return ctx.getActiveChat(); }
   catch { return { chatId: null, characterId: null }; }
@@ -359,7 +324,12 @@ export function setup(ctx: SpindleFrontendContext) {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let testPending = false;
   let jevTestPending = false;
-  let jevKeyDraft = "";
+  let decisionModels: DecisionModelOption[] = [];
+  let decisionModelError: string | null = null;
+  let decisionModelsPending = false;
+  let decisionCatalogSignature: string | null = null;
+  let nextDecisionCatalogRequestId = 0;
+  let pendingDecisionCatalogRequestId: number | null = null;
   let advancedOpen = false;
   let templatesOpen = false;
   let pendingPresetDeleteId: string | null = null;
@@ -700,18 +670,98 @@ export function setup(ctx: SpindleFrontendContext) {
 
   /* ---------------- Jev ---------------- */
 
-  function providerInfo(): typeof JEV_PROVIDERS.typesafe {
-    return JEV_PROVIDERS[draft.jev.provider];
+  function selectedDecisionConnection(): ConnectionOption | null {
+    const connections = state?.decisionConnections ?? [];
+    return draft.jev.connectionId === null
+      ? connections.find((connection) => connection.isDefault) ?? null
+      : connections.find((connection) => connection.id === draft.jev.connectionId) ?? null;
   }
 
-  function hasJevKey(): boolean {
-    return !!state?.hasJevKey;
+  function decisionSetupProblem(): string | null {
+    if (!state?.decisionsAvailable) return "Update Lumiverse to use Decision models.";
+    if (!state.permissions.decisions) return "Grant LumiWorld the decisions permission in Lumiverse.";
+    if (state.decisionConnectionError) return state.decisionConnectionError;
+    const connection = selectedDecisionConnection();
+    if (!connection) return draft.jev.connectionId
+      ? "The saved Decision connection is unavailable. Choose a connection or the account default."
+      : "Set a default Decision connection in Lumiverse, or choose one here.";
+    if (!connection.hasApiKey) return "Add an API key to this Decision connection in Lumiverse.";
+    const model = draft.jev.model.trim() || connection.model;
+    if (!model) return "Set a model on this Decision connection, or enter a model override.";
+    if (decisionModels.some((entry) => entry.id === model && entry.protocol === "unsupported")) {
+      return "This model uses an unsupported Decision protocol. Choose a supported model.";
+    }
+    return null;
   }
 
   function canTestJev(): boolean {
-    if (!state?.permissions.corsProxy) return false;
-    if (jevKeyDraft.trim()) return true;
-    return hasJevKey();
+    return decisionSetupProblem() === null;
+  }
+
+  function requestDecisionModels(force = false): void {
+    if (!draft.jev.enabled || !state) return;
+    const connection = selectedDecisionConnection();
+    const signature = JSON.stringify([draft.jev.connectionId, connection, state.decisionConnectionError, state.decisionsAvailable, state.permissions.decisions]);
+    if (!force && signature === decisionCatalogSignature) return;
+    decisionCatalogSignature = signature;
+    decisionModels = [];
+    decisionModelError = null;
+    decisionModelsPending = state.decisionsAvailable && state.permissions.decisions && !!connection && !state.decisionConnectionError;
+    pendingDecisionCatalogRequestId = decisionModelsPending ? ++nextDecisionCatalogRequestId : null;
+    if (pendingDecisionCatalogRequestId !== null) {
+      send({ type: "get_decision_models", connectionId: draft.jev.connectionId, requestId: pendingDecisionCatalogRequestId });
+    }
+  }
+
+  function updateDecisionModels(): void {
+    const input = drawer.root.querySelector<HTMLInputElement>('[aria-label="Jev model"]');
+    if (input) input.placeholder = selectedDecisionConnection()?.model || "Connection’s saved model";
+    const list = drawer.root.querySelector<HTMLDataListElement>("[data-lw-decision-models]");
+    if (list) {
+      list.replaceChildren();
+      for (const model of decisionModels.filter((entry) => entry.protocol !== "unsupported")) {
+        const option = el("option");
+        option.value = model.id;
+        option.label = `${model.label}${model.protocol === "unverified" ? " (unverified)" : ""}`;
+        list.append(option);
+      }
+    }
+    const hint = drawer.root.querySelector<HTMLElement>("[data-lw-decision-model-hint]");
+    if (hint) hint.textContent = decisionModelsPending ? "Loading Decision models…"
+      : decisionModelError ? `Model discovery failed: ${decisionModelError} You can still enter a model ID manually.`
+      : "Choose a discovered model or enter an exact model ID. Blank uses the connection’s saved model.";
+    updateJevTestButton();
+  }
+
+  function decisionConnectionField(): HTMLElement {
+    const selected = selectedDecisionConnection();
+    const options = [{ value: "", label: `Account default${draft.jev.connectionId === null && selected ? ` · ${selected.name || selected.id}` : ""}` },
+      ...(state?.decisionConnections ?? []).map((connection) => ({
+        value: connection.id,
+        label: `${connection.name || connection.id} · ${connection.provider}${connection.isDefault ? " · default" : ""}`,
+      }))];
+    if (draft.jev.connectionId && !options.some((option) => option.value === draft.jev.connectionId)) {
+      options.push({ value: draft.jev.connectionId, label: `Saved connection unavailable · ${draft.jev.connectionId}` });
+    }
+    return field("Decision connection", selectControl(draft.jev.connectionId ?? "", options, "Decision connection", (value) => {
+      mutateJev({ connectionId: value || null, model: "" }, true);
+    }), "Manage providers and API keys in Lumiverse’s Decision connections.");
+  }
+
+  function decisionModelField(): HTMLElement {
+    const control = el("div", "lw-control");
+    const input = textInput(draft.jev.model, selectedDecisionConnection()?.model || "Connection’s saved model", "Jev model", (value) => {
+      mutateJev({ model: value });
+      updateJevTestButton();
+    });
+    const list = el("datalist");
+    list.id = "lw-decision-model-options";
+    list.dataset.lwDecisionModels = "";
+    input.setAttribute("list", list.id);
+    const hint = el("div", "lw-hint");
+    hint.dataset.lwDecisionModelHint = "";
+    control.append(input, list, hint);
+    return field("Model override (optional)", control);
   }
 
   function selectControl(value: string, options: Array<{ value: string; label: string }>, ariaLabel: string, onChange: (next: string) => void): HTMLElement {
@@ -767,23 +817,33 @@ export function setup(ctx: SpindleFrontendContext) {
     jevTestPending = true;
     showNotice({ tone: "info", text: "Testing Jev…" }, 0);
     updateJevTestButton();
-    send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
+    send({ type: "test_jev", settings: draft });
+  }
+
+  function jevStatusLabel(): string {
+    if (!draft.jev.enabled) return "Off";
+    if (!state?.decisionsAvailable) return "Update Lumiverse";
+    if (!state.permissions.decisions) return "Needs permission";
+    return canTestJev() ? "Ready" : "Setup needed";
   }
 
   function updateJevStatus(): void {
     const target = drawer.root.querySelector<HTMLElement>("[data-lw-jev-status]");
-    if (!target) return;
-    const tone = !draft.jev.enabled
-      ? "neutral"
-      : !state?.permissions.corsProxy || (!hasJevKey() && !jevKeyDraft.trim()) ? "warning" : "success";
-    const text = !draft.jev.enabled
-      ? "Off"
-      : !state?.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
-    target.replaceChildren(pill(text, tone));
+    if (target) target.replaceChildren(pill(jevStatusLabel(), !draft.jev.enabled ? "neutral" : canTestJev() ? "success" : "warning"));
   }
 
   function updateJevTestButton(): void {
     updateJevStatus();
+    updateHeaderStatus();
+    const marker = tabMarker("jev");
+    const dot = drawer.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot");
+    if (dot && marker) {
+      dot.title = marker.label;
+      dot.style.background = marker.tone === "warning" ? "var(--lumiverse-warning)"
+        : marker.tone === "success" ? "var(--lumiverse-success)" : "var(--lumiverse-text-muted)";
+    }
+    const refresh = drawer.root.querySelector<HTMLButtonElement>("[data-lw-refresh-decision-models]");
+    if (refresh) refresh.disabled = !state?.decisionsAvailable || !state.permissions.decisions || !selectedDecisionConnection() || decisionModelsPending;
     const node = drawer.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]");
     if (node) {
       node.disabled = jevTestPending || !canTestJev();
@@ -791,13 +851,7 @@ export function setup(ctx: SpindleFrontendContext) {
       node.textContent = jevTestPending ? "Testing Jev…" : "Test Jev";
     }
     const hint = drawer.root.querySelector<HTMLElement>("[data-lw-jev-hint]");
-    if (hint) {
-      hint.textContent = !state?.permissions.corsProxy
-        ? "The cors_proxy permission is required to reach Jev."
-        : jevKeyDraft.trim() ? "Sends one tiny yes/no question and stores the key if it works."
-        : hasJevKey() ? "Uses the stored key. One tiny yes/no question; your chat is not sent."
-        : "Paste an API key to test the connection.";
-    }
+    if (hint) hint.textContent = decisionSetupProblem() || "Uses your Decision connection for one tiny yes/no question; your chat is not sent.";
   }
 
   /**
@@ -823,56 +877,16 @@ export function setup(ctx: SpindleFrontendContext) {
     const core = el("section", "lw-setup");
     core.setAttribute("aria-label", "Jev connection");
 
-    const providerHead = el("div", "lw-control-head");
-    const providerCopy = el("div");
-    providerCopy.append(el("div", "lw-control-title", "Provider"));
-    const note = el("div", "lw-provider-note");
-    const link = el("a", undefined, `${providerInfo().label} API keys`) as HTMLAnchorElement;
-    link.href = providerInfo().keyUrl;
-    link.target = "_blank";
-    link.rel = "noreferrer noopener";
-    note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
-    providerCopy.append(note);
-    providerHead.append(providerCopy);
-    core.append(providerHead);
-    core.append(segmented(
-      draft.jev.provider,
-      JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })),
-      "Jev provider",
-      (value) => mutateJev({ provider: value as JevProvider, model: "" }, true),
-    ));
-
+    requestDecisionModels();
+    core.append(decisionConnectionField());
     const fields = el("div", "lw-fields");
-    fields.append(field("Model", textInput(
-      draft.jev.model, providerInfo().defaultModel, "Jev model",
-      (value) => mutateJev({ model: value }),
-    ), `Blank uses ${providerInfo().defaultModel}.`));
+    fields.append(decisionModelField());
     core.append(fields);
-
-    // Credential sits inside the connection card, the way the Director's model
-    // field sits inside its own, rather than in a separate box.
-    const credentialHead = el("div", "lw-control-head");
-    credentialHead.append(el("div", "lw-control-title", "API key"));
-    credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
-    core.append(credentialHead);
-
-    const keyRow = el("div", "lw-key-row");
-    const keyInput = el("input", "lw-input");
-    keyInput.type = "password";
-    keyInput.autocomplete = "off";
-    keyInput.spellcheck = false;
-    keyInput.value = jevKeyDraft;
-    keyInput.placeholder = hasJevKey() ? "A key is stored — paste to replace" : "Paste your API key";
-    keyInput.setAttribute("aria-label", "Jev API key");
-    keyInput.addEventListener("input", () => { jevKeyDraft = keyInput.value; updateJevTestButton(); });
-    const clear = button("Clear", () => {
-      jevKeyDraft = "";
-      send({ type: "clear_jev_key", provider: draft.jev.provider });
-    });
-    clear.disabled = !hasJevKey();
-    keyRow.append(keyInput, clear);
-    core.append(keyRow);
-    core.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
+    const discovery = el("div", "lw-actions");
+    const refresh = button("Refresh models", () => { requestDecisionModels(true); updateDecisionModels(); });
+    refresh.dataset.lwRefreshDecisionModels = "";
+    discovery.append(refresh);
+    core.append(discovery);
 
     const actions = el("div", "lw-actions");
     const test = button("Test Jev", testJev, true);
@@ -915,13 +929,13 @@ export function setup(ctx: SpindleFrontendContext) {
       field("State cap (chars)", numberInput(
         draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap",
         (value) => mutateJev({ maxStateChars: value }),
-      ), "Jev allows 32k tokens for the state."),
+      ), "Caps the text sent to the Decision model."),
       field("History messages", numberInput(
         draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages",
         (value) => mutateJev({ historyMessageLimit: value }),
       )),
       field("Timeout (ms)", numberInput(
-        draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout",
+        draft.jev.timeoutMs, 1000, 30000, 500, "Jev timeout",
         (value) => mutateJev({ timeoutMs: value }),
       )),
       field("Confidence floor", numberInput(
@@ -1620,10 +1634,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const badge = drawer.root.querySelector<HTMLElement>("[data-lw-header-status]");
     if (!badge || !state) return;
     if (activeTab === "jev") {
-      const ready = draft.jev.enabled && !!state.permissions.corsProxy && (hasJevKey() || !!jevKeyDraft.trim());
-      badge.textContent = !draft.jev.enabled ? "Disabled"
-        : !state.permissions.corsProxy ? "Needs permission"
-        : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+      const ready = draft.jev.enabled && canTestJev();
+      badge.textContent = !draft.jev.enabled ? "Disabled" : jevStatusLabel();
       badge.dataset.tone = !draft.jev.enabled ? "neutral" : ready ? "success" : "warning";
       return;
     }
@@ -1637,7 +1649,7 @@ export function setup(ctx: SpindleFrontendContext) {
    *
    * The host allows one tab per extension here, so the Director and Jev surfaces
    * live as two views inside it. Views are hidden rather than re-rendered, which
-   * keeps typed-but-unsaved input (a pasted Jev key) alive when switching.
+   * keeps typed-but-unsaved input alive when switching.
    */
   function viewTabs(): HTMLElement {
     const list = el("div", "lw-tabs");
@@ -1717,9 +1729,8 @@ export function setup(ctx: SpindleFrontendContext) {
     // Jev's state is not stated anywhere else on screen, so its marker is always
     // present and simply changes tone: off, on but blocked, or on and working.
     if (!draft.jev.enabled) return { tone: "off", label: "Jev is off" };
-    if (!state.permissions.corsProxy) return { tone: "warning", label: "cors_proxy permission is not granted" };
-    if (hasJevKey() || jevKeyDraft.trim()) return { tone: "success", label: "Jev is active" };
-    return { tone: "warning", label: "Add a Jev API key" };
+    const problem = decisionSetupProblem();
+    return problem ? { tone: "warning", label: problem } : { tone: "success", label: "Jev is active" };
   }
 
   /** Switches views in place. Settings opened in one view stay expanded in the other. */
@@ -1787,7 +1798,7 @@ export function setup(ctx: SpindleFrontendContext) {
     drawer.root.replaceChildren(root);
     flushMounts();
     activateView(activeTab);
-    updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateJevTestButton(); renderNotice();
+    updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateDecisionModels(); renderNotice();
   }
 
   /** Director surface: connection, what it runs for, and what it sees. */
@@ -1933,8 +1944,9 @@ export function setup(ctx: SpindleFrontendContext) {
     if (message.type === "state") {
       state = message.state;
       if (!queue.isDirty && !saveTimer) draft = normalizeFrontendSettings(message.state.settings);
+      requestDecisionModels();
       if (drawer.root.contains(document.activeElement) && document.activeElement?.matches("input,textarea,select,[role=combobox]")) {
-        updateWarnings(); updateDirectorStatus(); updateSaveStatus(); updateTestButton();
+        updateWarnings(); updateDirectorStatus(); updateSaveStatus(); updateTestButton(); updateDecisionModels();
       } else render();
       return;
     }
@@ -1968,9 +1980,18 @@ export function setup(ctx: SpindleFrontendContext) {
         : { tone: "error", text: message.error }, 15000);
       return;
     }
+    if (message.type === "decision_models") {
+      if (message.connectionId !== draft.jev.connectionId || message.requestId !== pendingDecisionCatalogRequestId
+          || pendingDecisionCatalogRequestId === null || !state?.decisionsAvailable || !state.permissions.decisions) return;
+      pendingDecisionCatalogRequestId = null;
+      decisionModels = message.models;
+      decisionModelError = message.error;
+      decisionModelsPending = false;
+      updateDecisionModels();
+      return;
+    }
     if (message.type === "jev_test_result") {
       jevTestPending = false;
-      if (message.ok) jevKeyDraft = "";
       updateJevTestButton();
       showNotice(message.ok
         ? {

@@ -4,8 +4,8 @@
 
 **A private Director for your next Lumiverse reply.**
 
-[![Version](https://img.shields.io/badge/version-0.5.1-8b7cf6)](./spindle.json)
-[![Lumiverse](https://img.shields.io/badge/Lumiverse-%E2%89%A5%201.0.6-d4a35a)](https://github.com/prolix-oc/Lumiverse)
+[![Version](https://img.shields.io/badge/version-0.5.2-8b7cf6)](./spindle.json)
+[![Lumiverse](https://img.shields.io/badge/Lumiverse-%E2%89%A5%201.2.5-d4a35a)](https://github.com/prolix-oc/Lumiverse)
 [![License](https://img.shields.io/badge/license-Lumiverse%20Community%202.0-6f9f78)](./LICENSE.md)
 
 *Give the world a reason to move forward.*
@@ -88,10 +88,10 @@ No macro needs to be added to your character card or preset for the Director to 
 
 | Requirement | Value |
 |---|---|
-| Lumiverse | `1.0.6` or newer |
-| Extension version | `0.5.1` |
+| Lumiverse | `1.2.5` or newer; Jev additionally checks the host’s `decisions-v1` capability |
+| Extension version | `0.5.2` |
 | Director connection | An explicitly selected Lumiverse connection profile with a usable model |
-| Essential permissions | `interceptor` and `generation` |
+| Essential permissions | `interceptor` and `generation`; `decisions` for Jev |
 | Build output | Committed `dist/backend.js` and `dist/frontend.js` |
 
 Settings are saved per Lumiverse user and apply across that user’s chats. The Director uses the context of the generation currently being processed.
@@ -135,7 +135,7 @@ and give nearby NPCs practical reasons to disagree about entering it.
 
 Director notes remain in your user settings until you change or clear them. Clear scene-specific guidance before moving to an unrelated chat.
 
-**Want Jev as well?** Switch to the **Jev** view, turn it on, choose TypeSafe or OpenRouter, paste a key, and select **Test Jev**. The test uses a fixed sample without your chat content. Then generate a reply and expand **Last recorded Jev turn** to see what was asked, accepted, or ignored. Jev has its own Character, User persona, and Activated World Info switches.
+**Want Jev as well?** First save a Decision connection in Lumiverse. Switch to the **Jev** view, turn it on, select that connection (or use the default Decision connection), and select **Test Jev**. The test uses a fixed sample without your chat content. Then generate a reply and expand **Last recorded Jev turn** to see what was asked, accepted, or ignored. Jev has its own Character, User persona, and Activated World Info switches.
 
 ## Jev decisions
 
@@ -158,7 +158,7 @@ Character context sent to the Director and Jev contains only the card's name, de
 3. **After the Director:** If Jev is available, LumiWorld sends the applicable verification questions in another batch with the draft note. A confirmed guardrail violation triggers **one** repair with the original draft included, followed by another Jev verification batch. Missing, low-confidence, or inconclusive answers use the guard's selected fallback. Repair actions get the same single rewrite and recheck; if repair fails or a guard still requires repair, the note is withheld.
 4. **Visible reply and state:** A verified note or one allowed by its fallback enters the chat model's prompt. Derived scene state is saved only after a verified visible generation successfully ends; accepting an inconclusive check, previews, cancelled generations, failed generations, and withheld notes do not commit it.
 
-Usually that is **one Jev request if the Director is skipped, or two if it runs**. A repair adds a Jev recheck and another Director generation. A rate-limit or transient-error retry can add a network attempt. A failed or unconfigured Jev call falls back to the Director path.
+Usually that is **one Jev request if the Director is skipped, or two if it runs**. A repair adds a Jev recheck and another Director generation. LumiWorld and the host do not automatically retry Decision evaluations. A failed or unconfigured Jev call falls back to the Director path.
 
 ### Answer types and confidence
 
@@ -173,7 +173,7 @@ Continuity and repetition checks use a stricter `0.70` default floor. Their defa
 
 For the three direct controls, an uncertain Smart trigger **runs the Director** by default, with an option to skip it; an uncertain context filter **keeps the available Director context**, and an uncertain model route **uses the normal Director target**. The five verification guards offer supported fallback actions: regenerate, patch, soften, drop a claim through a rewrite, accept the draft, ignore the answer, or withhold the note. Accept and ignore allow an inconclusive note through without saving derived scene state. These choices apply only to inconclusive answers; a confirmed violation still requires repair. Other uncertain answers are ignored, and their cards explain that fixed behavior without an action picker.
 
-**Confidence caveat:** Jev does not report confidence for yes/no answers, so LumiWorld derives it from the probability. If a Choice or Score response omits confidence, the current code treats it as `1.00`. The displayed answer and a **partial** turn badge do not mean every answer affected the result: check **Sent to Director**, **Decision ignored**, and the per-decision notes.
+**Confidence caveat:** Jev does not report confidence for yes/no answers, so LumiWorld derives it from the probability. Choice and Score answers retain the confidence reported through the host; invalid or incomplete answers cause the host to reject that evaluation. The displayed answer and a **partial** turn badge do not mean every answer affected the result: check **Sent to Director**, **Decision ignored**, and the per-decision notes.
 
 For example, Jev might return **Pacing control: tighten, confidence 0.82** and **NPC autonomy: assist, confidence 0.28**. With a `0.55` effective floor, the Director gets the tightening guidance, while the NPC suggestion is ignored. This is still one pre-Director Jev batch and one Director call. Likewise, **20 fallbacks** means 20 decisions were not trusted or were unanswered; it does not mean 20 Director calls.
 
@@ -252,14 +252,14 @@ For example, Jev might return **Pacing control: tighten, confidence 0.82** and *
 ### Setting it up and reading a turn
 
 1. Open the **Jev** view and turn on its header switch.
-2. Choose **TypeSafe** (`jev-latest`) or **OpenRouter** (`typesafe/jev-1.13`); leave the model field blank for that provider default. Enter that provider's API key and choose **Test Jev**. The test uses a fixed sample state without chat content and stores the key only after the provider accepts it. **A passing test verifies the connection, not the 36-decision turn flow.**
+2. Select a saved **Decision connection**, or leave it on the default Decision connection. Manage its provider, API key, endpoint, and default model in Lumiverse’s connection settings. Leave **Model** blank to use the connection’s model, choose a discovered model, or enter an exact model ID manually (including a leading `~` in IDs such as `~typesafe/jev-latest`). Choose **Test Jev**. The test uses a fixed sample state without chat content. **A passing test verifies the connection, not the 36-decision turn flow.**
 3. Choose the Character, User persona, and Activated World Info sources Jev may see. These switches are independent of the Director's. Under **Advanced settings**, set history, state cap, timeout, and the global confidence floor.
 4. Expand **Decisions** to turn individual questions on or off and adjust their confidence floors. The count includes the two calculated records. Guidance questions omit uncertain answers rather than offering a configurable action. The drawer shows **custom** on changed entries and can reset their settings.
 5. Generate a reply and expand **Last recorded Jev turn**. **Answered** means the Jev phase completed without a recorded fallback; **partial** means at least one answer fell back. The strip reports model, request count, fallback/escalation counts, timing, and tokens. The rows show raw answer, confidence, and whether accepted guidance reached the Director.
 
 To check the actual chat flow, compare that Jev record with the generation's **Prompt Breakdown**. The breakdown shows the resulting **LumiWorld Director** system block when one was added; it does not show a separate Jev block. A successful Jev smoke test alone cannot show whether a decision reached the Director.
 
-For API keys, use [TypeSafe's console](https://console.typesafe.ai/keys) or [OpenRouter's key settings](https://openrouter.ai/settings/keys). Each provider has its own key slot in Lumiverse's encrypted per-user secret storage. The key is not sent back to the drawer. Jev is an external service: when enabled, the selected projected state and, during verification, the draft Director note go to that provider.
+See [Lumiverse’s Decision connection setup](https://lumiverse.chat/guides/connections/decisions/) for provider configuration. Lumiverse manages credentials and endpoints; LumiWorld never receives or stores them. Built-in Decision providers are TypeSafe and OpenRouter. Jev is an external service: when enabled, the selected projected state and, during verification, the draft Director note go to the provider behind the selected connection. Unsupported model protocols cannot be used; models with unverified compatibility can be entered and tested.
 
 ### When the scene state advances
 
@@ -294,9 +294,8 @@ is active. The Director tab flags only the case that would block a generation.
 ### Jev view
 
 - **Enable Jev:** the header switch. Turns the decision layer on or off.
-- **Provider and Model:** choose TypeSafe or OpenRouter and the model it calls.
-- **API key:** paste a key and choose **Test Jev**. The key is stored only once the
-  provider accepts it, and is never sent back to the drawer.
+- **Decision connection and Model:** choose a saved Decision connection, or use the user’s default. Leave the model blank for the connection’s saved model, choose a discovered model, or enter an exact ID manually.
+- **Test Jev:** test the selected connection and model with one fixed question. Manage API keys and endpoints in Lumiverse’s connection settings.
 - **Include in Jev state:** independently choose the Character, User persona, and Activated World Info summaries Jev may receive.
 - **Decisions:** the full gate list, grouped by category. See
   [All 36 decisions](#all-36-decisions).
@@ -339,11 +338,11 @@ LumiWorld does not set a Director output limit or truncate the returned note. Th
 
 | Setting | Default | Range / meaning |
 |---|---|---|
-| Provider | TypeSafe | TypeSafe or OpenRouter. Both use the same request and response shape. |
-| Model | Provider default (`jev-latest` or `typesafe/jev-1.13`) | Pin a version such as `jev-1.13.0` if you tuned thresholds against a release. |
+| Decision connection | User’s default | A saved Lumiverse Decision connection. An unavailable explicit selection fails rather than silently using another connection. |
+| Model | Blank | Uses the connection’s saved model. Overrides preserve exact IDs, including `~typesafe/jev-latest`. |
 | State cap (chars) | `30000` | `2000–32000`; caps the projected state sent to Jev. Jev allows 32k tokens for the state. |
 | History messages | `10` | Most recent chat messages included in that projection. `0` sends none. |
-| Timeout (ms) | `8000` | `1000–60000`; maximum wait for a Jev request. |
+| Timeout (ms) | `8000` | `1000–30000`; maximum wait for a Decision evaluation. The host enforces a 30-second deadline. |
 | Confidence floor | `0.55` | `0–1`; applies to every gate. An answer below it uses that gate’s fallback. |
 
 Jev's context switches default to **Character on**, **User persona on**, and **Activated World Info off** on a fresh setup. Older Jev settings inherit the Director's existing switch values when they are first loaded with these independent controls. The derived world state is enabled by default in settings; the drawer does not currently offer a separate switch for it.
@@ -414,7 +413,7 @@ The drawer shows test feedback directly. It does not include a Recent activity s
 
 ## Generation time and usage
 
-With Jev off, an eligible reply makes one Director call before the main reply starts. With Jev on, a confident Smart Director triggering **no** can skip that call; otherwise Jev adds its decision requests alongside the Director call. A repair can add one Director regeneration and one Jev recheck. **Test Director** also makes a Director call. Provider billing follows the connections and Jev provider you selected.
+With Jev off, an eligible reply makes one Director call before the main reply starts. With Jev on, a confident Smart Director triggering **no** can skip that call; otherwise Jev adds its decision requests alongside the Director call. A repair can add one Director regeneration and one Jev recheck. **Test Director** also makes a Director call. Provider billing follows the Director and Decision connections you selected.
 
 The Director’s response time adds to the wait before the visible reply. History length, model choice, output budget, and enabled context affect usage and latency.
 
@@ -426,7 +425,7 @@ If another Director call is already running for the same user and chat, a duplic
 |---|---|
 | `interceptor` | Inspect the generation context and inject the Director system block. |
 | `generation` | List saved connections and make Director calls. |
-| `cors_proxy` | Reach the configured Jev provider. Only needed when Jev is enabled. |
+| `decisions` | Inspect saved Decision connections/models and evaluate Jev questions through the host. Only needed when Jev is enabled. |
 | `chats` | Resolve the chat’s character when routing information is needed. |
 | `characters` | Read character context and identity. |
 | `personas` | Read persona context and identity. |
@@ -436,27 +435,32 @@ The drawer warns when a required permission is missing. Character, persona, and 
 
 ## Privacy and storage
 
-LumiWorld resolves everything against the user the host attributes to each
-generation, so a globally installed copy cannot read another user’s settings or
-Jev key. It uses Lumiverse’s connection profiles and does not read or store your
-connection credentials. The optional Jev API key is the one exception, and it is held in Lumiverse’s encrypted at-rest secret storage rather than in LumiWorld settings.
+LumiWorld resolves everything against the user the host attributes to each generation, so a globally installed copy cannot read another user’s settings. It uses Lumiverse’s Director and Decision connection profiles. The host handles credentials and endpoints; LumiWorld does not receive, read, or store them.
 
 - **Sent to the Director provider:** the selected history and context, prompt templates, and your Director notes.
 - **Sent to the Jev provider, when Jev is enabled:** the projected scene state (recent turns plus enabled context summaries), and in the verify phase the draft Director note. Nothing is sent when Jev is switched off, and the projection is capped by **State cap (chars)**.
 - **Added to the main model’s prompt:** the resulting Director note. The private notes field is not copied directly into the injected block, but it can influence the result.
 - **Stored by the extension:** user settings, named prompt presets, private notes, derived per-chat scene state, and retained run records.
 - **Run records:** timestamps, statuses, connection/model details, timing, errors, World Info diagnostic counts, a directive preview of up to 360 characters, and per-turn Jev gate decisions (question ids, typed answers, probabilities, confidence, thresholds, and fallbacks). The preview may contain story details; gate records contain only the typed decisions.
-- **Jev API key:** stored per Lumiverse user in encrypted at-rest secret storage (AES-256-GCM). It is never returned to the drawer and never written to the run log. Clearing it in the drawer deletes it.
+- **Latest turn trace:** the latest recorded turn may also retain settings, selected chat/context inputs, Director prompts and responses, full directives, projected Jev state and Decision responses, repair text, derived state, and the visible reply. Recording a later turn removes this full text from older records; test runs do not clear the latest turn trace.
+- **Credentials:** managed by Lumiverse’s connection settings, outside LumiWorld’s settings and run records.
 
-Run records do not separately archive full input prompts, raw provider responses, or World Info entry bodies. A short directive can fit entirely inside its preview. Retained data is ordinary extension storage; “private” does not mean encrypted.
+A short directive can fit entirely inside its retained preview. Full turn traces can include story details and selected World Info content. Retained data is ordinary extension storage; “private” does not mean encrypted.
 
 ## Upgrading
+
+### Moving to Decision connections
+
+- Grant the new `decisions` permission and save a Decision connection in Lumiverse. The host must advertise `decisions-v1`.
+- Select that connection in the Jev view, or use your default Decision connection. Existing gate policies, confidence floors, context switches, and enabled state are preserved.
+- Old provider, endpoint, and retry settings are removed. The old provider model override is cleared so the new connection’s saved model is used. Re-enter any intended override using its exact Decision model ID.
+- Old extension-managed API keys are not imported or used. Configure credentials in Lumiverse’s connection settings.
 
 ### Upgrading to 0.5
 
 Version `0.5.0-experimental` adds Jev on top of the 0.4 Director:
 
-- The `cors_proxy` permission is now requested. Grant it in Lumiverse Extensions to use Jev.
+- The first experimental version used `cors_proxy` and extension-managed Jev keys; current versions use the host’s `decisions` permission and saved Decision connections instead.
 - Jev ships **off**. With it off, behavior is identical to `0.4.0`.
 - A new per-chat `chats/<chatId>/world.json` file holds the derived scene state. State persistence is enabled by default in settings, though the current drawer has no World state switch.
 - Existing custom prompt text is preserved as a named preset. The built-in prompt pair remains selectable. Jev's separate context switches initially inherit the previous Director switch values.
@@ -487,8 +491,8 @@ The technical extension identifier remains `agent_world` so existing installatio
 | **Context is missing** | Check the context switches and permissions. World Info must be activated for the chat. The history limit and prompt cap can reduce the included context. |
 | **Save failed** | Keep the drawer open and choose **Retry save**. Your unsaved draft remains available there. |
 | **Old scene guidance appears in another chat** | Director notes are shared across your chats. Clear or replace scene-specific notes when switching stories. |
-| **Test Jev is disabled** | Grant `cors_proxy`, then paste an API key. A key must already be stored or typed to test. |
-| **Jev never seems to run** | Open the **Jev** view and check that its header switch is on, a key is stored for the selected provider, and `cors_proxy` is granted. Expand **Last recorded Jev turn** to see whether Jev answered, skipped, or degraded. |
+| **Test Jev is disabled** | Use a host with `decisions-v1`, grant `decisions`, and select an available Decision connection with a key and model in Lumiverse’s connection settings. |
+| **Jev never seems to run** | Check the Jev header switch, the host’s Decision support, the `decisions` grant, and the selected Decision connection. Expand **Last recorded Jev turn** to see whether Jev answered, skipped, or degraded. |
 | **Every turn shows Jev fallbacks** | Check the specific rows in **Last recorded Jev turn**. Low confidence or missing answers can produce individual fallbacks even when the provider worked. A rejected key, rate limit, timeout, or budget failure degrades the whole phase. |
 | **The Director stopped running for quiet turns** | That is smart triggering. Turn off **Smart Director triggering** under **Decisions**, or switch Jev off entirely. |
 | **Decisions look uncertain** | A yes/no probability near `0.5` means Jev has no clear read. A higher floor ignores more answers; a lower floor accepts more at the cost of reliability. You can also turn off a gate that is not useful for your story or change the context Jev sees. |
@@ -509,7 +513,7 @@ src/
   backend.ts        Director calls, interception, Jev orchestration, and storage
   frontend.ts       The drawer: Director and Jev views, decisions editor, diagnostics
   shared.ts         Defaults, settings normalization, gate types, and response parsing
-  jev.ts            Provider-neutral Jev client, batching, and response normalization
+  jev.ts            Host Decision API adapter, batching, and response normalization
   gates.ts          The gate catalog, phase planning, and decision resolution
   world-state.ts    Derived per-chat scene state and its projection
   types.ts          Frontend/backend message contracts

@@ -147,6 +147,44 @@ describe("gate planning", () => {
     expect(plan.gates.some((entry) => entry.policy.definition.id === "context_filter")).toBe(false);
   });
 
+  test("keeps character and persona context without sending a single-option Choice", () => {
+    for (const [hasCharacter, hasPersona] of [[true, false], [false, true], [true, true]]) {
+      const plan = planGates("gate", settings(), {
+        hasHistory: false, hasCharacter, hasPersona, hasWorldInfo: false,
+        hasDirectorNotes: false, worldStateEnabled: false, generationType: "normal",
+      });
+      expect(questionsFromPlan(plan).context_filter).toBeUndefined();
+      expect(plan.skipped).toContain("context_filter");
+      expect(contextFilterDecision([])).toBeNull();
+      expect(plan.gates.some((entry) => entry.policy.definition.id === "smart_trigger")).toBe(true);
+    }
+  });
+
+  test("keeps planned Choice and Score criteria within the native Decision limits", () => {
+    const allEnabled = settings({ gatePolicy: Object.fromEntries(GATE_CATALOG.map((gate) => [gate.id, { enabled: true }])) });
+    for (let sourceMask = 0; sourceMask < 16; sourceMask += 1) {
+      const context = {
+        ...fullContext,
+        hasHistory: !!(sourceMask & 1), hasCharacter: !!(sourceMask & 2),
+        hasPersona: !!(sourceMask & 4), hasWorldInfo: !!(sourceMask & 8),
+      };
+      for (const phase of ["gate", "verify"] as const) {
+        for (const { question } of planGates(phase, allEnabled, context).gates) {
+          if (question.type === "choice") {
+            const count = Object.keys(question.criteria as object).length;
+            expect(count).toBeGreaterThanOrEqual(2);
+            expect(count).toBeLessThanOrEqual(255);
+          } else if (question.type === "score") {
+            expect(Array.isArray(question.criteria)).toBe(true);
+            const count = (question.criteria as string[]).length;
+            expect(count).toBeGreaterThanOrEqual(2);
+            expect(count).toBeLessThanOrEqual(10);
+          }
+        }
+      }
+    }
+  });
+
   test("lets world gates use Jev-only lore without offering it as Director filter context", () => {
     const plan = planGates("gate", settings({ gatePolicy: { foreshadowing: { enabled: true } } }), {
       hasHistory: false, hasCharacter: false, hasPersona: false, hasWorldInfo: false,

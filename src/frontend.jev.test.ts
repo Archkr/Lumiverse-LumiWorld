@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { DEFAULT_SETTINGS, JEV_PROVIDERS, normalizeSettings, type JevGateRecord, type LumiWorldSettings } from "./shared";
+import { DEFAULT_SETTINGS, normalizeSettings, type JevGateRecord, type LumiWorldSettings } from "./shared";
 import { GATE_CATALOG } from "./gates";
 import type { BackendToFrontend, FrontendState, FrontendToBackend } from "./types";
 
@@ -31,11 +31,11 @@ function makeState(patch: Partial<FrontendState> = {}): FrontendState {
     runs: [],
     permissions: {
       interceptor: true, generation: true, chats: true, characters: true,
-      personas: true, worldBooks: true, corsProxy: true,
+      personas: true, worldBooks: true, decisions: true,
     },
-    hasJevKey: false,
-    jevProviderInfo: JEV_PROVIDERS.typesafe,
-    jevEndpoint: "https://api.typesafe.ai/v1/systemone",
+    decisionConnections: [{ id: "decision-1", name: "My decisions", provider: "openrouter", model: "~typesafe/jev-latest", isDefault: true, hasApiKey: true }],
+    decisionConnectionError: null,
+    decisionsAvailable: true,
     activeGateCount: 0,
     ...patch,
   };
@@ -125,13 +125,10 @@ function labelled(root: HTMLElement, label: string): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[aria-label="${label}"]`);
 }
 
-/** The provider picker is a segmented group, not a dropdown. */
-function providerSegments(root: HTMLElement): HTMLButtonElement[] {
-  return [...root.querySelectorAll<HTMLButtonElement>('[aria-label="Jev provider"] .lw-segment')];
-}
-
-function apiKeyLink(root: HTMLElement): HTMLAnchorElement | null {
-  return root.querySelector<HTMLAnchorElement>(".lw-provider-note a");
+function latestCatalogRequestId(harness: Harness): number {
+  const request = harness.sent.filter((message) => message.type === "get_decision_models").pop();
+  if (request?.type !== "get_decision_models" || request.requestId === undefined) throw new Error("No catalog request");
+  return request.requestId;
 }
 
 /** Gate cards are collapsed to one scannable line until their caret is opened. */
@@ -255,7 +252,9 @@ describe("Drawer scroll position", () => {
     host.scrollTop = 840;
     host.scrollLeft = 35;
 
-    providerSegments(harness.root)[1]!.click();
+    const connection = labelled(harness.root, "Decision connection") as HTMLSelectElement;
+    connection.value = "decision-1";
+    connection.dispatchEvent(new dom.window.Event("change"));
     expect([harness.root.scrollTop, harness.root.scrollLeft, host.scrollTop, host.scrollLeft]).toEqual([120, 10, 840, 35]);
     harness.push({ type: "state", state });
     expect([harness.root.scrollTop, harness.root.scrollLeft, host.scrollTop, host.scrollLeft]).toEqual([120, 10, 840, 35]);
@@ -343,22 +342,24 @@ describe("Jev drawer section", () => {
     const harness = mount(makeState());
     expect(harness.root.textContent).toContain("Jev decides whether a turn needs the Director");
     expect(harness.root.textContent).toContain("Director-only baseline");
-    // No provider or key controls until the feature is switched on.
-    expect(labelled(harness.root, "Jev provider")).toBeNull();
+    // The connection card stays collapsed until the feature is switched on.
+    expect(labelled(harness.root, "Decision connection")).toBeNull();
     expect(labelled(harness.root, "Jev API key")).toBeNull();
     harness.destroy();
   });
 
-  test("reveals the provider and key controls once enabled", () => {
+  test("uses saved Decision connections without credential controls", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
-    const segments = providerSegments(harness.root);
-    expect(segments.map((node) => node.textContent)).toEqual(["TypeSafe", "OpenRouter"]);
-    // The active provider is exposed as a pressed state, not a dropdown value.
-    expect(segments[0]!.getAttribute("aria-pressed")).toBe("true");
-    expect(segments[1]!.getAttribute("aria-pressed")).toBe("false");
-    expect(labelled(harness.root, "Jev API key")).not.toBeNull();
-    expect(apiKeyLink(harness.root)?.href).toBe("https://console.typesafe.ai/keys");
-    expect(harness.root.textContent).toContain("Not set");
+    const select = labelled(harness.root, "Decision connection") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect([...select.options].map((option) => option.textContent)).toEqual(["Account default · My decisions", "My decisions · openrouter · default"]);
+    expect(labelled(harness.root, "Jev API key")).toBeNull();
+    expect(labelled(harness.root, "Jev provider")).toBeNull();
+    expect(harness.root.textContent).toContain("Manage providers and API keys in Lumiverse’s Decision connections");
+    expect(harness.root.querySelector<HTMLInputElement>('[aria-label="Jev model"]')?.placeholder).toBe("~typesafe/jev-latest");
+    expect(harness.sent.filter((entry) => entry.type === "get_decision_models")).toEqual([
+      expect.objectContaining({ type: "get_decision_models", connectionId: null }),
+    ]);
     harness.destroy();
   });
 
@@ -389,57 +390,107 @@ describe("Jev drawer section", () => {
     harness.destroy();
   });
 
-  test("shows the OpenRouter guidance when that provider is selected", () => {
-    const harness = mount(makeState({
-      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, provider: "openrouter" } }),
-      jevProviderInfo: JEV_PROVIDERS.openrouter,
-    }));
-    expect(apiKeyLink(harness.root)?.href).toBe("https://openrouter.ai/settings/keys");
-    expect(harness.root.textContent).toContain("Blank uses typesafe/jev-1.13");
-    const segments = providerSegments(harness.root);
-    expect(segments[1]!.getAttribute("aria-pressed")).toBe("true");
+  test("preserves exact discovered model IDs and permits manual overrides", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    harness.push({ type: "decision_models", connectionId: null, requestId: latestCatalogRequestId(harness), error: null, models: [
+      { id: "~typesafe/jev-latest", label: "Jev latest", protocol: "supported" },
+      { id: "manual-catalog-entry", label: "Unverified model", protocol: "unverified" },
+      { id: "together/tev1", label: "Tev1", protocol: "unsupported" },
+    ] });
+    const options = [...harness.root.querySelectorAll<HTMLOptionElement>("[data-lw-decision-models] option")];
+    expect(options.map((option) => option.value)).toEqual(["~typesafe/jev-latest", "manual-catalog-entry"]);
+    const input = labelled(harness.root, "Jev model") as HTMLInputElement;
+    input.value = "vendor/new-model";
+    input.dispatchEvent(new dom.window.Event("input"));
+    harness.advanceSave();
+    const save = harness.sent.find((entry) => entry.type === "save_settings");
+    expect(save?.type === "save_settings" && save.settings.jev?.model).toBe("vendor/new-model");
+    expect(harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")?.disabled).toBe(false);
+    input.value = "together/tev1";
+    input.dispatchEvent(new dom.window.Event("input"));
+    expect(harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")?.disabled).toBe(true);
+    expect(harness.root.textContent).toContain("unsupported Decision protocol");
     harness.destroy();
   });
 
-  test("never renders the stored key value", () => {
-    const harness = mount(makeState({
-      hasJevKey: true,
-      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
-    }));
-    const key = labelled(harness.root, "Jev API key") as HTMLInputElement;
-    expect(key.type).toBe("password");
-    expect(key.value).toBe("");
-    expect(harness.root.textContent).toContain("Stored");
+  test("uses explicit connections and ignores model responses from previous selections", () => {
+    const initial = makeState({
+      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, model: "old-override" } }),
+    });
+    initial.decisionConnections.push({ id: "decision-2", name: "Other", provider: "typesafe", model: "jev-latest", isDefault: false, hasApiKey: true });
+    const harness = mount(initial);
+    const select = labelled(harness.root, "Decision connection") as HTMLSelectElement;
+    select.value = "decision-2";
+    select.dispatchEvent(new dom.window.Event("change"));
+    expect((labelled(harness.root, "Jev model") as HTMLInputElement).value).toBe("");
+    expect(harness.sent.filter((entry) => entry.type === "get_decision_models").map((entry) => entry.type === "get_decision_models" && entry.connectionId)).toEqual([null, "decision-2"]);
+    harness.push({ type: "decision_models", connectionId: null, requestId: 1, error: null, models: [{ id: "stale", label: "Stale", protocol: "supported" }] });
+    expect(harness.root.querySelector("[data-lw-decision-models] option")).toBeNull();
+    harness.push({ type: "decision_models", connectionId: "decision-2", requestId: latestCatalogRequestId(harness), error: null, models: [{ id: "jev-latest", label: "Current", protocol: "supported" }] });
+    expect(harness.root.querySelector<HTMLOptionElement>("[data-lw-decision-models] option")?.value).toBe("jev-latest");
+    harness.advanceSave();
+    const save = harness.sent.find((entry) => entry.type === "save_settings");
+    expect(save?.type === "save_settings" && save.settings.jev?.connectionId).toBe("decision-2");
+    const requests = harness.sent.filter((entry) => entry.type === "get_decision_models").length;
+    harness.root.querySelector<HTMLButtonElement>('[data-lw-gate="continuity_guard"] .lw-gate-caret')!.click();
+    expect(harness.sent.filter((entry) => entry.type === "get_decision_models")).toHaveLength(requests);
     harness.destroy();
   });
 
-  test("sends the typed key with a test request and clears it afterwards", () => {
-    const harness = mount(makeState({
-      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
-    }));
-    const key = labelled(harness.root, "Jev API key") as HTMLInputElement;
-    key.value = "secret-key";
-    key.dispatchEvent(new dom.window.Event("input"));
+  test("rejects stale default catalogs when the account default changes", () => {
+    const state = makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) });
+    const harness = mount(state);
+    const oldRequestId = latestCatalogRequestId(harness);
+    state.decisionConnections = [{ ...state.decisionConnections[0]!, id: "new-default", model: "new-model" }];
+    harness.push({ type: "state", state });
+    const requestId = latestCatalogRequestId(harness);
+    expect(requestId).not.toBe(oldRequestId);
+    harness.push({ type: "decision_models", connectionId: null, requestId: oldRequestId, models: [{ id: "stale-default", label: "Old", protocol: "supported" }], error: null });
+    expect(harness.root.querySelector("[data-lw-decision-models] option")).toBeNull();
+    harness.push({ type: "decision_models", connectionId: null, requestId, models: [{ id: "new-model", label: "New", protocol: "supported" }], error: null });
+    expect(harness.root.querySelector<HTMLOptionElement>("[data-lw-decision-models] option")?.value).toBe("new-model");
+    expect((labelled(harness.root, "Jev model") as HTMLInputElement).placeholder).toBe("new-model");
+    harness.destroy();
+  });
+
+  test("keeps a missing explicit connection selected and never uses the default", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, connectionId: "deleted-profile" } }) }));
+    expect((labelled(harness.root, "Decision connection") as HTMLSelectElement).value).toBe("deleted-profile");
+    expect(harness.root.textContent).toContain("saved Decision connection is unavailable");
+    expect(harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")?.disabled).toBe(true);
+    expect(harness.sent.filter((entry) => entry.type === "get_decision_models")).toHaveLength(0);
+    harness.destroy();
+  });
+
+  test("sends a credential-free test using the selected Decision connection", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true, connectionId: "decision-1" } }) }));
     const test = harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")!;
     expect(test.disabled).toBe(false);
+    expect(harness.root.textContent).toContain("your chat is not sent");
     test.click();
     const message = harness.sent.find((entry) => entry.type === "test_jev");
     expect(message?.type).toBe("test_jev");
-    if (message?.type === "test_jev") expect(message.apiKey).toBe("secret-key");
-    expect(JSON.stringify(harness.root.innerHTML)).not.toContain("secret-key");
+    expect(message).not.toHaveProperty("apiKey");
+    if (message?.type === "test_jev") expect(message.settings?.jev?.connectionId).toBe("decision-1");
     harness.destroy();
   });
 
-  test("disables the Jev test without the cors_proxy permission", () => {
-    const harness = mount(makeState({
-      settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
-      permissions: {
-        interceptor: true, generation: true, chats: true, characters: true,
-        personas: true, worldBooks: true, corsProxy: false,
-      },
-    }));
-    const test = harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")!;
-    expect(test.disabled).toBe(true);
+  test("disables Decision access without permission or host support", () => {
+    for (const blocked of [{ decisionsAvailable: false }, { permissions: { ...makeState().permissions, decisions: false } }]) {
+      const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }), ...blocked }));
+      expect(harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")?.disabled).toBe(true);
+      expect(harness.sent.filter((entry) => entry.type === "get_decision_models")).toHaveLength(0);
+      expect(harness.root.textContent).toContain("decisionsAvailable" in blocked ? "Update Lumiverse" : "decisions permission");
+      harness.destroy();
+    }
+  });
+
+  test("keeps manual model entry available when catalog discovery fails", () => {
+    const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    harness.push({ type: "decision_models", connectionId: null, requestId: latestCatalogRequestId(harness), error: "Provider unavailable", models: [] });
+    expect(harness.root.textContent).toContain("Model discovery failed: Provider unavailable");
+    expect((labelled(harness.root, "Jev model") as HTMLInputElement).disabled).toBe(false);
+    expect(harness.root.querySelector<HTMLButtonElement>("[data-lw-jev-test]")?.disabled).toBe(false);
     harness.destroy();
   });
 
@@ -537,16 +588,16 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
-  test("keeps a typed Jev key when switching views", () => {
+  test("keeps a typed Decision model override when switching views", () => {
     const harness = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
-    const key = labelled(harness.root, "Jev API key") as HTMLInputElement;
+    const key = labelled(harness.root, "Jev model") as HTMLInputElement;
     key.value = "half-typed";
     key.dispatchEvent(new dom.window.Event("input"));
 
     tabs(harness.root)[0]!.click();
     tabs(harness.root)[1]!.click();
 
-    const after = labelled(harness.root, "Jev API key") as HTMLInputElement;
+    const after = labelled(harness.root, "Jev model") as HTMLInputElement;
     expect(after.value).toBe("half-typed");
     harness.destroy();
   });
@@ -614,13 +665,12 @@ describe("drawer views", () => {
     harness.destroy();
   });
 
-  test("flags a Jev that is on but unkeyed, and clears once keyed", () => {
-    const unkeyed = mount(makeState({ settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
-    expect(unkeyed.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot")?.getAttribute("title")).toMatch(/api key/i);
+  test("flags a Jev that has no Decision connection, and clears once configured", () => {
+    const unkeyed = mount(makeState({ decisionConnections: [], settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }) }));
+    expect(unkeyed.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot")?.getAttribute("title")).toMatch(/Decision connection/i);
     unkeyed.destroy();
 
     const keyed = mount(makeState({
-      hasJevKey: true,
       settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
     }));
     expect(keyed.root.querySelector<HTMLElement>("#lw-tab-jev .lw-tab-dot")?.getAttribute("title")).toBe("Jev is active");
@@ -672,7 +722,6 @@ describe("drawer views", () => {
 
   test("shows the active view's state in the header status line", () => {
     const harness = mount(makeState({
-      hasJevKey: true,
       settings: settings({ enabled: true, jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
     }));
     const status = () => harness.root.querySelector<HTMLElement>("[data-lw-header-status]")!;
@@ -739,7 +788,6 @@ describe("drawer views", () => {
 
   test("shows the Jev status pill in the view header", () => {
     const harness = mount(makeState({
-      hasJevKey: true,
       settings: settings({ jev: { ...DEFAULT_SETTINGS.jev, enabled: true } }),
     }));
     const slot = harness.root.querySelector<HTMLElement>("[data-lw-jev-status]")!;

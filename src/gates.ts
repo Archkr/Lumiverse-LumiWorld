@@ -937,12 +937,19 @@ export function planGates(
       skipped.push(definition.id);
       continue;
     }
+    const criteria = dynamicCriteria(definition.id, context, definition);
+    // Character/persona-only context leaves "all" as the sole option. Keep it
+    // without asking: the Decision API requires at least two Choice options.
+    if (definition.id === "context_filter" && Object.keys(criteria ?? {}).length < 2) {
+      skipped.push(definition.id);
+      continue;
+    }
     selected.push({
       policy,
       question: {
         type: definition.primitive,
         instructions: definition.instructions,
-        ...(definition.criteria ? { criteria: dynamicCriteria(definition.id, context, definition) } : {}),
+        ...(criteria ? { criteria } : {}),
       },
     });
   }

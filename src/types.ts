@@ -1,4 +1,4 @@
-import type { LumiWorldSettings, ConnectionOption, JevProviderInfo, RunLogEntry } from "./shared";
+import type { LumiWorldSettings, ConnectionOption, DecisionModelOption, RunLogEntry } from "./shared";
 
 export interface PermissionState {
   interceptor: boolean;
@@ -7,7 +7,7 @@ export interface PermissionState {
   characters: boolean;
   personas: boolean;
   worldBooks: boolean;
-  corsProxy: boolean;
+  decisions: boolean;
 }
 
 export interface FrontendState {
@@ -16,11 +16,10 @@ export interface FrontendState {
   connectionError?: string | null;
   runs: RunLogEntry[];
   permissions: PermissionState;
-  /** Whether the selected provider already has a stored Jev key. The key never leaves the enclave. */
-  hasJevKey: boolean;
-  /** Resolved endpoint details for the selected provider, for display only. */
-  jevProviderInfo: JevProviderInfo;
-  jevEndpoint: string;
+  decisionConnections: ConnectionOption[];
+  decisionConnectionError: string | null;
+  /** Whether the host advertises decisions-v1 and provides the Decisions API. */
+  decisionsAvailable: boolean;
   /** Gate policy settings are keyed by gate id; the catalog itself ships with the frontend. */
   activeGateCount: number;
 }
@@ -30,8 +29,8 @@ export type FrontendToBackend =
   | { type: "refresh_state"; chatId?: string | null; characterId?: string | null }
   | { type: "save_settings"; revision: number; settings: Partial<LumiWorldSettings>; chatId?: string | null; characterId?: string | null }
   | { type: "test_controller"; settings?: Partial<LumiWorldSettings>; chatId?: string | null; characterId?: string | null }
-  | { type: "test_jev"; settings?: Partial<LumiWorldSettings>; apiKey?: string; chatId?: string | null; characterId?: string | null }
-  | { type: "clear_jev_key"; provider?: string; chatId?: string | null; characterId?: string | null };
+  | { type: "test_jev"; settings?: Partial<LumiWorldSettings>; chatId?: string | null; characterId?: string | null }
+  | { type: "get_decision_models"; connectionId: string | null; requestId?: number; chatId?: string | null; characterId?: string | null };
 
 export type BackendToFrontend =
   | { type: "state"; state: FrontendState }
@@ -42,4 +41,5 @@ export type BackendToFrontend =
   | { type: "test_result"; ok: false; error: string }
   | { type: "jev_test_result"; ok: true; latencyMs: number; model: string; provider: string; answer: string; confidence: number | null }
   | { type: "jev_test_result"; ok: false; error: string }
+  | { type: "decision_models"; connectionId: string | null; requestId?: number; models: DecisionModelOption[]; error: string | null }
   | { type: "error"; message: string };

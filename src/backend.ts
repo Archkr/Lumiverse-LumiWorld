@@ -1,14 +1,13 @@
 declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
-import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessageDTO, PersonaDTO } from "lumiverse-spindle-types";
+import type { CharacterDTO, ConnectionProfileDTO, InterceptorResultDTO, LlmMessageDTO, PersonaDTO, DecisionConnectionProfileDTO, SpindleDecisionsAPI } from "lumiverse-spindle-types";
 import {
   BREAKDOWN_NAME, CONTROLLER_CONTEXT_LABEL_KEY, KeyedOperationLock, DEFAULT_SETTINGS, appendRunLog,
   buildControllerMessages, buildInjectedDirective, describeEmptyControllerResponse,
   currentUserContextMessages, formatPromptForController, latestPlayerChatMessage, makeDirectivePreview, makeControllerContextMessage,
   makeJevDiagnostics, normalizeRunLog, normalizeSettings, parseControllerDirectiveFromResponse, parseControllerThreadLabelFromResponse,
-  resolveControllerTarget, resolveIdentityMacros, resolveJevProvider, resolveWorldInfoContextMessages,
+  resolveControllerTarget, resolveIdentityMacros, resolveWorldInfoContextMessages,
   selectChatHistoryMessagesForController, selectControllerMessagesForController, shouldInterceptGeneration,
-  jevSecretKey,
   type IdentityMacroValues, type JevGateRecord, type JevPhaseTrace, type JevSettings, type JevTurnDiagnostics,
   type LumiWorldSettings, type ConnectionLike,
   type ConnectionOption, type ControllerTarget, type LlmMessageLike,
@@ -18,7 +17,7 @@ import {
   assessVerification, countJevFlags, contextFilterDecision, directorGuidanceFromGates, planGates, questionsFromPlan,
   resolveGateAnswers, shouldRunDirector, wantsStrongDirectorModel, withConfidenceGate, withDegradationGate,
 } from "./gates";
-import { buildJevState, buildJevSmokeRequest, callJev, exceedsJevTokenBudget, jevEndpoint, normalizeJevResponse, parseJevBody, readCorsResult, type JevAnswer, type JevQuestions } from "./jev";
+import { buildJevState, buildJevSmokeRequest, callJev, exceedsJevTokenBudget, type JevQuestions } from "./jev";
 import {
   commitWorldState, defaultWorldState, loadWorldState, projectWorldState, saveWorldState, type WorldState,
 } from "./world-state";
@@ -92,14 +91,12 @@ function worldBooksApi(): any {
   return (spindle as any).world_books;
 }
 
-function enclaveApi(): any {
-  return (spindle as any).enclave;
-}
-
-/** The CORS proxy is the only network egress the extension needs. */
-function corsApi(): ((url: string, options?: unknown) => Promise<unknown>) | null {
-  const cors = (spindle as any)?.cors;
-  return typeof cors === "function" ? (url, options) => cors.call(spindle, url, options) : null;
+function decisionsApi(): SpindleDecisionsAPI | null {
+  const host = spindle as any;
+  const api = host.decisions;
+  return Number(host.host?.capabilities?.["decisions-v1"]) >= 1
+    && typeof api?.evaluate === "function" && typeof api?.listConnections === "function"
+    && typeof api?.getConnection === "function" ? api : null;
 }
 
 function permissionsApi(): any {
@@ -113,7 +110,7 @@ const PERMISSION_IDS: Record<keyof PermissionState, string> = {
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books",
-  corsProxy: "cors_proxy",
+  decisions: "decisions",
 };
 
 function send(message: BackendToFrontend, userId = lastFrontendUserId ?? undefined): void {
@@ -138,7 +135,7 @@ function currentPermissions(): PermissionState {
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks"),
-    corsProxy: permissionHas("corsProxy"),
+    decisions: permissionHas("decisions"),
   };
 }
 
@@ -505,106 +502,79 @@ async function resolveControllerContextMessages(
  * Jev integration
  * ------------------------------------------------------------------ */
 
-/** The Jev key lives in the encrypted per-user enclave, never in settings JSON. */
-async function readJevKey(provider: JevSettings["provider"], userId?: string | null): Promise<string | null> {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.get !== "function") return null;
-  try {
-    const value = await enclave.get(jevSecretKey(provider), userId ?? undefined);
-    return typeof value === "string" && value.trim() ? value.trim() : null;
-  } catch {
-    return null;
-  }
+function decisionConnectionOption(profile: DecisionConnectionProfileDTO): ConnectionOption {
+  // Only metadata needed by the drawer crosses the frontend boundary.
+  return { id: profile.id, name: profile.name, provider: profile.provider, model: profile.model,
+    isDefault: profile.is_default, hasApiKey: profile.has_api_key };
 }
 
-/**
- * Stores the key, throwing if the enclave refuses it.
- *
- * A swallowed failure here is invisible: the drawer would claim the key was
- * stored while every later read returned null, so the caller must report it.
- */
-async function storeJevKey(provider: JevSettings["provider"], key: string, userId?: string | null): Promise<void> {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.put !== "function") {
-    throw new Error("This Lumiverse host does not expose encrypted secret storage.");
-  }
-  const value = key.trim();
-  if (!value) return;
-  await enclave.put(jevSecretKey(provider), value, userId ?? undefined);
-}
-
-async function clearJevKey(provider: JevSettings["provider"], userId?: string | null): Promise<void> {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.delete !== "function") return;
+async function listDecisionConnections(userId?: string | null): Promise<{ connections: ConnectionOption[]; error: string | null }> {
+  if (!permissionHas("decisions")) return { connections: [], error: "Grant the decisions permission to use Decision connections." };
+  const api = decisionsApi();
+  if (!api) return { connections: [], error: "Update Lumiverse to a version that supports Decision connections." };
+  if (!userId) return { connections: [], error: "LumiWorld could not resolve the active Lumiverse user." };
   try {
-    await enclave.delete(jevSecretKey(provider), userId ?? undefined);
+    return { connections: (await api.listConnections({ userId })).map(decisionConnectionOption), error: null };
   } catch (error) {
-    // Clearing a key that is already gone is not an error, but anything else is
-    // worth a warning rather than silence.
-    spindle.log.warn(`LumiWorld could not clear the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+    return { connections: [], error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-/** Whole-minute ceiling on Jev work, leaving the Director its reserved budget. */
-function jevPhaseBudgetMs(settings: LumiWorldSettings): number {
-  const elapsed = 0;
-  const available = INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS - elapsed;
-  return Math.max(1_000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS, available));
-}
-
+/** The host owns endpoint selection, credentials, permission checks, and transport. */
 interface JevRun {
   enabled: boolean;
-  config: ({ provider: JevSettings["provider"] } & JevSettings & { apiKey: string }) | null;
-  cors: ((url: string, options?: unknown) => Promise<unknown>) | null;
+  config: JevSettings | null;
+  evaluate: SpindleDecisionsAPI["evaluate"] | null;
+  connection: ConnectionOption | null;
+  userId: string | null;
   error: string | null;
 }
 
 async function prepareJev(settings: LumiWorldSettings, userId: string | null): Promise<JevRun> {
-  const jev = settings.jev;
-  if (!jev.enabled) return { enabled: false, config: null, cors: null, error: null };
-  if (!permissionHas("corsProxy")) {
-    return { enabled: false, config: null, cors: null, error: "The cors_proxy permission is not granted, so Jev cannot be reached." };
+  const unavailable = (error: string | null): JevRun => ({ enabled: false, config: null,
+    evaluate: null, connection: null, userId, error });
+  if (!settings.jev.enabled) return unavailable(null);
+  if (!permissionHas("decisions")) return unavailable("The decisions permission is not granted. Grant it in Lumiverse Extensions.");
+  const api = decisionsApi();
+  if (!api) return unavailable("Update Lumiverse to a version that supports Decision connections.");
+  if (!userId) return unavailable("LumiWorld could not resolve the active Lumiverse user for the Decision call.");
+  try {
+    const selectedId = settings.jev.connectionId;
+    const profile = selectedId ? await api.getConnection(selectedId, { userId })
+      : (await api.listConnections({ userId })).find((profile) => profile.is_default);
+    if (!profile) return unavailable(selectedId
+      ? "The selected Decision connection is unavailable. Choose another saved Decision connection."
+      : "No default Decision connection is configured. Set one up in Lumiverse or select a saved connection.");
+    if (!profile.has_api_key) return unavailable("The Decision connection needs an API key. Add it in Lumiverse Decision connections.");
+    if (!settings.jev.model.trim() && !profile.model.trim()) return unavailable("Choose a model in the Decision connection or enter a model override.");
+    // Pin the resolved default for the turn so its draft and recheck use one profile.
+    return { enabled: true, config: { ...settings.jev, connectionId: profile.id },
+      evaluate: api.evaluate.bind(api), connection: decisionConnectionOption(profile), userId, error: null };
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
   }
-  const cors = corsApi();
-  if (!cors) return { enabled: false, config: null, cors: null, error: "This Lumiverse host does not expose the CORS proxy." };
-  const apiKey = await readJevKey(jev.provider, userId);
-  if (!apiKey) {
-    return {
-      enabled: false, config: null, cors,
-      error: `No Jev API key is stored for ${resolveJevProvider(jev).label}. Add one in the LumiWorld drawer.`,
-    };
-  }
-  return { enabled: true, config: { ...jev, apiKey }, cors, error: null };
 }
 
-/**
- * Normalizes answers that arrived with a different shape than expected, and
- * recovers answers when the provider wrapped them in its own envelope.
- */
-function recoverAnswers(answers: Record<string, JevAnswer>): Record<string, JevAnswer> {
-  const recovered: Record<string, JevAnswer> = { ...answers };
-  const source = answers as unknown as Record<string, unknown>;
-  const nested = source.answers ?? readObjectPath(source, ["data", "answers"]) ?? readObjectPath(source, ["result", "answers"]);
-  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-    try {
-      const normalized = normalizeJevResponse({ answers: nested });
-      for (const [id, answer] of Object.entries(normalized.answers)) {
-        if (!(id in recovered)) recovered[id] = answer;
-      }
-    } catch {
-      // A nested envelope that will not normalize is simply ignored.
-    }
-  }
-  return recovered;
+/** Keep the existing per-phase budget within the host's 30-second deadline. */
+function jevPhaseBudgetMs(settings: LumiWorldSettings): number {
+  return Math.max(1_000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS,
+    INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS));
 }
 
-function readObjectPath(value: unknown, path: string[]): unknown {
-  let current: unknown = value;
-  for (const key of path) {
-    if (!current || typeof current !== "object") return null;
-    current = (current as Record<string, unknown>)[key];
+async function pushDecisionModels(connectionId: string | null, userId: string, requestId?: number): Promise<void> {
+  const reply = (models: import("./shared").DecisionModelOption[], error: string | null) =>
+    send({ type: "decision_models", connectionId, requestId, models, error }, userId);
+  if (!permissionHas("decisions")) return reply([], "Grant the decisions permission to discover models.");
+  const api = decisionsApi();
+  if (!api) return reply([], "Update Lumiverse to a version that supports Decision connections.");
+  try {
+    const id = connectionId ?? (await api.listConnections({ userId })).find((profile) => profile.is_default)?.id;
+    if (!id) return reply([], "No default Decision connection is configured.");
+    const models = await api.getModels(id, { userId });
+    reply(models.map(({ id, label, protocol }) => ({ id, label, protocol })), null);
+  } catch (error) {
+    reply([], error instanceof Error ? error.message : String(error));
   }
-  return current ?? null;
 }
 
 interface GatePhaseOutcome {
@@ -659,7 +629,7 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
   });
 
   if (plan.gates.length === 0) return empty(null);
-  if (!jevRun.enabled || !jevRun.config || !jevRun.cors) return empty(jevRun.error);
+  if (!jevRun.enabled || !jevRun.config || !jevRun.evaluate) return empty(jevRun.error);
 
   if (exceedsJevTokenBudget(projection.state, questions)) {
     return empty("The assembled Jev state exceeds the model's 32k token allowance.");
@@ -669,10 +639,10 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
     config: jevRun.config,
     state: projection.state,
     questions,
-    cors: jevRun.cors,
+    evaluate: jevRun.evaluate,
+    userId: jevRun.userId ?? undefined,
     timeoutMs: settings.jev.timeoutMs,
     budgetMs: jevPhaseBudgetMs(settings),
-    retryOnRateLimit: settings.jev.retryOnRateLimit,
   });
 
   if (!outcome.ok || !outcome.response) {
@@ -685,7 +655,7 @@ async function runGatePhase(phase: "gate" | "verify", options: GatePhaseOptions)
     };
   }
 
-  const answers = recoverAnswers(outcome.response.answers);
+  const answers = outcome.response.answers;
   return {
     plan,
     records: resolveGateAnswers(plan, answers, settings.jev.minConfidence),
@@ -948,20 +918,20 @@ function applyContextFilter(
 
 async function buildState(userId?: string | null): Promise<FrontendState> {
   const settings = await loadSettings(userId);
-  const [connectionState, runs, hasJevKey] = await Promise.all([
+  const [connectionState, runs, decisionState] = await Promise.all([
     listConnections(userId), loadRuns(userId, Number.MAX_SAFE_INTEGER),
-    readJevKey(settings.jev.provider, userId).then((key) => !!key).catch(() => false),
+    listDecisionConnections(userId),
   ]);
-  const providerInfo = resolveJevProvider(settings.jev);
   return {
     settings,
     connections: connectionState.connections,
     connectionError: connectionState.error,
     runs: runs.filter((run) => run.channel !== "world_agent").slice(0, settings.runLogLimit),
     permissions: currentPermissions(),
-    hasJevKey,
-    jevProviderInfo: providerInfo,
-    jevEndpoint: jevEndpoint(settings.jev),    activeGateCount: settings.jev.enabled
+    decisionConnections: decisionState.connections,
+    decisionConnectionError: decisionState.error,
+    decisionsAvailable: !!decisionsApi(),
+    activeGateCount: settings.jev.enabled
       ? Object.values(settings.jev.gatePolicy).filter((policy) => policy.enabled === true).length
       : 0,
   };
@@ -1113,7 +1083,7 @@ async function handleInterceptor(
     fallbackTaggedEntryCount: 0, fetchError: null,
   };
   let prepared: PreparedController | null = null;
-  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
+  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled });
   let gateRecords: JevGateRecord[] = [];
   let verifyRecords: JevGateRecord[] = [];
 
@@ -1129,7 +1099,8 @@ async function handleInterceptor(
     worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
-      jevDiagnostics.model = resolveJevModelForDiagnostics(settings);
+      jevDiagnostics.model = settings.jev.model.trim() || jevRun.connection?.model || null;
+      jevDiagnostics.provider = jevRun.connection?.provider ?? null;
       const phase = await runGatePhase("gate", {
         jevRun, settings,
         stateContext: prepared.stateContext,
@@ -1344,11 +1315,6 @@ async function handleInterceptor(
   }
 }
 
-function resolveJevModelForDiagnostics(settings: LumiWorldSettings): string {
-  const provider = resolveJevProvider(settings.jev);
-  return settings.jev.model.trim() || provider.defaultModel;
-}
-
 /**
  * Builds the repair prompt and runs the single allowed regeneration.
  *
@@ -1405,74 +1371,33 @@ async function regenerateDirective(
  * Sends one tiny Noul question with a fixed, chat-free state so the test costs
  * almost nothing and never transmits the user's conversation.
  */
-async function runJevTest(
-  userId: string | null,
-  patch?: Partial<LumiWorldSettings>,
-  draftKey?: string,
-): Promise<void> {
+async function runJevTest(userId: string | null, patch?: Partial<LumiWorldSettings>): Promise<void> {
   const baseSettings = await loadSettings(userId);
   const settings = normalizeSettings({ ...baseSettings, ...patch });
   const startedAt = Date.now();
-
-  const jevRun = await prepareJev(settings, userId);
-  const draft = typeof draftKey === "string" ? draftKey.trim() : "";
-  const apiKey = draft || await readJevKey(settings.jev.provider, userId);
-  if (!apiKey) {
-    const error = jevRun.error ?? `No Jev API key is stored for ${resolveJevProvider(settings.jev).label}.`;
-    send({ type: "jev_test_result", ok: false, error }, userId ?? undefined);
+  // Testing is available independently of the feature's on/off switch.
+  const jevRun = await prepareJev({ ...settings, jev: { ...settings.jev, enabled: true } }, userId);
+  if (!jevRun.enabled || !jevRun.config || !jevRun.evaluate) {
+    send({ type: "jev_test_result", ok: false, error: jevRun.error ?? "The Decision connection is unavailable." }, userId ?? undefined);
     return;
   }
-  const cors = jevRun.cors ?? corsApi();
-  if (!cors) {
-    send({ type: "jev_test_result", ok: false, error: "This Lumiverse host does not expose the CORS proxy." }, userId ?? undefined);
-    return;
-  }
-
-  const smoke = buildJevSmokeRequest({ ...settings.jev, apiKey });
-  const outcome = await callJev({
-    config: { ...settings.jev, apiKey },
-    state: "A storm rolls in over the harbour.",
-    questions: smoke.questions,
-    cors,
-    timeoutMs: settings.jev.timeoutMs,
-    budgetMs: MAX_JEV_PHASE_MS,
-    retryOnRateLimit: settings.jev.retryOnRateLimit,
-  });
-
+  const smoke = buildJevSmokeRequest();
+  const outcome = await callJev({ config: jevRun.config, state: smoke.state, questions: smoke.questions,
+    evaluate: jevRun.evaluate, userId: userId ?? undefined,
+    timeoutMs: settings.jev.timeoutMs, budgetMs: MAX_JEV_PHASE_MS });
   if (!outcome.ok || !outcome.response) {
-    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "Jev did not answer." }, userId ?? undefined);
+    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "The Decision model did not answer." }, userId ?? undefined);
     return;
   }
-
   const answer = outcome.response.answers.connectivity;
-  const confidence = answer && answer.type === "noul" ? Math.max(answer.noul, 1 - answer.noul) : null;
-  const label = answer && answer.type === "noul" ? (answer.noul >= 0.5 ? "yes" : "no") : "unknown";
-
-  // Only persist a key that the provider actually accepted. If storage refuses it
-  // the test must fail loudly: a silently unstored key would break every later turn.
-  if (draft) {
-    try {
-      await storeJevKey(settings.jev.provider, draft, userId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      spindle.log.warn(`LumiWorld could not store the Jev key: ${message}`);
-      send({
-        type: "jev_test_result", ok: false,
-        error: `Jev answered, but the key could not be saved: ${message}`,
-      }, userId ?? undefined);
-      return;
-    }
+  if (!answer || answer.type !== "noul") {
+    send({ type: "jev_test_result", ok: false, error: "The Decision model did not answer the test question." }, userId ?? undefined);
+    return;
   }
-
-  send({
-    type: "jev_test_result",
-    ok: true,
-    latencyMs: Date.now() - startedAt,
-    model: outcome.response.model ?? resolveJevModelForDiagnostics(settings),
-    provider: resolveJevProvider(settings.jev).label,
-    answer: label,
-    confidence,
-  }, userId ?? undefined);
+  send({ type: "jev_test_result", ok: true, latencyMs: Date.now() - startedAt,
+    model: outcome.response.model ?? (jevRun.config.model.trim() || jevRun.connection?.model || "Unknown model"),
+    provider: jevRun.connection?.provider ?? "Decision connection",
+    answer: answer.noul >= 0.5 ? "yes" : "no", confidence: Math.max(answer.noul, 1 - answer.noul) }, userId ?? undefined);
 }
 
 function tryRegisterInterceptor(): void {
@@ -1561,6 +1486,11 @@ tryRegisterInterceptor();
 permissionsApi()?.onChanged?.(({ permission, granted }: { permission: string; granted: boolean }) => {
   if (permission === "interceptor" && granted) tryRegisterInterceptor();
   void pushState(lastFrontendUserId);
+});
+
+(spindle as any).on?.("DECISION_CONNECTION_CHANGED", (_payload: unknown, eventUserId?: string) => {
+  // Refresh only the affected account's drawer metadata.
+  if (eventUserId) void pushState(eventUserId);
 });
 
 (spindle as any).on?.("GENERATION_STARTED", (payload: unknown, eventUserId?: string) => {
@@ -1676,16 +1606,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await pushState(userId);
         break;
       case "test_jev":
-        await runJevTest(userId, message.settings, message.apiKey);
+        await runJevTest(userId, message.settings);
         await pushState(userId);
         break;
-      case "clear_jev_key": {
-        const provider = message.provider === "openrouter" ? "openrouter" : undefined;
-        const target = provider ?? (await loadSettings(userId)).jev.provider;
-        await clearJevKey(target, userId);
-        await pushState(userId);
+      case "get_decision_models":
+        await pushDecisionModels(message.connectionId, userId, message.requestId);
         break;
-      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";

@@ -1,14 +1,14 @@
 {
   "identifier": "agent_world",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "name": "LumiWorld",
   "author": "Archkr",
   "github": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "homepage": "https://github.com/Archkr/Lumiverse-AgentWorld",
   "description": "Private Director notes for visible chat replies, gated by Jev.",
-  "permissions": ["interceptor", "generation", "cors_proxy", "chats", "characters", "personas", "world_books"],
+  "permissions": ["interceptor", "generation", "decisions", "chats", "characters", "personas", "world_books"],
   "interceptorTimeoutMs": 300000,
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
-  "minimum_lumiverse_version": "1.0.6"
+  "minimum_lumiverse_version": "1.2.5"
 }

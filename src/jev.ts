@@ -1,97 +1,50 @@
 /**
- * Provider-neutral client for TypeSafe System One ("Jev") models.
+ * LumiWorld's adapter for the host's native Decision model API.
  *
- * Jev is not a chat model: it takes one `state` plus a map of typed questions and
- * returns one typed answer per question. It never generates prose, holds no
- * conversation, and does not stream. Every question in a request is evaluated in
- * parallel against the same state, which is why LumiWorld batches a whole phase
- * into a single round trip.
- *
- * The verified wire contract (identical for TypeSafe and OpenRouter apart from
- * the base URL, route, and model naming):
- *
- *   POST {base}/v1/systemone            (TypeSafe)
- *   POST {base}/alpha/decisions         (OpenRouter)
- *   Authorization: Bearer <key>
- *   { "model": "...", "state": <string|object|array>, "questions": { id: Question } }
- *
- * Answers come back under the caller's question ids:
- *   noul   -> { type: "noul",   noul: 0..1 }                       (no confidence field)
- *   choice -> { type: "choice", choice, probabilities, confidence }
- *   score  -> { type: "score",  score, legend, probabilities, confidence }
+ * The host resolves saved connections, owns credentials and provider transport,
+ * and validates typed answers. LumiWorld supplies the projected scene and named
+ * questions, then adapts the native result for its existing gate resolver.
  */
 
+import type {
+  DecisionAnswer,
+  DecisionEvaluationInput,
+  DecisionJsonValue,
+  DecisionQuestion,
+  DecisionResult,
+  DecisionState,
+} from "lumiverse-spindle-types";
 import {
   DEFAULT_JEV_TIMEOUT_MS,
   DEFAULT_JEV_STATE_CHARS,
   JEV_MAX_STATE_TOKENS,
   MAX_JEV_HISTORY_MESSAGES,
-  resolveJevBaseUrl,
-  resolveJevModel,
-  resolveJevProvider,
   serializeMessageContent,
-  type JevPrimitive,
   type JevSettings,
   type LlmMessageLike,
 } from "./shared";
 
-export class JevError extends Error {
-  constructor(message: string, readonly status: number | null = null, readonly retryAfterMs: number | null = null) {
-    super(message);
-    this.name = "JevError";
-  }
-}
+const MAX_DECISION_TIMEOUT_MS = 30_000;
 
 export class JevTimeoutError extends Error {
   constructor(timeoutMs: number) {
-    super(`Jev did not answer within ${Math.round(timeoutMs / 1000)}s.`);
+    super(`Decision model did not answer within ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "JevTimeoutError";
   }
 }
 
-export class JevProtocolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "JevProtocolError";
-  }
-}
-
-export interface JevQuestion {
-  type: JevPrimitive;
-  instructions: string;
-  criteria?: unknown;
-}
-
+export type JevQuestion = DecisionQuestion;
 export type JevQuestions = Record<string, JevQuestion>;
+export type JevNoulAnswer = Extract<DecisionAnswer, { type: "noul" }>;
+export type JevChoiceAnswer = Extract<DecisionAnswer, { type: "choice" }>;
+export type JevScoreAnswer = Extract<DecisionAnswer, { type: "score" }>;
+export type JevAnswer = DecisionAnswer;
 
+/** Safe diagnostics: native inputs contain no credentials or provider URLs. */
 export interface JevRequest {
-  url: string;
-  headers: Record<string, string>;
   body: string;
-  model: string;
+  model: string | null;
 }
-
-export interface JevNoulAnswer {
-  type: "noul";
-  noul: number;
-}
-
-export interface JevChoiceAnswer {
-  type: "choice";
-  choice: string;
-  probabilities: Record<string, number>;
-  confidence: number | null;
-}
-
-export interface JevScoreAnswer {
-  type: "score";
-  score: number;
-  legend: Record<string, string>;
-  probabilities: Record<string, number>;
-  confidence: number | null;
-}
-
-export type JevAnswer = JevNoulAnswer | JevChoiceAnswer | JevScoreAnswer;
 
 export interface JevUsage {
   inputTokens: number | null;
@@ -100,222 +53,68 @@ export interface JevUsage {
 }
 
 export interface JevResponse {
-  /** Versioned model id the provider reported as the actual responder. */
-  model: string | null;
+  /** The resolved serving model reported by the host. */
+  model: string;
   usage: JevUsage;
   answers: Record<string, JevAnswer>;
 }
 
-/* ------------------------------------------------------------------ *
- * CORS proxy response handling
- * ------------------------------------------------------------------ */
+export type JevCallConfig = Pick<JevSettings, "connectionId" | "model" | "timeoutMs">;
 
-export interface JevCorsResult {
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: string;
-}
-
-/**
- * `spindle.cors` is typed as `Promise<unknown>` because the host may return text
- * or a transparent binary envelope. Jev is always JSON text, so narrow once here.
- */
-export function readCorsResult(raw: unknown): JevCorsResult {
-  if (raw == null) throw new JevProtocolError("Jev request returned no response.");
-  if (typeof raw === "string") return { status: 200, statusText: "OK", headers: {}, body: raw };
-  if (typeof raw !== "object") throw new JevProtocolError("Jev request returned an unrecognized response.");
-  const obj = raw as Record<string, unknown>;
-  const body = typeof obj.body === "string" ? obj.body : typeof obj.text === "string" ? obj.text : "";
-  const status = typeof obj.status === "number" && Number.isFinite(obj.status) ? obj.status : 200;
-  const statusText = typeof obj.statusText === "string" ? obj.statusText : "";
-  const headers = obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers)
-    ? (obj.headers as Record<string, string>)
-    : {};
-  return { status, statusText, headers, body };
-}
-
-function parseRetryAfterMs(headers: Record<string, string>): number | null {
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== "retry-after") continue;
-    const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30_000, seconds * 1000);
-    const date = Date.parse(value);
-    if (Number.isFinite(date)) return Math.min(30_000, Math.max(0, date - Date.now()));
-  }
-  return null;
-}
-
-function describeHttpFailure(result: JevCorsResult): string {
-  const detail = result.body.replace(/\s+/g, " ").trim().slice(0, 240);
-  const label = `HTTP ${result.status}${result.statusText ? ` ${result.statusText}` : ""}`;
-  return detail ? `Jev request failed (${label}): ${detail}` : `Jev request failed (${label}).`;
-}
-
-/* ------------------------------------------------------------------ *
- * Request building
- * ------------------------------------------------------------------ */
-
-export interface JevCallConfig extends JevSettings {
-  apiKey: string;
-}
-
-export function jevEndpoint(settings: Pick<JevSettings, "provider" | "baseUrlOverride" | "model">): string {
-  const provider = resolveJevProvider(settings);
-  return `${resolveJevBaseUrl(settings)}${provider.path}`;
+function buildDecisionInput(
+  settings: Pick<JevSettings, "connectionId" | "model">,
+  state: DecisionState,
+  questions: JevQuestions,
+  userId?: string,
+): DecisionEvaluationInput {
+  const input: DecisionEvaluationInput = { state, questions };
+  // An explicit ID must reach the host unchanged: invalid IDs must fail instead
+  // of silently falling back to another saved connection.
+  if (settings.connectionId !== null && settings.connectionId !== "") input.connection_id = settings.connectionId;
+  const model = settings.model.trim();
+  if (model) input.model = model;
+  if (userId !== undefined) input.userId = userId;
+  return input;
 }
 
 export function buildJevRequest(
-  settings: Pick<JevSettings, "provider" | "baseUrlOverride" | "model"> & { apiKey: string },
-  state: unknown,
+  settings: Pick<JevSettings, "connectionId" | "model">,
+  state: DecisionState,
   questions: JevQuestions,
+  userId?: string,
 ): JevRequest {
-  const model = resolveJevModel(settings);
+  const input = buildDecisionInput(settings, state, questions, userId);
+  return { body: JSON.stringify(input), model: input.model ?? null };
+}
+
+/** Adapts validated native answers without rounding or coercing their values. */
+export function normalizeJevResponse(result: DecisionResult): JevResponse {
   return {
-    url: jevEndpoint(settings),
-    headers: {
-      Authorization: `Bearer ${settings.apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ model, state, questions }),
-    model,
-  };
-}
-
-/* ------------------------------------------------------------------ *
- * Response normalization
- * ------------------------------------------------------------------ */
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function readProbability(value: unknown): number | null {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.min(1, Math.max(0, n));
-}
-
-function readProbabilityMap(value: unknown): Record<string, number> {
-  const obj = asRecord(value);
-  const out: Record<string, number> = {};
-  for (const [key, raw] of Object.entries(obj)) {
-    const probability = readProbability(raw);
-    if (probability !== null) out[key] = probability;
-  }
-  return out;
-}
-
-function readStringMap(value: unknown): Record<string, string> {
-  const obj = asRecord(value);
-  const out: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(obj)) {
-    if (typeof raw === "string" && raw.trim()) out[key] = raw;
-  }
-  return out;
-}
-
-function normalizeAnswer(value: unknown): JevAnswer | null {
-  const obj = asRecord(value);
-  const type = typeof obj.type === "string" ? obj.type : "";
-
-  if (type === "noul") {
-    const noul = readProbability(obj.noul);
-    return noul === null ? null : { type: "noul", noul };
-  }
-  if (type === "choice") {
-    const choice = typeof obj.choice === "string" ? obj.choice : "";
-    if (!choice.trim()) return null;
-    return {
-      type: "choice",
-      choice: choice.trim(),
-      probabilities: readProbabilityMap(obj.probabilities),
-      confidence: readProbability(obj.confidence),
-    };
-  }
-  if (type === "score") {
-    const score = typeof obj.score === "number" ? obj.score : Number(obj.score);
-    if (!Number.isFinite(score)) return null;
-    return {
-      type: "score",
-      score,
-      legend: readStringMap(obj.legend),
-      probabilities: readProbabilityMap(obj.probabilities),
-      confidence: readProbability(obj.confidence),
-    };
-  }
-  return null;
-}
-
-/**
- * Normalizes the provider envelope. Individual malformed answers are dropped
- * rather than failing the whole turn: the gate that owned the answer falls back.
- */
-export function normalizeJevResponse(raw: unknown): JevResponse {
-  const envelope = asRecord(raw);
-  if (Object.keys(envelope).length === 0) {
-    throw new JevProtocolError("Jev returned a response that was not a JSON object.");
-  }
-  if (envelope.error) {
-    const message = typeof envelope.error === "string" ? envelope.error : JSON.stringify(envelope.error);
-    throw new JevProtocolError(`Jev reported an error: ${message.slice(0, 240)}`);
-  }
-
-  const answersRecord = asRecord(envelope.answers);
-  if (Object.keys(answersRecord).length === 0) {
-    throw new JevProtocolError("Jev returned no answers.");
-  }
-
-  const answers: Record<string, JevAnswer> = {};
-  for (const [id, value] of Object.entries(answersRecord)) {
-    const answer = normalizeAnswer(value);
-    if (answer) answers[id] = answer;
-  }
-
-  const usage = asRecord(envelope.usage);
-  const nullableNumber = (value: unknown): number | null => {
-    const n = typeof value === "number" ? value : Number(value);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  return {
-    model: typeof envelope.model === "string" && envelope.model.trim() ? envelope.model.trim() : null,
+    model: result.model,
     usage: {
-      inputTokens: nullableNumber(usage.input_tokens ?? usage.inputTokens),
-      outputTokens: nullableNumber(usage.output_tokens ?? usage.outputTokens),
-      costUsd: nullableNumber(usage.cost ?? usage.cost_usd ?? usage.costUsd),
+      inputTokens: result.usage?.input_tokens ?? null,
+      outputTokens: result.usage?.output_tokens ?? null,
+      costUsd: result.usage?.cost ?? null,
     },
-    answers,
+    answers: result.answers,
   };
 }
 
-export function parseJevBody(body: string): unknown {
-  const text = body.trim();
-  if (!text) throw new JevProtocolError("Jev returned an empty response body.");
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new JevProtocolError("Jev returned a response body that was not valid JSON.");
-  }
-}
-
-/* ------------------------------------------------------------------ *
- * Transport
- * ------------------------------------------------------------------ */
-
-export type CorsFetch = (url: string, options?: unknown) => Promise<unknown>;
+export type DecisionEvaluate = (
+  input: DecisionEvaluationInput,
+  options?: { signal?: AbortSignal },
+) => Promise<DecisionResult>;
 
 export interface CallJevOptions {
   config: JevCallConfig;
-  state: unknown;
+  state: DecisionState;
   questions: JevQuestions;
-  /** Called when Jev answers at least one question. */
-  cors: CorsFetch;
-  /** Total wall clock available for this phase, including retries. */
+  evaluate: DecisionEvaluate;
+  /** Required by the host for an operator extension acting for a user. */
+  userId?: string;
+  /** Total wall clock remaining for this phase. */
   budgetMs?: number;
   timeoutMs?: number;
-  retryOnRateLimit?: boolean;
 }
 
 export interface CallJevResult {
@@ -326,166 +125,60 @@ export interface CallJevResult {
   requests: number;
   durationMs: number;
   request: JevRequest | null;
-  /** Raw response body or transport error for each HTTP attempt. Never includes request headers. */
+  /** Native result or error for the single evaluation; there are no HTTP retries. */
   attempts: Array<{ status: number | null; body: string | null; error: string | null; durationMs: number }>;
 }
 
-/**
- * Races a promise against a deadline.
- *
- * The host's CORS proxy carries its own 30s budget and offers no cancel path, so
- * awaiting it directly would make the caller wait for the proxy rather than for
- * the configured timeout. This returns on the deadline and lets the abandoned
- * request settle into a discard handler.
- */
-function withDeadline<T>(
-  work: Promise<T>,
+/** The deadline cancels provider work as well as bounding the caller's wait. */
+function evaluateWithDeadline(
+  evaluate: DecisionEvaluate,
+  input: DecisionEvaluationInput,
   timeoutMs: number,
-  onTimeout: () => Error,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(onTimeout()), Math.max(1, timeoutMs));
-    work.then(
-      (value) => { clearTimeout(timer); resolve(value); },
+): Promise<DecisionResult> {
+  const controller = new AbortController();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new JevTimeoutError(timeoutMs);
+      controller.abort(error);
+      reject(error);
+    }, Math.max(1, Math.ceil(timeoutMs)));
+    // Catch synchronous callback errors too, and handle late settlements after
+    // cancellation so they cannot become unhandled rejections or late results.
+    Promise.resolve().then(() => evaluate(input, { signal: controller.signal })).then(
+      (result) => { clearTimeout(timer); resolve(result); },
       (error) => { clearTimeout(timer); reject(error); },
     );
-    // The abandoned request may still settle; swallow it so an optimistic late
-    // success or rejection cannot surface as an unhandled rejection.
-    work.catch(() => {});
   });
 }
 
-function remainingBudgetMs(startedAt: number, budgetMs: number | undefined): number {
-  if (budgetMs === undefined) return Number.POSITIVE_INFINITY;
-  return budgetMs - (Date.now() - startedAt);
-}
-
-/**
- * Makes one Jev call, retrying once on a rate limit or transient server error.
- *
- * Jev has no streaming mode, so this awaits the single response. Failures are
- * returned rather than thrown: every caller degrades to Director-only behavior.
- */
+/** Each phase makes one native evaluation; failures follow the gate fallback. */
 export async function callJev(options: CallJevOptions): Promise<CallJevResult> {
   const startedAt = Date.now();
-  const timeoutMs = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
-  const request = buildJevRequest(options.config, options.state, options.questions);
-  let requests = 0;
   const attempts: CallJevResult["attempts"] = [];
-
-  const attempt = async (): Promise<{ response: JevResponse } | { retryAfterMs: number | null; error: JevError }> => {
-    requests += 1;
-    const attemptStartedAt = Date.now();
-    let recordedResponse = false;
-    const budget = remainingBudgetMs(startedAt, options.budgetMs);
-    const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
-
-    try {
-      // The proxy crosses a worker message boundary. Only cloneable request data
-      // may be sent; enforce the timeout locally because the proxy cannot abort.
-      const raw = await withDeadline(
-        options.cors(request.url, {
-          method: "POST",
-          headers: request.headers,
-          body: request.body,
-        }),
-        effective,
-        () => new JevTimeoutError(effective),
-      );
-      const result = readCorsResult(raw);
-      attempts.push({ status: result.status, body: result.body, error: null, durationMs: Date.now() - attemptStartedAt });
-      recordedResponse = true;
-      if (result.status === 429 || result.status >= 500) {
-        return {
-          retryAfterMs: parseRetryAfterMs(result.headers),
-          error: new JevError(describeHttpFailure(result), result.status, parseRetryAfterMs(result.headers)),
-        };
-      }
-      if (result.status < 200 || result.status >= 300) {
-        throw new JevError(describeHttpFailure(result), result.status);
-      }
-      return { response: normalizeJevResponse(parseJevBody(result.body)) };
-    } catch (error) {
-      if (!recordedResponse) attempts.push({
-        status: null, body: null, error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - attemptStartedAt,
-      });
-      if (error instanceof JevError || error instanceof JevTimeoutError) throw error;
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new JevTimeoutError(effective);
-      }
-      throw new JevError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const retryable = options.retryOnRateLimit ?? options.config.retryOnRateLimit ?? true;
+  let request: JevRequest | null = null;
+  let requests = 0;
   try {
-    let outcome: { response: JevResponse } | { retryAfterMs: number | null; error: JevError };
+    const input = buildDecisionInput(options.config, options.state, options.questions, options.userId);
+    request = { body: JSON.stringify(input), model: input.model ?? null };
+    const configuredTimeout = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
+    const timeoutMs = Number.isNaN(configuredTimeout) ? DEFAULT_JEV_TIMEOUT_MS : configuredTimeout;
+    const remainingBudget = options.budgetMs === undefined || Number.isNaN(options.budgetMs)
+      ? Number.POSITIVE_INFINITY
+      : options.budgetMs - (Date.now() - startedAt);
+    const effectiveTimeout = Math.min(MAX_DECISION_TIMEOUT_MS, timeoutMs, remainingBudget);
+    if (effectiveTimeout <= 0) throw new JevTimeoutError(0);
+
+    requests = 1;
+    const attemptStartedAt = Date.now();
     try {
-      outcome = await attempt();
+      const result = await evaluateWithDeadline(options.evaluate, input, effectiveTimeout);
+      const response = normalizeJevResponse(result);
+      attempts.push({ status: null, body: JSON.stringify(result), error: null, durationMs: Date.now() - attemptStartedAt });
+      return { ok: true, response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
     } catch (error) {
-      return {
-        ok: false,
-        response: null,
-        error: error instanceof Error ? error.message : String(error),
-        timedOut: error instanceof JevTimeoutError,
-        requests,
-        durationMs: Date.now() - startedAt,
-        request,
-        attempts,
-      };
+      attempts.push({ status: null, body: null, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - attemptStartedAt });
+      throw error;
     }
-
-    if ("error" in outcome) {
-      const waitMs = outcome.retryAfterMs ?? 750;
-      const budgetLeft = remainingBudgetMs(startedAt, options.budgetMs);
-      // The retry shares the caller's deadline, so it cannot extend the wait past
-      // the configured timeout.
-      const deadlineLeft = timeoutMs - (Date.now() - startedAt);
-      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < deadlineLeft;
-      if (!canRetry) {
-        return {
-          ok: false,
-          response: null,
-          error: outcome.error.message,
-          timedOut: false,
-          requests,
-          durationMs: Date.now() - startedAt,
-          request,
-          attempts,
-        };
-      }
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      try {
-        const retry = await attempt();
-        if ("error" in retry) {
-          return {
-            ok: false,
-            response: null,
-            error: retry.error.message,
-            timedOut: false,
-            requests,
-            durationMs: Date.now() - startedAt,
-            request,
-            attempts,
-          };
-        }
-        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
-      } catch (error) {
-        return {
-          ok: false,
-          response: null,
-          error: error instanceof Error ? error.message : String(error),
-          timedOut: error instanceof JevTimeoutError,
-          requests,
-          durationMs: Date.now() - startedAt,
-          request,
-          attempts,
-        };
-      }
-    }
-
-    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
   } catch (error) {
     return {
       ok: false,
@@ -521,7 +214,7 @@ export interface JevStateContext {
 }
 
 export interface JevStateProjection {
-  state: unknown;
+  state: DecisionState;
   chars: number;
   compacted: boolean;
 }
@@ -619,8 +312,8 @@ export function buildJevState(context: JevStateContext, worldStateContext?: stri
 
   let compacted = false;
 
-  const build = (shrink: number): Record<string, unknown> => {
-    const state: Record<string, unknown> = { generation_type: context.generationType || "normal" };
+  const build = (shrink: number): Record<string, DecisionJsonValue> => {
+    const state: Record<string, DecisionJsonValue> = { generation_type: context.generationType || "normal" };
     let used = JSON.stringify(state).length;
     let truncatedAny = false;
 
@@ -687,19 +380,19 @@ export function exceedsJevTokenBudget(state: unknown, questions: JevQuestions): 
   return estimateJevTokens(state, questions) > JEV_MAX_STATE_TOKENS;
 }
 
-/** Minimal smoke question used by the drawer's "Test Jev" action. */
-export function buildJevSmokeRequest(
-  settings: Pick<JevSettings, "provider" | "baseUrlOverride" | "model"> & { apiKey: string },
-): { request: JevRequest; questions: JevQuestions } {
-  const questions: JevQuestions = {
-    connectivity: {
-      type: "noul",
-      instructions: "Does this statement describe a storm?",
-      criteria: {
-        true: "The statement mentions a storm, tempest, thunder, or violent weather",
-        false: "The statement mentions anything else",
+/** Minimal smoke input used by the drawer's connection test; contains no chat. */
+export function buildJevSmokeRequest(): { state: DecisionState; questions: JevQuestions } {
+  return {
+    state: "A storm rolls in over the harbour.",
+    questions: {
+      connectivity: {
+        type: "noul",
+        instructions: "Does this statement describe a storm?",
+        criteria: {
+          true: "The statement mentions a storm, tempest, thunder, or violent weather",
+          false: "The statement mentions anything else",
+        },
       },
     },
   };
-  return { request: buildJevRequest(settings, "A storm rolls in over the harbour.", questions), questions };
 }

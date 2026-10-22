@@ -62,67 +62,8 @@ export interface PromptPreset {
 }
 
 /* ------------------------------------------------------------------ *
- * Jev (TypeSafe System One) integration
+ * Jev via Lumiverse Decision connections
  * ------------------------------------------------------------------ */
-
-export type JevProvider = "typesafe" | "openrouter";
-
-export interface JevProviderInfo {
-  id: JevProvider;
-  label: string;
-  baseUrl: string;
-  path: string;
-  defaultModel: string;
-  keyUrl: string;
-}
-
-/**
- * The Jev wire contract is identical for both providers except for the base
- * URL, the route, and the model naming convention.
- */
-export const JEV_PROVIDERS: Record<JevProvider, JevProviderInfo> = {
-  typesafe: {
-    id: "typesafe",
-    label: "TypeSafe",
-    baseUrl: "https://api.typesafe.ai",
-    path: "/v1/systemone",
-    defaultModel: "jev-latest",
-    keyUrl: "https://console.typesafe.ai/keys",
-  },
-  openrouter: {
-    id: "openrouter",
-    label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api",
-    path: "/alpha/decisions",
-    defaultModel: "typesafe/jev-1.13",
-    keyUrl: "https://openrouter.ai/settings/keys",
-  },
-};
-
-export const JEV_PROVIDER_IDS = ["typesafe", "openrouter"] as const;
-
-/**
- * Enclave is per-user AES-256-GCM at-rest secret storage. One slot per provider
- * so switching providers never destroys the other credential.
- */
-export const JEV_SECRET_KEY_PREFIX = "jev-api-key";
-
-/**
- * The host rejects any enclave key outside this set, so a separator like `:` is
- * refused outright. Kept here rather than in the backend so the constraint is
- * testable without a host. Mirror of `ENCLAVE_KEY_PATTERN` in Lumiverse.
- */
-export const ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
-
-export function jevSecretKey(provider: JevProvider): string {
-  const key = `${JEV_SECRET_KEY_PREFIX}.${provider}`;
-  // A key the host will reject would fail every read and write silently, so this
-  // is asserted at construction rather than discovered at runtime.
-  if (!ENCLAVE_KEY_PATTERN.test(key)) {
-    throw new Error(`Jev enclave key "${key}" is not a valid enclave key.`);
-  }
-  return key;
-}
 
 /** Jev reports 64k tokens per request, of which the `state` may use 32k. */
 export const JEV_MAX_STATE_TOKENS = 32_000;
@@ -131,27 +72,25 @@ export const MIN_JEV_STATE_CHARS = 2_000;
 export const MAX_JEV_STATE_CHARS = 32_000;
 export const DEFAULT_JEV_TIMEOUT_MS = 8_000;
 export const MIN_JEV_TIMEOUT_MS = 1_000;
-export const MAX_JEV_TIMEOUT_MS = 60_000;
+export const MAX_JEV_TIMEOUT_MS = 30_000;
 export const MAX_JEV_HISTORY_MESSAGES = 24;
 export const DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 
 export interface JevSettings {
   enabled: boolean;
-  provider: JevProvider;
+  /** Null selects the user's default Decision connection. */
+  connectionId: string | null;
   /** Context sent to Jev, independently of the Director's context switches. */
   includeCharacter: boolean;
   includeUserPersona: boolean;
   includeWorldInfoEntries: boolean;
-  /** Blank means "use the provider default model". */
+  /** Blank uses the selected Decision connection's saved model. */
   model: string;
-  /** Blank means "use the provider default base URL". */
-  baseUrlOverride: string;
   timeoutMs: number;
   maxStateChars: number;
   historyMessageLimit: number;
   /** Decisions below this confidence are escalated (flag + gate fallback). */
   minConfidence: number;
-  retryOnRateLimit: boolean;
   /** Opt-in persistence of the derived scene state between turns. */
   worldStateEnabled: boolean;
   /** Per-gate enable / threshold / fallback overrides, keyed by gate id. */
@@ -160,35 +99,18 @@ export interface JevSettings {
 
 export const DEFAULT_JEV_SETTINGS: JevSettings = {
   enabled: false,
-  provider: "typesafe",
+  connectionId: null,
   includeCharacter: true,
   includeUserPersona: true,
   includeWorldInfoEntries: false,
   model: "",
-  baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
   maxStateChars: DEFAULT_JEV_STATE_CHARS,
   historyMessageLimit: 10,
   minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
-  retryOnRateLimit: true,
   worldStateEnabled: true,
   gatePolicy: {},
 };
-
-export function resolveJevProvider(settings: { provider?: unknown }): JevProviderInfo {
-  const provider = settings.provider === "openrouter" ? "openrouter" : "typesafe";
-  return JEV_PROVIDERS[provider];
-}
-
-export function resolveJevModel(settings: { provider?: unknown; model?: unknown }): string {
-  const model = typeof settings.model === "string" ? settings.model.trim() : "";
-  return model || resolveJevProvider(settings).defaultModel;
-}
-
-export function resolveJevBaseUrl(settings: { provider?: unknown; baseUrlOverride?: unknown }): string {
-  const override = typeof settings.baseUrlOverride === "string" ? settings.baseUrlOverride.trim().replace(/\/+$/, "") : "";
-  return override || resolveJevProvider(settings).baseUrl;
-}
 
 /* ------------------------------------------------------------------ *
  * Gate catalog types
@@ -341,7 +263,7 @@ export interface JevTurnDiagnostics {
   /** Whether Jev was consulted at all this turn. */
   used: boolean;
   enabled: boolean;
-  provider: JevProvider | null;
+  provider: string | null;
   model: string | null;
   /** Model id the provider reported as the actual responder. */
   resolvedModel: string | null;
@@ -377,6 +299,12 @@ export interface ConnectionOption {
 
 export interface ConnectionLike extends ConnectionOption {
   api_url?: string;
+}
+
+export interface DecisionModelOption {
+  id: string;
+  label: string;
+  protocol: "supported" | "unsupported" | "unverified";
 }
 
 export type RunLogStatus = "success" | "error" | "timeout" | "skipped" | "test_success" | "test_error";
@@ -728,20 +656,22 @@ export function normalizeJevSettings(
   legacyContext: Pick<LumiWorldSettings, "includeCharacter" | "includeUserPersona" | "includeWorldInfoEntries"> = DEFAULT_SETTINGS,
 ): JevSettings {
   const obj = asRecord(value);
-  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  // Provider model names may not be valid IDs for a host Decision connection.
+  // Only migrate old provider settings; an explicitly configured new connection
+  // (including the default connection) keeps the user's exact model override.
+  const legacyProviderSettings = !Object.hasOwn(obj, "connectionId") &&
+    (Object.hasOwn(obj, "provider") || Object.hasOwn(obj, "baseUrlOverride"));
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
-    provider,
+    connectionId: cleanNullableString(obj.connectionId),
     includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
     includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
-    model: cleanString(obj.model),
-    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    model: legacyProviderSettings ? "" : cleanString(obj.model),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
     maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
     minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
-    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
     worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
     gatePolicy: normalizeGatePolicy(obj.gatePolicy),
   };
@@ -886,7 +816,7 @@ export function normalizeJevTurnDiagnostics(value: unknown): JevTurnDiagnostics 
   return {
     used: obj.used === true,
     enabled: obj.enabled === true,
-    provider: provider === "typesafe" || provider === "openrouter" ? provider : null,
+    provider: provider || null,
     model: cleanNullableString(obj.model),
     resolvedModel: cleanNullableString(obj.resolvedModel),
     status: JEV_STATUSES.includes(status) ? status : "skipped",

@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SETTINGS,
   DEFAULT_SYSTEM_TEMPLATE,
-  ENCLAVE_KEY_PATTERN,
-  jevSecretKey,
   KeyedOperationLock,
   MAX_DIRECTOR_TIMEOUT_MS,
   PRE_OUTPUT_CAP_DEFAULT_SYSTEM_TEMPLATE,
@@ -34,23 +32,6 @@ import {
   type LlmMessageLike,
   type RunLogEntry,
 } from "./shared";
-
-describe("Jev enclave key", () => {
-  test("uses a key the host's enclave accepts", () => {
-    // The host rejects anything outside alphanumeric, underscore, dash, and dot.
-    // A colon separator silently broke every read and write.
-    for (const provider of ["typesafe", "openrouter"] as const) {
-      const key = jevSecretKey(provider);
-      expect(key).toMatch(ENCLAVE_KEY_PATTERN);
-      expect(key).not.toContain(":");
-      expect(key.length).toBeLessThanOrEqual(128);
-    }
-  });
-
-  test("namespaces the key per provider so one provider cannot overwrite the other", () => {
-    expect(jevSecretKey("typesafe")).not.toBe(jevSecretKey("openrouter"));
-  });
-});
 
 describe("settings normalization", () => {
   test("clamps numeric settings and restores empty templates", () => {
@@ -98,28 +79,24 @@ describe("settings normalization", () => {
     const settings = normalizeSettings({
       jev: {
         enabled: true,
-        provider: "openrouter",
-        model: "  typesafe/jev-1.13  ",
-        baseUrlOverride: "  https://example.test/api/  ",
+        connectionId: "  decisions-1  ",
+        model: "  ~typesafe/jev-latest  ",
         timeoutMs: 999999,
         maxStateChars: 5,
         historyMessageLimit: 900,
         minConfidence: 4,
-        retryOnRateLimit: false,
         worldStateEnabled: false,
         gatePolicy: {},
       },
     });
 
     expect(settings.jev.enabled).toBe(true);
-    expect(settings.jev.provider).toBe("openrouter");
-    expect(settings.jev.model).toBe("typesafe/jev-1.13");
-    expect(settings.jev.baseUrlOverride).toBe("https://example.test/api");
-    expect(settings.jev.timeoutMs).toBe(60000);
+    expect(settings.jev.connectionId).toBe("decisions-1");
+    expect(settings.jev.model).toBe("~typesafe/jev-latest");
+    expect(settings.jev.timeoutMs).toBe(30000);
     expect(settings.jev.maxStateChars).toBe(2000);
     expect(settings.jev.historyMessageLimit).toBe(24);
     expect(settings.jev.minConfidence).toBe(1);
-    expect(settings.jev.retryOnRateLimit).toBe(false);
     expect(settings.jev.worldStateEnabled).toBe(false);
   });
 
@@ -138,8 +115,38 @@ describe("settings normalization", () => {
       .toEqual([false, true, true]);
   });
 
-  test("falls back to TypeSafe for an unknown Jev provider", () => {
-    expect(normalizeSettings({ jev: { provider: "nonsense" } }).jev.provider).toBe("typesafe");
+  test("migrates old provider settings without carrying the obsolete provider model", () => {
+    for (const legacyTarget of [{ provider: "openrouter" }, { baseUrlOverride: "https://example.test/api" }]) {
+      const settings = normalizeSettings({ jev: {
+        ...legacyTarget,
+        enabled: true, model: "typesafe/jev-1.13", retryOnRateLimit: true,
+        includeCharacter: false, timeoutMs: 60000, minConfidence: 0.7,
+        gatePolicy: { smart_trigger: { enabled: false } },
+      } });
+      expect(settings.jev.connectionId).toBeNull();
+      expect(settings.jev.model).toBe("");
+      expect(settings.jev.enabled).toBe(true);
+      expect(settings.jev.includeCharacter).toBe(false);
+      expect(settings.jev.timeoutMs).toBe(30000);
+      expect(settings.jev.minConfidence).toBe(0.7);
+      expect(settings.jev.gatePolicy.smart_trigger).toEqual({ enabled: false });
+      expect("provider" in settings.jev).toBe(false);
+      expect("baseUrlOverride" in settings.jev).toBe(false);
+      expect("retryOnRateLimit" in settings.jev).toBe(false);
+    }
+  });
+
+  test("preserves Decision model IDs for default and explicit connections", () => {
+    for (const connectionId of [null, "decisions-1"]) {
+      const settings = normalizeSettings({ jev: {
+        connectionId, provider: "openrouter", model: "~typesafe/jev-latest",
+      } });
+      expect(settings.jev.connectionId).toBe(connectionId);
+      expect(settings.jev.model).toBe("~typesafe/jev-latest");
+      expect(normalizeSettings(settings)).toEqual(settings);
+    }
+    expect(normalizeSettings({ jev: { connectionId: "  " } }).jev.connectionId).toBeNull();
+    expect(normalizeSettings({ jev: { model: "custom/model" } }).jev.model).toBe("custom/model");
   });
 
   test("drops malformed gate policy entries", () => {
@@ -711,6 +718,16 @@ describe("run log retention", () => {
     expect(partial?.inputTokens).toBeNull();
     expect(partial?.status).toBe("skipped");
     expect(partial?.requestCount).toBe(0);
+  });
+
+  test("preserves host-reported Decision provider names in historical diagnostics", () => {
+    const runs = normalizeRunLog([
+      { id: "decision-provider", timestamp: 30, status: "success", jev: {
+        provider: "  proxy-provider  ", model: "~typesafe/jev-latest",
+      } },
+    ]);
+    expect(runs[0]?.jev?.provider).toBe("proxy-provider");
+    expect(runs[0]?.jev?.model).toBe("~typesafe/jev-latest");
   });
 
   test("round-trips full turn text and separate Jev passes", () => {

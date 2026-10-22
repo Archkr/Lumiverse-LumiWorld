@@ -8,70 +8,29 @@ var VISIBLE_GENERATION_TYPES = [
   "swipe",
   "impersonate"
 ];
-var JEV_PROVIDERS = {
-  typesafe: {
-    id: "typesafe",
-    label: "TypeSafe",
-    baseUrl: "https://api.typesafe.ai",
-    path: "/v1/systemone",
-    defaultModel: "jev-latest",
-    keyUrl: "https://console.typesafe.ai/keys"
-  },
-  openrouter: {
-    id: "openrouter",
-    label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api",
-    path: "/alpha/decisions",
-    defaultModel: "typesafe/jev-1.13",
-    keyUrl: "https://openrouter.ai/settings/keys"
-  }
-};
-var JEV_SECRET_KEY_PREFIX = "jev-api-key";
-var ENCLAVE_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
-function jevSecretKey(provider) {
-  const key = `${JEV_SECRET_KEY_PREFIX}.${provider}`;
-  if (!ENCLAVE_KEY_PATTERN.test(key)) {
-    throw new Error(`Jev enclave key "${key}" is not a valid enclave key.`);
-  }
-  return key;
-}
 var JEV_MAX_STATE_TOKENS = 32000;
 var DEFAULT_JEV_STATE_CHARS = 30000;
 var MIN_JEV_STATE_CHARS = 2000;
 var MAX_JEV_STATE_CHARS = 32000;
 var DEFAULT_JEV_TIMEOUT_MS = 8000;
 var MIN_JEV_TIMEOUT_MS = 1000;
-var MAX_JEV_TIMEOUT_MS = 60000;
+var MAX_JEV_TIMEOUT_MS = 30000;
 var MAX_JEV_HISTORY_MESSAGES = 24;
 var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 var DEFAULT_JEV_SETTINGS = {
   enabled: false,
-  provider: "typesafe",
+  connectionId: null,
   includeCharacter: true,
   includeUserPersona: true,
   includeWorldInfoEntries: false,
   model: "",
-  baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
   maxStateChars: DEFAULT_JEV_STATE_CHARS,
   historyMessageLimit: 10,
   minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
-  retryOnRateLimit: true,
   worldStateEnabled: true,
   gatePolicy: {}
 };
-function resolveJevProvider(settings) {
-  const provider = settings.provider === "openrouter" ? "openrouter" : "typesafe";
-  return JEV_PROVIDERS[provider];
-}
-function resolveJevModel(settings) {
-  const model = typeof settings.model === "string" ? settings.model.trim() : "";
-  return model || resolveJevProvider(settings).defaultModel;
-}
-function resolveJevBaseUrl(settings) {
-  const override = typeof settings.baseUrlOverride === "string" ? settings.baseUrlOverride.trim().replace(/\/+$/, "") : "";
-  return override || resolveJevProvider(settings).baseUrl;
-}
 var MAX_DIRECTOR_TIMEOUT_MS = 300000;
 var MAX_CHAT_HISTORY_MESSAGES = Number.MAX_SAFE_INTEGER;
 var DEFAULT_RUN_LOG_LIMIT = 12;
@@ -303,20 +262,18 @@ function normalizeGatePolicy(value) {
 }
 function normalizeJevSettings(value, legacyContext = DEFAULT_SETTINGS) {
   const obj = asRecord(value);
-  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  const legacyProviderSettings = !Object.hasOwn(obj, "connectionId") && (Object.hasOwn(obj, "provider") || Object.hasOwn(obj, "baseUrlOverride"));
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
-    provider,
+    connectionId: cleanNullableString(obj.connectionId),
     includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
     includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
-    model: cleanString(obj.model),
-    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    model: legacyProviderSettings ? "" : cleanString(obj.model),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
     maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
     minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
-    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
     worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
     gatePolicy: normalizeGatePolicy(obj.gatePolicy)
   };
@@ -454,7 +411,7 @@ function normalizeJevTurnDiagnostics(value) {
   return {
     used: obj.used === true,
     enabled: obj.enabled === true,
-    provider: provider === "typesafe" || provider === "openrouter" ? provider : null,
+    provider: provider || null,
     model: cleanNullableString(obj.model),
     resolvedModel: cleanNullableString(obj.resolvedModel),
     status: JEV_STATUSES.includes(status) ? status : "skipped",
@@ -1590,12 +1547,17 @@ function planGates(phase, settings, context, overrides = {}) {
       skipped.push(definition.id);
       continue;
     }
+    const criteria = dynamicCriteria(definition.id, context, definition);
+    if (definition.id === "context_filter" && Object.keys(criteria ?? {}).length < 2) {
+      skipped.push(definition.id);
+      continue;
+    }
     selected.push({
       policy,
       question: {
         type: definition.primitive,
         instructions: definition.instructions,
-        ...definition.criteria ? { criteria: dynamicCriteria(definition.id, context, definition) } : {}
+        ...criteria ? { criteria } : {}
       }
     });
   }
@@ -1828,312 +1790,78 @@ function withConfidenceGate(records, floor) {
 }
 
 // src/jev.ts
-class JevError extends Error {
-  status;
-  retryAfterMs;
-  constructor(message, status = null, retryAfterMs = null) {
-    super(message);
-    this.status = status;
-    this.retryAfterMs = retryAfterMs;
-    this.name = "JevError";
-  }
-}
+var MAX_DECISION_TIMEOUT_MS = 30000;
 
 class JevTimeoutError extends Error {
   constructor(timeoutMs) {
-    super(`Jev did not answer within ${Math.round(timeoutMs / 1000)}s.`);
+    super(`Decision model did not answer within ${Math.round(timeoutMs / 1000)}s.`);
     this.name = "JevTimeoutError";
   }
 }
-
-class JevProtocolError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "JevProtocolError";
-  }
+function buildDecisionInput(settings, state, questions, userId) {
+  const input = { state, questions };
+  if (settings.connectionId !== null && settings.connectionId !== "")
+    input.connection_id = settings.connectionId;
+  const model = settings.model.trim();
+  if (model)
+    input.model = model;
+  if (userId !== undefined)
+    input.userId = userId;
+  return input;
 }
-function readCorsResult(raw) {
-  if (raw == null)
-    throw new JevProtocolError("Jev request returned no response.");
-  if (typeof raw === "string")
-    return { status: 200, statusText: "OK", headers: {}, body: raw };
-  if (typeof raw !== "object")
-    throw new JevProtocolError("Jev request returned an unrecognized response.");
-  const obj = raw;
-  const body = typeof obj.body === "string" ? obj.body : typeof obj.text === "string" ? obj.text : "";
-  const status = typeof obj.status === "number" && Number.isFinite(obj.status) ? obj.status : 200;
-  const statusText = typeof obj.statusText === "string" ? obj.statusText : "";
-  const headers = obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers) ? obj.headers : {};
-  return { status, statusText, headers, body };
-}
-function parseRetryAfterMs(headers) {
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== "retry-after")
-      continue;
-    const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0)
-      return Math.min(30000, seconds * 1000);
-    const date = Date.parse(value);
-    if (Number.isFinite(date))
-      return Math.min(30000, Math.max(0, date - Date.now()));
-  }
-  return null;
-}
-function describeHttpFailure(result) {
-  const detail = result.body.replace(/\s+/g, " ").trim().slice(0, 240);
-  const label = `HTTP ${result.status}${result.statusText ? ` ${result.statusText}` : ""}`;
-  return detail ? `Jev request failed (${label}): ${detail}` : `Jev request failed (${label}).`;
-}
-function jevEndpoint(settings) {
-  const provider = resolveJevProvider(settings);
-  return `${resolveJevBaseUrl(settings)}${provider.path}`;
-}
-function buildJevRequest(settings, state, questions) {
-  const model = resolveJevModel(settings);
+function normalizeJevResponse(result) {
   return {
-    url: jevEndpoint(settings),
-    headers: {
-      Authorization: `Bearer ${settings.apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    },
-    body: JSON.stringify({ model, state, questions }),
-    model
-  };
-}
-function asRecord2(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function readProbability(value) {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n))
-    return null;
-  return Math.min(1, Math.max(0, n));
-}
-function readProbabilityMap(value) {
-  const obj = asRecord2(value);
-  const out = {};
-  for (const [key, raw] of Object.entries(obj)) {
-    const probability = readProbability(raw);
-    if (probability !== null)
-      out[key] = probability;
-  }
-  return out;
-}
-function readStringMap(value) {
-  const obj = asRecord2(value);
-  const out = {};
-  for (const [key, raw] of Object.entries(obj)) {
-    if (typeof raw === "string" && raw.trim())
-      out[key] = raw;
-  }
-  return out;
-}
-function normalizeAnswer(value) {
-  const obj = asRecord2(value);
-  const type = typeof obj.type === "string" ? obj.type : "";
-  if (type === "noul") {
-    const noul = readProbability(obj.noul);
-    return noul === null ? null : { type: "noul", noul };
-  }
-  if (type === "choice") {
-    const choice = typeof obj.choice === "string" ? obj.choice : "";
-    if (!choice.trim())
-      return null;
-    return {
-      type: "choice",
-      choice: choice.trim(),
-      probabilities: readProbabilityMap(obj.probabilities),
-      confidence: readProbability(obj.confidence)
-    };
-  }
-  if (type === "score") {
-    const score = typeof obj.score === "number" ? obj.score : Number(obj.score);
-    if (!Number.isFinite(score))
-      return null;
-    return {
-      type: "score",
-      score,
-      legend: readStringMap(obj.legend),
-      probabilities: readProbabilityMap(obj.probabilities),
-      confidence: readProbability(obj.confidence)
-    };
-  }
-  return null;
-}
-function normalizeJevResponse(raw) {
-  const envelope = asRecord2(raw);
-  if (Object.keys(envelope).length === 0) {
-    throw new JevProtocolError("Jev returned a response that was not a JSON object.");
-  }
-  if (envelope.error) {
-    const message = typeof envelope.error === "string" ? envelope.error : JSON.stringify(envelope.error);
-    throw new JevProtocolError(`Jev reported an error: ${message.slice(0, 240)}`);
-  }
-  const answersRecord = asRecord2(envelope.answers);
-  if (Object.keys(answersRecord).length === 0) {
-    throw new JevProtocolError("Jev returned no answers.");
-  }
-  const answers = {};
-  for (const [id, value] of Object.entries(answersRecord)) {
-    const answer = normalizeAnswer(value);
-    if (answer)
-      answers[id] = answer;
-  }
-  const usage = asRecord2(envelope.usage);
-  const nullableNumber = (value) => {
-    const n = typeof value === "number" ? value : Number(value);
-    return Number.isFinite(n) ? n : null;
-  };
-  return {
-    model: typeof envelope.model === "string" && envelope.model.trim() ? envelope.model.trim() : null,
+    model: result.model,
     usage: {
-      inputTokens: nullableNumber(usage.input_tokens ?? usage.inputTokens),
-      outputTokens: nullableNumber(usage.output_tokens ?? usage.outputTokens),
-      costUsd: nullableNumber(usage.cost ?? usage.cost_usd ?? usage.costUsd)
+      inputTokens: result.usage?.input_tokens ?? null,
+      outputTokens: result.usage?.output_tokens ?? null,
+      costUsd: result.usage?.cost ?? null
     },
-    answers
+    answers: result.answers
   };
 }
-function parseJevBody(body) {
-  const text = body.trim();
-  if (!text)
-    throw new JevProtocolError("Jev returned an empty response body.");
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new JevProtocolError("Jev returned a response body that was not valid JSON.");
-  }
-}
-function withDeadline(work, timeoutMs, onTimeout) {
+function evaluateWithDeadline(evaluate, input, timeoutMs) {
+  const controller = new AbortController;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(onTimeout()), Math.max(1, timeoutMs));
-    work.then((value) => {
+    const timer = setTimeout(() => {
+      const error = new JevTimeoutError(timeoutMs);
+      controller.abort(error);
+      reject(error);
+    }, Math.max(1, Math.ceil(timeoutMs)));
+    Promise.resolve().then(() => evaluate(input, { signal: controller.signal })).then((result) => {
       clearTimeout(timer);
-      resolve(value);
+      resolve(result);
     }, (error) => {
       clearTimeout(timer);
       reject(error);
     });
-    work.catch(() => {});
   });
-}
-function remainingBudgetMs(startedAt, budgetMs) {
-  if (budgetMs === undefined)
-    return Number.POSITIVE_INFINITY;
-  return budgetMs - (Date.now() - startedAt);
 }
 async function callJev(options) {
   const startedAt = Date.now();
-  const timeoutMs = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
-  const request = buildJevRequest(options.config, options.state, options.questions);
-  let requests = 0;
   const attempts = [];
-  const attempt = async () => {
-    requests += 1;
-    const attemptStartedAt = Date.now();
-    let recordedResponse = false;
-    const budget = remainingBudgetMs(startedAt, options.budgetMs);
-    const effective = Math.max(250, Math.min(timeoutMs, Number.isFinite(budget) ? budget : timeoutMs));
-    try {
-      const raw = await withDeadline(options.cors(request.url, {
-        method: "POST",
-        headers: request.headers,
-        body: request.body
-      }), effective, () => new JevTimeoutError(effective));
-      const result = readCorsResult(raw);
-      attempts.push({ status: result.status, body: result.body, error: null, durationMs: Date.now() - attemptStartedAt });
-      recordedResponse = true;
-      if (result.status === 429 || result.status >= 500) {
-        return {
-          retryAfterMs: parseRetryAfterMs(result.headers),
-          error: new JevError(describeHttpFailure(result), result.status, parseRetryAfterMs(result.headers))
-        };
-      }
-      if (result.status < 200 || result.status >= 300) {
-        throw new JevError(describeHttpFailure(result), result.status);
-      }
-      return { response: normalizeJevResponse(parseJevBody(result.body)) };
-    } catch (error) {
-      if (!recordedResponse)
-        attempts.push({
-          status: null,
-          body: null,
-          error: error instanceof Error ? error.message : String(error),
-          durationMs: Date.now() - attemptStartedAt
-        });
-      if (error instanceof JevError || error instanceof JevTimeoutError)
-        throw error;
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new JevTimeoutError(effective);
-      }
-      throw new JevError(error instanceof Error ? error.message : String(error));
-    }
-  };
-  const retryable = options.retryOnRateLimit ?? options.config.retryOnRateLimit ?? true;
+  let request = null;
+  let requests = 0;
   try {
-    let outcome;
+    const input = buildDecisionInput(options.config, options.state, options.questions, options.userId);
+    request = { body: JSON.stringify(input), model: input.model ?? null };
+    const configuredTimeout = options.timeoutMs ?? options.config.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
+    const timeoutMs = Number.isNaN(configuredTimeout) ? DEFAULT_JEV_TIMEOUT_MS : configuredTimeout;
+    const remainingBudget = options.budgetMs === undefined || Number.isNaN(options.budgetMs) ? Number.POSITIVE_INFINITY : options.budgetMs - (Date.now() - startedAt);
+    const effectiveTimeout = Math.min(MAX_DECISION_TIMEOUT_MS, timeoutMs, remainingBudget);
+    if (effectiveTimeout <= 0)
+      throw new JevTimeoutError(0);
+    requests = 1;
+    const attemptStartedAt = Date.now();
     try {
-      outcome = await attempt();
+      const result = await evaluateWithDeadline(options.evaluate, input, effectiveTimeout);
+      const response = normalizeJevResponse(result);
+      attempts.push({ status: null, body: JSON.stringify(result), error: null, durationMs: Date.now() - attemptStartedAt });
+      return { ok: true, response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
     } catch (error) {
-      return {
-        ok: false,
-        response: null,
-        error: error instanceof Error ? error.message : String(error),
-        timedOut: error instanceof JevTimeoutError,
-        requests,
-        durationMs: Date.now() - startedAt,
-        request,
-        attempts
-      };
+      attempts.push({ status: null, body: null, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - attemptStartedAt });
+      throw error;
     }
-    if ("error" in outcome) {
-      const waitMs = outcome.retryAfterMs ?? 750;
-      const budgetLeft = remainingBudgetMs(startedAt, options.budgetMs);
-      const deadlineLeft = timeoutMs - (Date.now() - startedAt);
-      const canRetry = retryable && waitMs + 250 < budgetLeft && waitMs + 250 < deadlineLeft;
-      if (!canRetry) {
-        return {
-          ok: false,
-          response: null,
-          error: outcome.error.message,
-          timedOut: false,
-          requests,
-          durationMs: Date.now() - startedAt,
-          request,
-          attempts
-        };
-      }
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      try {
-        const retry = await attempt();
-        if ("error" in retry) {
-          return {
-            ok: false,
-            response: null,
-            error: retry.error.message,
-            timedOut: false,
-            requests,
-            durationMs: Date.now() - startedAt,
-            request,
-            attempts
-          };
-        }
-        return { ok: true, response: retry.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
-      } catch (error) {
-        return {
-          ok: false,
-          response: null,
-          error: error instanceof Error ? error.message : String(error),
-          timedOut: error instanceof JevTimeoutError,
-          requests,
-          durationMs: Date.now() - startedAt,
-          request,
-          attempts
-        };
-      }
-    }
-    return { ok: true, response: outcome.response, error: null, timedOut: false, requests, durationMs: Date.now() - startedAt, request, attempts };
   } catch (error) {
     return {
       ok: false,
@@ -2273,18 +2001,20 @@ function estimateJevTokens(state, questions) {
 function exceedsJevTokenBudget(state, questions) {
   return estimateJevTokens(state, questions) > JEV_MAX_STATE_TOKENS;
 }
-function buildJevSmokeRequest(settings) {
-  const questions = {
-    connectivity: {
-      type: "noul",
-      instructions: "Does this statement describe a storm?",
-      criteria: {
-        true: "The statement mentions a storm, tempest, thunder, or violent weather",
-        false: "The statement mentions anything else"
+function buildJevSmokeRequest() {
+  return {
+    state: "A storm rolls in over the harbour.",
+    questions: {
+      connectivity: {
+        type: "noul",
+        instructions: "Does this statement describe a storm?",
+        criteria: {
+          true: "The statement mentions a storm, tempest, thunder, or violent weather",
+          false: "The statement mentions anything else"
+        }
       }
     }
   };
-  return { request: buildJevRequest(settings, "A storm rolls in over the harbour.", questions), questions };
 }
 
 // src/world-state.ts
@@ -2309,7 +2039,7 @@ function defaultWorldState() {
     updatedAt: 0
   };
 }
-function asRecord3(value) {
+function asRecord2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function clampLevel(value, fallback) {
@@ -2356,7 +2086,7 @@ function normalizeHooks(value) {
     return [];
   const out = [];
   for (const item of value) {
-    const obj = asRecord3(item);
+    const obj = asRecord2(item);
     const label = cleanLabel(obj.label);
     if (!label)
       continue;
@@ -2377,7 +2107,7 @@ function normalizeThreads(value) {
   const statuses = new Set(["open", "resolved", "dormant", "abandoned"]);
   const out = [];
   for (const item of value) {
-    const obj = asRecord3(item);
+    const obj = asRecord2(item);
     const label = cleanLabel(obj.label);
     if (!label || looksLikeDirectiveProse(label))
       continue;
@@ -2398,7 +2128,7 @@ function normalizeRelationships(value) {
     return [];
   const out = [];
   for (const item of value) {
-    const obj = asRecord3(item);
+    const obj = asRecord2(item);
     const character = cleanLabel(obj.character);
     if (!character)
       continue;
@@ -2414,7 +2144,7 @@ function normalizeRelationships(value) {
   return out;
 }
 function normalizeWorldState(value) {
-  const obj = asRecord3(value);
+  const obj = asRecord2(value);
   if (Object.keys(obj).length === 0)
     return defaultWorldState();
   const location = cleanLabel(obj.location);
@@ -2645,12 +2375,10 @@ function personasApi() {
 function worldBooksApi() {
   return spindle.world_books;
 }
-function enclaveApi() {
-  return spindle.enclave;
-}
-function corsApi() {
-  const cors = spindle?.cors;
-  return typeof cors === "function" ? (url, options) => cors.call(spindle, url, options) : null;
+function decisionsApi() {
+  const host = spindle;
+  const api = host.decisions;
+  return Number(host.host?.capabilities?.["decisions-v1"]) >= 1 && typeof api?.evaluate === "function" && typeof api?.listConnections === "function" && typeof api?.getConnection === "function" ? api : null;
 }
 function permissionsApi() {
   return spindle.permissions;
@@ -2662,7 +2390,7 @@ var PERMISSION_IDS = {
   characters: "characters",
   personas: "personas",
   worldBooks: "world_books",
-  corsProxy: "cors_proxy"
+  decisions: "decisions"
 };
 function send(message, userId = lastFrontendUserId ?? undefined) {
   spindle.sendToFrontend(message, userId);
@@ -2685,7 +2413,7 @@ function currentPermissions() {
     characters: permissionHas("characters"),
     personas: permissionHas("personas"),
     worldBooks: permissionHas("worldBooks"),
-    corsProxy: permissionHas("corsProxy")
+    decisions: permissionHas("decisions")
   };
 }
 function rememberChatUser(chatId, userId) {
@@ -2989,86 +2717,88 @@ async function resolveCharacter(context, chatId, userId) {
     return null;
   }
 }
-async function readJevKey(provider, userId) {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.get !== "function")
-    return null;
-  try {
-    const value = await enclave.get(jevSecretKey(provider), userId ?? undefined);
-    return typeof value === "string" && value.trim() ? value.trim() : null;
-  } catch {
-    return null;
-  }
+function decisionConnectionOption(profile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    provider: profile.provider,
+    model: profile.model,
+    isDefault: profile.is_default,
+    hasApiKey: profile.has_api_key
+  };
 }
-async function storeJevKey(provider, key, userId) {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.put !== "function") {
-    throw new Error("This Lumiverse host does not expose encrypted secret storage.");
-  }
-  const value = key.trim();
-  if (!value)
-    return;
-  await enclave.put(jevSecretKey(provider), value, userId ?? undefined);
-}
-async function clearJevKey(provider, userId) {
-  const enclave = enclaveApi();
-  if (!enclave || typeof enclave.delete !== "function")
-    return;
+async function listDecisionConnections(userId) {
+  if (!permissionHas("decisions"))
+    return { connections: [], error: "Grant the decisions permission to use Decision connections." };
+  const api = decisionsApi();
+  if (!api)
+    return { connections: [], error: "Update Lumiverse to a version that supports Decision connections." };
+  if (!userId)
+    return { connections: [], error: "LumiWorld could not resolve the active Lumiverse user." };
   try {
-    await enclave.delete(jevSecretKey(provider), userId ?? undefined);
+    return { connections: (await api.listConnections({ userId })).map(decisionConnectionOption), error: null };
   } catch (error) {
-    spindle.log.warn(`LumiWorld could not clear the Jev key: ${error instanceof Error ? error.message : String(error)}`);
+    return { connections: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+async function prepareJev(settings, userId) {
+  const unavailable = (error) => ({
+    enabled: false,
+    config: null,
+    evaluate: null,
+    connection: null,
+    userId,
+    error
+  });
+  if (!settings.jev.enabled)
+    return unavailable(null);
+  if (!permissionHas("decisions"))
+    return unavailable("The decisions permission is not granted. Grant it in Lumiverse Extensions.");
+  const api = decisionsApi();
+  if (!api)
+    return unavailable("Update Lumiverse to a version that supports Decision connections.");
+  if (!userId)
+    return unavailable("LumiWorld could not resolve the active Lumiverse user for the Decision call.");
+  try {
+    const selectedId = settings.jev.connectionId;
+    const profile = selectedId ? await api.getConnection(selectedId, { userId }) : (await api.listConnections({ userId })).find((profile) => profile.is_default);
+    if (!profile)
+      return unavailable(selectedId ? "The selected Decision connection is unavailable. Choose another saved Decision connection." : "No default Decision connection is configured. Set one up in Lumiverse or select a saved connection.");
+    if (!profile.has_api_key)
+      return unavailable("The Decision connection needs an API key. Add it in Lumiverse Decision connections.");
+    if (!settings.jev.model.trim() && !profile.model.trim())
+      return unavailable("Choose a model in the Decision connection or enter a model override.");
+    return {
+      enabled: true,
+      config: { ...settings.jev, connectionId: profile.id },
+      evaluate: api.evaluate.bind(api),
+      connection: decisionConnectionOption(profile),
+      userId,
+      error: null
+    };
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
   }
 }
 function jevPhaseBudgetMs(settings) {
-  const elapsed = 0;
-  const available = INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS - elapsed;
-  return Math.max(1000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS, available));
+  return Math.max(1000, Math.min(settings.jev.timeoutMs, MAX_JEV_PHASE_MS, INTERCEPTOR_BUDGET_MS - DIRECTOR_RESERVE_MS));
 }
-async function prepareJev(settings, userId) {
-  const jev = settings.jev;
-  if (!jev.enabled)
-    return { enabled: false, config: null, cors: null, error: null };
-  if (!permissionHas("corsProxy")) {
-    return { enabled: false, config: null, cors: null, error: "The cors_proxy permission is not granted, so Jev cannot be reached." };
+async function pushDecisionModels(connectionId, userId, requestId) {
+  const reply = (models, error) => send({ type: "decision_models", connectionId, requestId, models, error }, userId);
+  if (!permissionHas("decisions"))
+    return reply([], "Grant the decisions permission to discover models.");
+  const api = decisionsApi();
+  if (!api)
+    return reply([], "Update Lumiverse to a version that supports Decision connections.");
+  try {
+    const id = connectionId ?? (await api.listConnections({ userId })).find((profile) => profile.is_default)?.id;
+    if (!id)
+      return reply([], "No default Decision connection is configured.");
+    const models = await api.getModels(id, { userId });
+    reply(models.map(({ id, label, protocol }) => ({ id, label, protocol })), null);
+  } catch (error) {
+    reply([], error instanceof Error ? error.message : String(error));
   }
-  const cors = corsApi();
-  if (!cors)
-    return { enabled: false, config: null, cors: null, error: "This Lumiverse host does not expose the CORS proxy." };
-  const apiKey = await readJevKey(jev.provider, userId);
-  if (!apiKey) {
-    return {
-      enabled: false,
-      config: null,
-      cors,
-      error: `No Jev API key is stored for ${resolveJevProvider(jev).label}. Add one in the LumiWorld drawer.`
-    };
-  }
-  return { enabled: true, config: { ...jev, apiKey }, cors, error: null };
-}
-function recoverAnswers(answers) {
-  const recovered = { ...answers };
-  const source = answers;
-  const nested = source.answers ?? readObjectPath(source, ["data", "answers"]) ?? readObjectPath(source, ["result", "answers"]);
-  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-    try {
-      const normalized = normalizeJevResponse({ answers: nested });
-      for (const [id, answer] of Object.entries(normalized.answers)) {
-        if (!(id in recovered))
-          recovered[id] = answer;
-      }
-    } catch {}
-  }
-  return recovered;
-}
-function readObjectPath(value, path) {
-  let current = value;
-  for (const key of path) {
-    if (!current || typeof current !== "object")
-      return null;
-    current = current[key];
-  }
-  return current ?? null;
 }
 async function runGatePhase(phase, options) {
   const { jevRun, settings } = options;
@@ -3094,7 +2824,7 @@ async function runGatePhase(phase, options) {
   });
   if (plan.gates.length === 0)
     return empty(null);
-  if (!jevRun.enabled || !jevRun.config || !jevRun.cors)
+  if (!jevRun.enabled || !jevRun.config || !jevRun.evaluate)
     return empty(jevRun.error);
   if (exceedsJevTokenBudget(projection.state, questions)) {
     return empty("The assembled Jev state exceeds the model's 32k token allowance.");
@@ -3103,10 +2833,10 @@ async function runGatePhase(phase, options) {
     config: jevRun.config,
     state: projection.state,
     questions,
-    cors: jevRun.cors,
+    evaluate: jevRun.evaluate,
+    userId: jevRun.userId ?? undefined,
     timeoutMs: settings.jev.timeoutMs,
-    budgetMs: jevPhaseBudgetMs(settings),
-    retryOnRateLimit: settings.jev.retryOnRateLimit
+    budgetMs: jevPhaseBudgetMs(settings)
   });
   if (!outcome.ok || !outcome.response) {
     return {
@@ -3117,7 +2847,7 @@ async function runGatePhase(phase, options) {
       responseJson: jsonText(outcome.attempts)
     };
   }
-  const answers = recoverAnswers(outcome.response.answers);
+  const answers = outcome.response.answers;
   return {
     plan,
     records: resolveGateAnswers(plan, answers, settings.jev.minConfidence),
@@ -3316,21 +3046,20 @@ function applyContextFilter(base, settings, messages, context, generationType, d
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
-  const [connectionState, runs, hasJevKey] = await Promise.all([
+  const [connectionState, runs, decisionState] = await Promise.all([
     listConnections(userId),
     loadRuns(userId, Number.MAX_SAFE_INTEGER),
-    readJevKey(settings.jev.provider, userId).then((key) => !!key).catch(() => false)
+    listDecisionConnections(userId)
   ]);
-  const providerInfo = resolveJevProvider(settings.jev);
   return {
     settings,
     connections: connectionState.connections,
     connectionError: connectionState.error,
     runs: runs.filter((run) => run.channel !== "world_agent").slice(0, settings.runLogLimit),
     permissions: currentPermissions(),
-    hasJevKey,
-    jevProviderInfo: providerInfo,
-    jevEndpoint: jevEndpoint(settings.jev),
+    decisionConnections: decisionState.connections,
+    decisionConnectionError: decisionState.error,
+    decisionsAvailable: !!decisionsApi(),
     activeGateCount: settings.jev.enabled ? Object.values(settings.jev.gatePolicy).filter((policy) => policy.enabled === true).length : 0
   };
 }
@@ -3469,7 +3198,7 @@ async function handleInterceptor(messages, context) {
     fetchError: null
   };
   let prepared = null;
-  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled, provider: settings.jev.provider });
+  const jevDiagnostics = makeJevDiagnostics({ enabled: settings.jev.enabled });
   let gateRecords = [];
   let verifyRecords = [];
   try {
@@ -3480,7 +3209,8 @@ async function handleInterceptor(messages, context) {
     worldInfoDiagnostics = prepared.worldInfoDiagnostics;
     if (jevRun.enabled) {
       jevDiagnostics.used = true;
-      jevDiagnostics.model = resolveJevModelForDiagnostics(settings);
+      jevDiagnostics.model = settings.jev.model.trim() || jevRun.connection?.model || null;
+      jevDiagnostics.provider = jevRun.connection?.provider ?? null;
       const phase = await runGatePhase("gate", {
         jevRun,
         settings,
@@ -3684,10 +3414,6 @@ async function handleInterceptor(messages, context) {
     directorBusy.release(busyKey);
   }
 }
-function resolveJevModelForDiagnostics(settings) {
-  const provider = resolveJevProvider(settings.jev);
-  return settings.jev.model.trim() || provider.defaultModel;
-}
 async function regenerateDirective(userId, settings, target, prepared, originalDirective, repair, records) {
   const violated = records.filter((record) => ["player_agency", "continuity_guard", "duplicate_suppression", "intensity_boundary", "director_verification"].includes(record.gateId) && (record.usedFallback || ["violation", "repeats", "near_duplicate", "out_of_range", true].includes(record.value))).map((record) => record.usedFallback ? `- ${record.label}: inconclusive; Jev could not confirm this check${record.confidence != null ? ` (confidence ${record.confidence.toFixed(2)})` : ""}` : `- ${record.label}: ${String(record.value)}`).join(`
 `);
@@ -3729,62 +3455,42 @@ ${violated}` : "",
     };
   }
 }
-async function runJevTest(userId, patch, draftKey) {
+async function runJevTest(userId, patch) {
   const baseSettings = await loadSettings(userId);
   const settings = normalizeSettings({ ...baseSettings, ...patch });
   const startedAt = Date.now();
-  const jevRun = await prepareJev(settings, userId);
-  const draft = typeof draftKey === "string" ? draftKey.trim() : "";
-  const apiKey = draft || await readJevKey(settings.jev.provider, userId);
-  if (!apiKey) {
-    const error = jevRun.error ?? `No Jev API key is stored for ${resolveJevProvider(settings.jev).label}.`;
-    send({ type: "jev_test_result", ok: false, error }, userId ?? undefined);
+  const jevRun = await prepareJev({ ...settings, jev: { ...settings.jev, enabled: true } }, userId);
+  if (!jevRun.enabled || !jevRun.config || !jevRun.evaluate) {
+    send({ type: "jev_test_result", ok: false, error: jevRun.error ?? "The Decision connection is unavailable." }, userId ?? undefined);
     return;
   }
-  const cors = jevRun.cors ?? corsApi();
-  if (!cors) {
-    send({ type: "jev_test_result", ok: false, error: "This Lumiverse host does not expose the CORS proxy." }, userId ?? undefined);
-    return;
-  }
-  const smoke = buildJevSmokeRequest({ ...settings.jev, apiKey });
+  const smoke = buildJevSmokeRequest();
   const outcome = await callJev({
-    config: { ...settings.jev, apiKey },
-    state: "A storm rolls in over the harbour.",
+    config: jevRun.config,
+    state: smoke.state,
     questions: smoke.questions,
-    cors,
+    evaluate: jevRun.evaluate,
+    userId: userId ?? undefined,
     timeoutMs: settings.jev.timeoutMs,
-    budgetMs: MAX_JEV_PHASE_MS,
-    retryOnRateLimit: settings.jev.retryOnRateLimit
+    budgetMs: MAX_JEV_PHASE_MS
   });
   if (!outcome.ok || !outcome.response) {
-    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "Jev did not answer." }, userId ?? undefined);
+    send({ type: "jev_test_result", ok: false, error: outcome.error ?? "The Decision model did not answer." }, userId ?? undefined);
     return;
   }
   const answer = outcome.response.answers.connectivity;
-  const confidence = answer && answer.type === "noul" ? Math.max(answer.noul, 1 - answer.noul) : null;
-  const label = answer && answer.type === "noul" ? answer.noul >= 0.5 ? "yes" : "no" : "unknown";
-  if (draft) {
-    try {
-      await storeJevKey(settings.jev.provider, draft, userId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      spindle.log.warn(`LumiWorld could not store the Jev key: ${message}`);
-      send({
-        type: "jev_test_result",
-        ok: false,
-        error: `Jev answered, but the key could not be saved: ${message}`
-      }, userId ?? undefined);
-      return;
-    }
+  if (!answer || answer.type !== "noul") {
+    send({ type: "jev_test_result", ok: false, error: "The Decision model did not answer the test question." }, userId ?? undefined);
+    return;
   }
   send({
     type: "jev_test_result",
     ok: true,
     latencyMs: Date.now() - startedAt,
-    model: outcome.response.model ?? resolveJevModelForDiagnostics(settings),
-    provider: resolveJevProvider(settings.jev).label,
-    answer: label,
-    confidence
+    model: outcome.response.model ?? (jevRun.config.model.trim() || jevRun.connection?.model || "Unknown model"),
+    provider: jevRun.connection?.provider ?? "Decision connection",
+    answer: answer.noul >= 0.5 ? "yes" : "no",
+    confidence: Math.max(answer.noul, 1 - answer.noul)
   }, userId ?? undefined);
 }
 function tryRegisterInterceptor() {
@@ -3859,6 +3565,10 @@ permissionsApi()?.onChanged?.(({ permission, granted }) => {
   if (permission === "interceptor" && granted)
     tryRegisterInterceptor();
   pushState(lastFrontendUserId);
+});
+spindle.on?.("DECISION_CONNECTION_CHANGED", (_payload, eventUserId) => {
+  if (eventUserId)
+    pushState(eventUserId);
 });
 spindle.on?.("GENERATION_STARTED", (payload, eventUserId) => {
   const chatId = extractChatId(payload);
@@ -3975,16 +3685,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await pushState(userId);
         break;
       case "test_jev":
-        await runJevTest(userId, message.settings, message.apiKey);
+        await runJevTest(userId, message.settings);
         await pushState(userId);
         break;
-      case "clear_jev_key": {
-        const provider = message.provider === "openrouter" ? "openrouter" : undefined;
-        const target = provider ?? (await loadSettings(userId)).jev.provider;
-        await clearJevKey(target, userId);
-        await pushState(userId);
+      case "get_decision_models":
+        await pushDecisionModels(message.connectionId, userId, message.requestId);
         break;
-      }
     }
   } catch (error) {
     const description = error instanceof Error ? error.message : "Unknown LumiWorld error.";

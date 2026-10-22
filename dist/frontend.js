@@ -6,46 +6,25 @@ var VISIBLE_GENERATION_TYPES = [
   "swipe",
   "impersonate"
 ];
-var JEV_PROVIDERS = {
-  typesafe: {
-    id: "typesafe",
-    label: "TypeSafe",
-    baseUrl: "https://api.typesafe.ai",
-    path: "/v1/systemone",
-    defaultModel: "jev-latest",
-    keyUrl: "https://console.typesafe.ai/keys"
-  },
-  openrouter: {
-    id: "openrouter",
-    label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api",
-    path: "/alpha/decisions",
-    defaultModel: "typesafe/jev-1.13",
-    keyUrl: "https://openrouter.ai/settings/keys"
-  }
-};
-var JEV_PROVIDER_IDS = ["typesafe", "openrouter"];
 var DEFAULT_JEV_STATE_CHARS = 30000;
 var MIN_JEV_STATE_CHARS = 2000;
 var MAX_JEV_STATE_CHARS = 32000;
 var DEFAULT_JEV_TIMEOUT_MS = 8000;
 var MIN_JEV_TIMEOUT_MS = 1000;
-var MAX_JEV_TIMEOUT_MS = 60000;
+var MAX_JEV_TIMEOUT_MS = 30000;
 var MAX_JEV_HISTORY_MESSAGES = 24;
 var DEFAULT_JEV_MIN_CONFIDENCE = 0.55;
 var DEFAULT_JEV_SETTINGS = {
   enabled: false,
-  provider: "typesafe",
+  connectionId: null,
   includeCharacter: true,
   includeUserPersona: true,
   includeWorldInfoEntries: false,
   model: "",
-  baseUrlOverride: "",
   timeoutMs: DEFAULT_JEV_TIMEOUT_MS,
   maxStateChars: DEFAULT_JEV_STATE_CHARS,
   historyMessageLimit: 10,
   minConfidence: DEFAULT_JEV_MIN_CONFIDENCE,
-  retryOnRateLimit: true,
   worldStateEnabled: true,
   gatePolicy: {}
 };
@@ -263,20 +242,18 @@ function normalizeGatePolicy(value) {
 }
 function normalizeJevSettings(value, legacyContext = DEFAULT_SETTINGS) {
   const obj = asRecord(value);
-  const provider = cleanString(obj.provider) === "openrouter" ? "openrouter" : "typesafe";
+  const legacyProviderSettings = !Object.hasOwn(obj, "connectionId") && (Object.hasOwn(obj, "provider") || Object.hasOwn(obj, "baseUrlOverride"));
   return {
     enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_JEV_SETTINGS.enabled,
-    provider,
+    connectionId: cleanNullableString(obj.connectionId),
     includeCharacter: typeof obj.includeCharacter === "boolean" ? obj.includeCharacter : legacyContext.includeCharacter,
     includeUserPersona: typeof obj.includeUserPersona === "boolean" ? obj.includeUserPersona : legacyContext.includeUserPersona,
     includeWorldInfoEntries: typeof obj.includeWorldInfoEntries === "boolean" ? obj.includeWorldInfoEntries : legacyContext.includeWorldInfoEntries,
-    model: cleanString(obj.model),
-    baseUrlOverride: cleanString(obj.baseUrlOverride).replace(/\/+$/, ""),
+    model: legacyProviderSettings ? "" : cleanString(obj.model),
     timeoutMs: integerInRange(obj.timeoutMs, DEFAULT_JEV_SETTINGS.timeoutMs, MIN_JEV_TIMEOUT_MS, MAX_JEV_TIMEOUT_MS),
     maxStateChars: integerInRange(obj.maxStateChars, DEFAULT_JEV_SETTINGS.maxStateChars, MIN_JEV_STATE_CHARS, MAX_JEV_STATE_CHARS),
     historyMessageLimit: integerInRange(obj.historyMessageLimit, DEFAULT_JEV_SETTINGS.historyMessageLimit, 0, MAX_JEV_HISTORY_MESSAGES),
     minConfidence: numberInRange(obj.minConfidence, DEFAULT_JEV_SETTINGS.minConfidence, 0, 1),
-    retryOnRateLimit: typeof obj.retryOnRateLimit === "boolean" ? obj.retryOnRateLimit : DEFAULT_JEV_SETTINGS.retryOnRateLimit,
     worldStateEnabled: typeof obj.worldStateEnabled === "boolean" ? obj.worldStateEnabled : DEFAULT_JEV_SETTINGS.worldStateEnabled,
     gatePolicy: normalizeGatePolicy(obj.gatePolicy)
   };
@@ -709,7 +686,7 @@ function resolveGatePolicy(definition, settings) {
 }
 
 // src/frontend.ts
-var VERSION = "0.5.1";
+var VERSION = "0.5.2";
 var ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17.5c2.7 1.7 6.2 1.7 9 0 3.1-1.9 4.3-5.7 2.7-8.9"/><path d="M4.4 12.2c.4-3.3 3.2-5.9 6.6-5.9 1.9 0 3.6.8 4.8 2"/><path d="M18 4.5l.8 1.7 1.9.3-1.3 1.3.3 1.9-1.7-.9-1.7.9.3-1.9-1.3-1.3 1.9-.3.8-1.7z"/><path d="M7 13h6"/></svg>`;
 var LABELS = {
   normal: "New reply",
@@ -832,18 +809,6 @@ var CSS = `
 .lw-control-card { display:grid; gap:12px; padding:12px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-fill-subtle); }
 .lw-control-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .lw-control-title { font-size:12px; font-weight:600; }
-
-/* --- Segmented provider control ------------------------------------- */
-.lw-segments { display:flex; gap:4px; padding:3px; border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius,8px); background:var(--lumiverse-input-bg); }
-.lw-segment { flex:1 1 0; min-width:0; min-height:30px; padding:5px 10px; border:0; border-radius:6px; color:var(--lumiverse-text-muted); background:transparent; font:inherit; font-size:12px; font-weight:550; cursor:pointer; transition:background .15s,color .15s; }
-.lw-segment:hover { color:var(--lumiverse-text); background:var(--lumiverse-fill-hover); }
-.lw-segment[aria-pressed="true"] { color:var(--lumiverse-primary-text); background:var(--lumiverse-primary-soft); box-shadow:inset 0 0 0 1px var(--lumiverse-primary-muted); }
-.lw-segment:focus-visible { outline:2px solid var(--lumiverse-primary); outline-offset:2px; }
-.lw-provider-note { font-size:11px; }
-.lw-provider-note a { color:var(--lumiverse-primary-text); }
-
-/* --- Key row -------------------------------------------------------- */
-.lw-key-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; }
 
 /* --- Gates ---------------------------------------------------------- */
 .lw-gate-body { display:grid; gap:6px; }
@@ -1005,22 +970,6 @@ function pill(text, tone = "neutral") {
   badge.append(el("span", "lw-dot"), el("span", undefined, text));
   return badge;
 }
-function segmented(value, options, ariaLabel, onChange) {
-  const group = el("div", "lw-segments");
-  group.setAttribute("role", "group");
-  group.setAttribute("aria-label", ariaLabel);
-  for (const option of options) {
-    const node = el("button", "lw-segment", option.label);
-    node.type = "button";
-    node.setAttribute("aria-pressed", String(option.value === value));
-    node.addEventListener("click", () => {
-      if (option.value !== value)
-        onChange(option.value);
-    });
-    group.append(node);
-  }
-  return group;
-}
 function activeChat(ctx) {
   try {
     return ctx.getActiveChat();
@@ -1041,7 +990,12 @@ function setup(ctx) {
   let saveTimer = null;
   let testPending = false;
   let jevTestPending = false;
-  let jevKeyDraft = "";
+  let decisionModels = [];
+  let decisionModelError = null;
+  let decisionModelsPending = false;
+  let decisionCatalogSignature = null;
+  let nextDecisionCatalogRequestId = 0;
+  let pendingDecisionCatalogRequestId = null;
   let advancedOpen = false;
   let templatesOpen = false;
   let pendingPresetDeleteId = null;
@@ -1410,18 +1364,98 @@ function setup(ctx) {
   function selectedConnection() {
     return state?.connections.find((item) => item.id === draft.connectionId) ?? null;
   }
-  function providerInfo() {
-    return JEV_PROVIDERS[draft.jev.provider];
+  function selectedDecisionConnection() {
+    const connections = state?.decisionConnections ?? [];
+    return draft.jev.connectionId === null ? connections.find((connection) => connection.isDefault) ?? null : connections.find((connection) => connection.id === draft.jev.connectionId) ?? null;
   }
-  function hasJevKey() {
-    return !!state?.hasJevKey;
+  function decisionSetupProblem() {
+    if (!state?.decisionsAvailable)
+      return "Update Lumiverse to use Decision models.";
+    if (!state.permissions.decisions)
+      return "Grant LumiWorld the decisions permission in Lumiverse.";
+    if (state.decisionConnectionError)
+      return state.decisionConnectionError;
+    const connection = selectedDecisionConnection();
+    if (!connection)
+      return draft.jev.connectionId ? "The saved Decision connection is unavailable. Choose a connection or the account default." : "Set a default Decision connection in Lumiverse, or choose one here.";
+    if (!connection.hasApiKey)
+      return "Add an API key to this Decision connection in Lumiverse.";
+    const model = draft.jev.model.trim() || connection.model;
+    if (!model)
+      return "Set a model on this Decision connection, or enter a model override.";
+    if (decisionModels.some((entry) => entry.id === model && entry.protocol === "unsupported")) {
+      return "This model uses an unsupported Decision protocol. Choose a supported model.";
+    }
+    return null;
   }
   function canTestJev() {
-    if (!state?.permissions.corsProxy)
-      return false;
-    if (jevKeyDraft.trim())
-      return true;
-    return hasJevKey();
+    return decisionSetupProblem() === null;
+  }
+  function requestDecisionModels(force = false) {
+    if (!draft.jev.enabled || !state)
+      return;
+    const connection = selectedDecisionConnection();
+    const signature = JSON.stringify([draft.jev.connectionId, connection, state.decisionConnectionError, state.decisionsAvailable, state.permissions.decisions]);
+    if (!force && signature === decisionCatalogSignature)
+      return;
+    decisionCatalogSignature = signature;
+    decisionModels = [];
+    decisionModelError = null;
+    decisionModelsPending = state.decisionsAvailable && state.permissions.decisions && !!connection && !state.decisionConnectionError;
+    pendingDecisionCatalogRequestId = decisionModelsPending ? ++nextDecisionCatalogRequestId : null;
+    if (pendingDecisionCatalogRequestId !== null) {
+      send({ type: "get_decision_models", connectionId: draft.jev.connectionId, requestId: pendingDecisionCatalogRequestId });
+    }
+  }
+  function updateDecisionModels() {
+    const input = drawer.root.querySelector('[aria-label="Jev model"]');
+    if (input)
+      input.placeholder = selectedDecisionConnection()?.model || "Connection’s saved model";
+    const list = drawer.root.querySelector("[data-lw-decision-models]");
+    if (list) {
+      list.replaceChildren();
+      for (const model of decisionModels.filter((entry) => entry.protocol !== "unsupported")) {
+        const option = el("option");
+        option.value = model.id;
+        option.label = `${model.label}${model.protocol === "unverified" ? " (unverified)" : ""}`;
+        list.append(option);
+      }
+    }
+    const hint = drawer.root.querySelector("[data-lw-decision-model-hint]");
+    if (hint)
+      hint.textContent = decisionModelsPending ? "Loading Decision models…" : decisionModelError ? `Model discovery failed: ${decisionModelError} You can still enter a model ID manually.` : "Choose a discovered model or enter an exact model ID. Blank uses the connection’s saved model.";
+    updateJevTestButton();
+  }
+  function decisionConnectionField() {
+    const selected = selectedDecisionConnection();
+    const options = [
+      { value: "", label: `Account default${draft.jev.connectionId === null && selected ? ` · ${selected.name || selected.id}` : ""}` },
+      ...(state?.decisionConnections ?? []).map((connection) => ({
+        value: connection.id,
+        label: `${connection.name || connection.id} · ${connection.provider}${connection.isDefault ? " · default" : ""}`
+      }))
+    ];
+    if (draft.jev.connectionId && !options.some((option) => option.value === draft.jev.connectionId)) {
+      options.push({ value: draft.jev.connectionId, label: `Saved connection unavailable · ${draft.jev.connectionId}` });
+    }
+    return field("Decision connection", selectControl(draft.jev.connectionId ?? "", options, "Decision connection", (value) => {
+      mutateJev({ connectionId: value || null, model: "" }, true);
+    }), "Manage providers and API keys in Lumiverse’s Decision connections.");
+  }
+  function decisionModelField() {
+    const control = el("div", "lw-control");
+    const input = textInput(draft.jev.model, selectedDecisionConnection()?.model || "Connection’s saved model", "Jev model", (value) => {
+      mutateJev({ model: value });
+      updateJevTestButton();
+    });
+    const list = el("datalist");
+    list.id = "lw-decision-model-options";
+    list.dataset.lwDecisionModels = "";
+    input.setAttribute("list", list.id);
+    const hint = el("div", "lw-hint");
+    hint.dataset.lwDecisionModelHint = "";
+    control.append(input, list, hint);
+    return field("Model override (optional)", control);
   }
   function selectControl(value, options, ariaLabel, onChange) {
     const slot = el("div", "lw-control");
@@ -1474,18 +1508,34 @@ function setup(ctx) {
     jevTestPending = true;
     showNotice({ tone: "info", text: "Testing Jev…" }, 0);
     updateJevTestButton();
-    send({ type: "test_jev", settings: draft, apiKey: jevKeyDraft.trim() || undefined });
+    send({ type: "test_jev", settings: draft });
+  }
+  function jevStatusLabel() {
+    if (!draft.jev.enabled)
+      return "Off";
+    if (!state?.decisionsAvailable)
+      return "Update Lumiverse";
+    if (!state.permissions.decisions)
+      return "Needs permission";
+    return canTestJev() ? "Ready" : "Setup needed";
   }
   function updateJevStatus() {
     const target = drawer.root.querySelector("[data-lw-jev-status]");
-    if (!target)
-      return;
-    const tone = !draft.jev.enabled ? "neutral" : !state?.permissions.corsProxy || !hasJevKey() && !jevKeyDraft.trim() ? "warning" : "success";
-    const text = !draft.jev.enabled ? "Off" : !state?.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
-    target.replaceChildren(pill(text, tone));
+    if (target)
+      target.replaceChildren(pill(jevStatusLabel(), !draft.jev.enabled ? "neutral" : canTestJev() ? "success" : "warning"));
   }
   function updateJevTestButton() {
     updateJevStatus();
+    updateHeaderStatus();
+    const marker = tabMarker("jev");
+    const dot = drawer.root.querySelector("#lw-tab-jev .lw-tab-dot");
+    if (dot && marker) {
+      dot.title = marker.label;
+      dot.style.background = marker.tone === "warning" ? "var(--lumiverse-warning)" : marker.tone === "success" ? "var(--lumiverse-success)" : "var(--lumiverse-text-muted)";
+    }
+    const refresh = drawer.root.querySelector("[data-lw-refresh-decision-models]");
+    if (refresh)
+      refresh.disabled = !state?.decisionsAvailable || !state.permissions.decisions || !selectedDecisionConnection() || decisionModelsPending;
     const node = drawer.root.querySelector("[data-lw-jev-test]");
     if (node) {
       node.disabled = jevTestPending || !canTestJev();
@@ -1493,9 +1543,8 @@ function setup(ctx) {
       node.textContent = jevTestPending ? "Testing Jev…" : "Test Jev";
     }
     const hint = drawer.root.querySelector("[data-lw-jev-hint]");
-    if (hint) {
-      hint.textContent = !state?.permissions.corsProxy ? "The cors_proxy permission is required to reach Jev." : jevKeyDraft.trim() ? "Sends one tiny yes/no question and stores the key if it works." : hasJevKey() ? "Uses the stored key. One tiny yes/no question; your chat is not sent." : "Paste an API key to test the connection.";
-    }
+    if (hint)
+      hint.textContent = decisionSetupProblem() || "Uses your Decision connection for one tiny yes/no question; your chat is not sent.";
   }
   function jevSection() {
     const section = el("section", "lw-section");
@@ -1510,46 +1559,19 @@ function setup(ctx) {
     }
     const core = el("section", "lw-setup");
     core.setAttribute("aria-label", "Jev connection");
-    const providerHead = el("div", "lw-control-head");
-    const providerCopy = el("div");
-    providerCopy.append(el("div", "lw-control-title", "Provider"));
-    const note = el("div", "lw-provider-note");
-    const link = el("a", undefined, `${providerInfo().label} API keys`);
-    link.href = providerInfo().keyUrl;
-    link.target = "_blank";
-    link.rel = "noreferrer noopener";
-    note.append(document.createTextNode("Get one from "), link, document.createTextNode("."));
-    providerCopy.append(note);
-    providerHead.append(providerCopy);
-    core.append(providerHead);
-    core.append(segmented(draft.jev.provider, JEV_PROVIDER_IDS.map((id) => ({ value: id, label: JEV_PROVIDERS[id].label })), "Jev provider", (value) => mutateJev({ provider: value, model: "" }, true)));
+    requestDecisionModels();
+    core.append(decisionConnectionField());
     const fields = el("div", "lw-fields");
-    fields.append(field("Model", textInput(draft.jev.model, providerInfo().defaultModel, "Jev model", (value) => mutateJev({ model: value })), `Blank uses ${providerInfo().defaultModel}.`));
+    fields.append(decisionModelField());
     core.append(fields);
-    const credentialHead = el("div", "lw-control-head");
-    credentialHead.append(el("div", "lw-control-title", "API key"));
-    credentialHead.append(pill(hasJevKey() ? "Stored" : "Not set", hasJevKey() ? "success" : "warning"));
-    core.append(credentialHead);
-    const keyRow = el("div", "lw-key-row");
-    const keyInput = el("input", "lw-input");
-    keyInput.type = "password";
-    keyInput.autocomplete = "off";
-    keyInput.spellcheck = false;
-    keyInput.value = jevKeyDraft;
-    keyInput.placeholder = hasJevKey() ? "A key is stored — paste to replace" : "Paste your API key";
-    keyInput.setAttribute("aria-label", "Jev API key");
-    keyInput.addEventListener("input", () => {
-      jevKeyDraft = keyInput.value;
-      updateJevTestButton();
+    const discovery = el("div", "lw-actions");
+    const refresh = button("Refresh models", () => {
+      requestDecisionModels(true);
+      updateDecisionModels();
     });
-    const clear = button("Clear", () => {
-      jevKeyDraft = "";
-      send({ type: "clear_jev_key", provider: draft.jev.provider });
-    });
-    clear.disabled = !hasJevKey();
-    keyRow.append(keyInput, clear);
-    core.append(keyRow);
-    core.append(el("div", "lw-hint", "Encrypted at rest per Lumiverse user, and never sent back to this panel."));
+    refresh.dataset.lwRefreshDecisionModels = "";
+    discovery.append(refresh);
+    core.append(discovery);
     const actions = el("div", "lw-actions");
     const test = button("Test Jev", testJev, true);
     test.dataset.lwJevTest = "";
@@ -1578,7 +1600,7 @@ function setup(ctx) {
     advanced.append(summary);
     const advancedBody = el("div", "lw-details-body");
     const advancedFields = el("div", "lw-fields");
-    advancedFields.append(field("State cap (chars)", numberInput(draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap", (value) => mutateJev({ maxStateChars: value })), "Jev allows 32k tokens for the state."), field("History messages", numberInput(draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages", (value) => mutateJev({ historyMessageLimit: value }))), field("Timeout (ms)", numberInput(draft.jev.timeoutMs, 1000, 60000, 500, "Jev timeout", (value) => mutateJev({ timeoutMs: value }))), field("Confidence floor", numberInput(draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor", (value) => mutateJev({ minConfidence: value })), "Applies to every gate. Decisions below it use their fallback."));
+    advancedFields.append(field("State cap (chars)", numberInput(draft.jev.maxStateChars, 2000, 32000, 1000, "Jev state cap", (value) => mutateJev({ maxStateChars: value })), "Caps the text sent to the Decision model."), field("History messages", numberInput(draft.jev.historyMessageLimit, 0, 24, 1, "Jev history messages", (value) => mutateJev({ historyMessageLimit: value }))), field("Timeout (ms)", numberInput(draft.jev.timeoutMs, 1000, 30000, 500, "Jev timeout", (value) => mutateJev({ timeoutMs: value }))), field("Confidence floor", numberInput(draft.jev.minConfidence, 0, 1, 0.05, "Confidence floor", (value) => mutateJev({ minConfidence: value })), "Applies to every gate. Decisions below it use their fallback."));
     advancedBody.append(advancedFields);
     advancedBody.append(el("div", "lw-hint", "The state is a redacted projection: recent turns plus the context sources you enabled, never your full transcript."));
     advanced.append(advancedBody);
@@ -2270,8 +2292,8 @@ function setup(ctx) {
     if (!badge || !state)
       return;
     if (activeTab === "jev") {
-      const ready = draft.jev.enabled && !!state.permissions.corsProxy && (hasJevKey() || !!jevKeyDraft.trim());
-      badge.textContent = !draft.jev.enabled ? "Disabled" : !state.permissions.corsProxy ? "Needs permission" : hasJevKey() || jevKeyDraft.trim() ? "Ready" : "Needs key";
+      const ready = draft.jev.enabled && canTestJev();
+      badge.textContent = !draft.jev.enabled ? "Disabled" : jevStatusLabel();
       badge.dataset.tone = !draft.jev.enabled ? "neutral" : ready ? "success" : "warning";
       return;
     }
@@ -2338,11 +2360,8 @@ function setup(ctx) {
     }
     if (!draft.jev.enabled)
       return { tone: "off", label: "Jev is off" };
-    if (!state.permissions.corsProxy)
-      return { tone: "warning", label: "cors_proxy permission is not granted" };
-    if (hasJevKey() || jevKeyDraft.trim())
-      return { tone: "success", label: "Jev is active" };
-    return { tone: "warning", label: "Add a Jev API key" };
+    const problem = decisionSetupProblem();
+    return problem ? { tone: "warning", label: problem } : { tone: "success", label: "Jev is active" };
   }
   function activateView(tab) {
     activeTab = tab;
@@ -2410,7 +2429,7 @@ function setup(ctx) {
     updateDirectorStatus();
     updateSaveStatus();
     updateTestButton();
-    updateJevTestButton();
+    updateDecisionModels();
     renderNotice();
   }
   function renderDirectorView() {
@@ -2561,11 +2580,13 @@ function setup(ctx) {
       state = message.state;
       if (!queue.isDirty && !saveTimer)
         draft = normalizeFrontendSettings(message.state.settings);
+      requestDecisionModels();
       if (drawer.root.contains(document.activeElement) && document.activeElement?.matches("input,textarea,select,[role=combobox]")) {
         updateWarnings();
         updateDirectorStatus();
         updateSaveStatus();
         updateTestButton();
+        updateDecisionModels();
       } else
         render();
       return;
@@ -2605,10 +2626,18 @@ function setup(ctx) {
       showNotice(message.ok ? { tone: "success", text: `Test succeeded on ${message.connectionName} / ${message.model}: ${message.directive}` } : { tone: "error", text: message.error }, 15000);
       return;
     }
+    if (message.type === "decision_models") {
+      if (message.connectionId !== draft.jev.connectionId || message.requestId !== pendingDecisionCatalogRequestId || pendingDecisionCatalogRequestId === null || !state?.decisionsAvailable || !state.permissions.decisions)
+        return;
+      pendingDecisionCatalogRequestId = null;
+      decisionModels = message.models;
+      decisionModelError = message.error;
+      decisionModelsPending = false;
+      updateDecisionModels();
+      return;
+    }
     if (message.type === "jev_test_result") {
       jevTestPending = false;
-      if (message.ok)
-        jevKeyDraft = "";
       updateJevTestButton();
       showNotice(message.ok ? {
         tone: "success",
