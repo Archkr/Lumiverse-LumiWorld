@@ -2440,8 +2440,8 @@ function extractContextUserId(value) {
 function extractDryRun(value) {
   if (!value || typeof value !== "object")
     return false;
-  const raw = value.dryRun ?? value.dry_run;
-  return raw === true;
+  const { isDryRun, dryRun, dry_run } = value;
+  return isDryRun === true || dryRun === true || dry_run === true;
 }
 function extractChatId(value) {
   if (!value || typeof value !== "object")
@@ -3139,11 +3139,12 @@ async function resolveTurnTarget(settings, records, userId) {
   return base.ok ? base : null;
 }
 async function handleInterceptor(messages, context) {
+  if (extractDryRun(context))
+    return messages;
   const chatId = extractChatId(context);
   const userId = resolveUserId(chatId, extractContextUserId(context));
   const generationId = chatId && userId ? activeGenerationIds.get(generationChatKey(userId, chatId)) : undefined;
   const generationType = extractGenerationType(context);
-  const dryRun = extractDryRun(context);
   const startedAt = Date.now();
   rememberChatUser(chatId, userId);
   const settings = await loadSettings(userId);
@@ -3152,9 +3153,9 @@ async function handleInterceptor(messages, context) {
   const turnTrace = {
     chatId,
     generationId: generationId ?? null,
-    dryRun,
+    dryRun: false,
     settingsJson: jsonText(settings),
-    generationOutcome: dryRun ? "preview" : userId && chatId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
+    generationOutcome: userId && chatId && generationId && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
     generationError: null,
     messageId: null,
     finalReply: null,
@@ -3358,7 +3359,7 @@ async function handleInterceptor(messages, context) {
       }), userId, settings);
       return messages;
     }
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId && !dryRun) {
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId) {
       const committed = commitWorldState(worldState, verifyRecords, threadLabel);
       worldState = committed;
       turnTrace.worldStateAfterJson = jsonText(committed);

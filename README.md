@@ -16,6 +16,8 @@ LumiWorld prepares a short piece of direction before the main model writes its n
 
 The resulting note is added to the main model’s prompt. Your chat model still writes the scene.
 
+Prompt previews, including LumiCache’s automatic health checks, skip the Director and Jev.
+
 > **Private means prompt context:** Director notes are intended to stay out of the visible story. They are sent to the selected models and can be inspected in Prompt Breakdown. This is not an encryption or secrecy guarantee.
 
 ---

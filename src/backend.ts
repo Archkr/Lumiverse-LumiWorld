@@ -169,8 +169,8 @@ function extractContextUserId(value: unknown): string | null {
 /** The host marks prompt previews and tokenize-only assemblies as dry runs. */
 function extractDryRun(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const raw = (value as { dryRun?: unknown; dry_run?: unknown }).dryRun ?? (value as { dry_run?: unknown }).dry_run;
-  return raw === true;
+  const { isDryRun, dryRun, dry_run } = value as { isDryRun?: unknown; dryRun?: unknown; dry_run?: unknown };
+  return isDryRun === true || dryRun === true || dry_run === true;
 }
 
 function extractChatId(value: unknown): string | null {
@@ -1040,19 +1040,20 @@ async function resolveTurnTarget(
 async function handleInterceptor(
   messages: LlmMessageDTO[], context: unknown,
 ): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
+  // Background prompt previews can use the same generation type as a live reply.
+  if (extractDryRun(context)) return messages;
+
   const chatId = extractChatId(context);
   const userId = resolveUserId(chatId, extractContextUserId(context));
   const generationId = chatId && userId ? activeGenerationIds.get(generationChatKey(userId, chatId)) : undefined;
   const generationType = extractGenerationType(context);
-  // A dry run is a preview: it must be side-effect free.
-  const dryRun = extractDryRun(context);
   const startedAt = Date.now();
   rememberChatUser(chatId, userId);
   const settings = await loadSettings(userId);
   if (!shouldInterceptGeneration(settings, generationType).intercept) return messages;
   const turnTrace: TurnTrace = {
-    chatId, generationId: generationId ?? null, dryRun, settingsJson: jsonText(settings),
-    generationOutcome: dryRun ? "preview" : userId && chatId && generationId
+    chatId, generationId: generationId ?? null, dryRun: false, settingsJson: jsonText(settings),
+    generationOutcome: userId && chatId && generationId
       && activeGenerationIds.get(generationChatKey(userId, chatId)) === generationId ? "pending" : "unknown",
     generationError: null, messageId: null, finalReply: null, worldStateOutcome: "not_used",
     directiveDisposition: null, verificationVerdict: null, verificationReason: null,
@@ -1253,10 +1254,9 @@ async function handleInterceptor(
     }
 
     /* ---------------- Commit derived state ---------------- */
-    // The scene may only advance once a reply actually lands. A dry run never
-    // counts, and a live turn defers its commit to GENERATION_ENDED so a
-    // cancelled, failed, or superseded generation cannot move the world.
-    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId && !dryRun) {
+    // Defer the commit to GENERATION_ENDED so a cancelled, failed, or
+    // superseded generation cannot move the world.
+    if (settings.jev.enabled && settings.jev.worldStateEnabled && turnTrace.verificationVerdict === "clean" && chatId) {
       const committed = commitWorldState(worldState, verifyRecords, threadLabel);
       worldState = committed;
       turnTrace.worldStateAfterJson = jsonText(committed);

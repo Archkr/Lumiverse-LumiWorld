@@ -999,18 +999,23 @@ describe("v0.5 Jev turn flow", () => {
     expect((stored.get("chats/chat-dup/world.json") as any).turn).toBe(first);
   });
 
-  test("a dry run never stages scene state", async () => {
+  test("prompt previews skip the Director and Jev even during a live generation", async () => {
     stored.set("global/settings.json", {
       ...baseSettings,
       jev: jevSettings({ gatePolicy: { scene_state_diff: { enabled: true } } }),
     });
     answerCleanTurn();
-    await messageHandler!({ type: "refresh_state", chatId: "chat-dry" }, "user-jev");
-    await interceptor!(jevMessages, { chatId: "chat-dry", generationType: "normal", dryRun: true });
-
-    expect(stored.has("chats/chat-dry/world.json")).toBe(false);
-    // Even after the host reports an end, nothing was staged to write.
-    emitEvent("GENERATION_ENDED", { generationId: "g2", chatId: "chat-dry", messageId: "m2", content: "preview" });
+    beginGeneration("chat-dry", "gen-dry");
+    for (const preview of [{ dryRun: true }, { isDryRun: true }, { dry_run: true }]) {
+      const result = await interceptor!(jevMessages, {
+        chatId: "chat-dry", userId: "user-jev", generationType: "normal", ...preview,
+      });
+      expect(result).toBe(jevMessages);
+    }
+    expect(generations).toBe(0);
+    expect(jevRequests).toHaveLength(0);
+    expect(stored.get("global/runs.json")).toEqual([]);
+    emitEvent("GENERATION_ENDED", { generationId: "gen-dry", chatId: "chat-dry", messageId: "m2", content: "reply" }, "user-jev");
     expect(stored.has("chats/chat-dry/world.json")).toBe(false);
   });
 
